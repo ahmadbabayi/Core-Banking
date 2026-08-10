@@ -18,6 +18,12 @@ add_executable(CoreBanking
 
     src/domain/account.cpp
     src/domain/account.h
+
+    src/domain/transaction.cpp
+    src/domain/transaction.h
+
+    src/application/accountservice.h
+    src/application/accountservice.cpp
 )
 
 target_link_libraries(CoreBanking

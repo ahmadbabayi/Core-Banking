@@ -2,6 +2,8 @@
 #include <QDebug>
 
 #include "domain/customer.h"
+#include "domain/account.h"
+#include "application/accountservice.h"
 
 int main(int argc, char *argv[])
 {
@@ -14,15 +16,37 @@ int main(int argc, char *argv[])
         "Babayi"
     );
 
-    qDebug() << "Customer ID:"
-             << customer.getId();
+    Account account(
+        5001,
+        "0101234567890",
+        customer.getId()
+    );
 
-    qDebug() << "Name:"
-             << customer.getFirstName()
-             << customer.getLastName();
+    AccountService accountService;
 
-    qDebug() << "National ID:"
-             << customer.getNationalId();
+    bool depositResult = accountService.deposit(
+        account,
+        10000000,
+        "Initial deposit"
+    );
+
+    qDebug() << "Deposit:"
+             << depositResult;
+
+    qDebug() << "Balance:"
+             << account.getBalance();
+
+    const Transaction& transaction =
+        accountService.lastTransaction();
+
+    qDebug() << "Transaction ID:"
+             << transaction.getId();
+
+    qDebug() << "Transaction Amount:"
+             << transaction.getAmount();
+
+    qDebug() << "Description:"
+             << transaction.getDescription();
 
     return 0;
 }
