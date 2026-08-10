@@ -35,6 +35,16 @@ add_executable(CoreBanking
     src/infrastructure/repository/memorytransactionrepository.h
     src/infrastructure/repository/memorytransactionrepository.cpp
 
+    src/application/transferservice.h
+    src/application/transferservice.cpp
+
+    src/domain/transfer.h
+    src/domain/transfer.cpp
+
+    src/infrastructure/repository/itransferrepository.h
+    src/infrastructure/repository/memorytransferrepository.h
+    src/infrastructure/repository/memorytransferrepository.cpp
+
 )
 
 target_link_libraries(CoreBanking
