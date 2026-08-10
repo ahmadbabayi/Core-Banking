@@ -7,6 +7,7 @@
 #include "application/accountservice.h"
 
 #include "infrastructure/repository/memoryaccountrepository.h"
+#include "infrastructure/repository/memorytransactionrepository.h"
 
 int main(int argc, char *argv[])
 {
@@ -25,23 +26,30 @@ int main(int argc, char *argv[])
         customer.getId()
     );
 
-    MemoryAccountRepository repository;
+    MemoryAccountRepository accountRepository;
+    MemoryTransactionRepository transactionRepository;
 
-    repository.save(account);
+    accountRepository.save(account);
 
-    AccountService accountService(repository);
+    AccountService accountService(
+        accountRepository,
+        transactionRepository
+    );
 
-    bool result = accountService.deposit(
+    accountService.deposit(
         account.getId(),
         10000000,
         "Initial deposit"
     );
 
-    qDebug() << "Deposit:"
-             << result;
+    accountService.withdraw(
+        account.getId(),
+        2500000,
+        "ATM withdrawal"
+    );
 
     Account* savedAccount =
-        repository.findById(account.getId());
+        accountRepository.findById(account.getId());
 
     if (savedAccount != nullptr)
     {
@@ -52,14 +60,24 @@ int main(int argc, char *argv[])
                  << savedAccount->getBalance();
     }
 
-    const Transaction& transaction =
-        accountService.lastTransaction();
+    QList<Transaction> transactions =
+        transactionRepository.findByAccountId(
+            account.getId()
+        );
 
-    qDebug() << "Transaction ID:"
-             << transaction.getId();
+    qDebug() << "Transactions:"
+             << transactions.size();
 
-    qDebug() << "Transaction Amount:"
-             << transaction.getAmount();
+    for (const Transaction& transaction : transactions)
+    {
+        qDebug()
+            << "Transaction ID:"
+            << transaction.getId()
+            << "Amount:"
+            << transaction.getAmount()
+            << "Description:"
+            << transaction.getDescription();
+    }
 
     return 0;
 }

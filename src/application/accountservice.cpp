@@ -1,28 +1,35 @@
 #include "accountservice.h"
 
-AccountService::AccountService(IAccountRepository& repository)
-    : repository(repository),
+AccountService::AccountService(
+    IAccountRepository& accountRepository,
+    ITransactionRepository& transactionRepository
+)
+    : accountRepository(accountRepository),
+      transactionRepository(transactionRepository),
       nextTransactionId(1)
 {
 }
 
-bool AccountService::deposit(qint64 accountId,
-                             qint64 amount,
-                             const QString& description)
+bool AccountService::deposit(
+    qint64 accountId,
+    qint64 amount,
+    const QString& description)
 {
     if (amount <= 0)
         return false;
 
-    Account* account = repository.findById(accountId);
+    Account* account =
+        accountRepository.findById(accountId);
 
     if (account == nullptr)
         return false;
 
     account->deposit(amount);
 
-    repository.save(*account);
+    if (!accountRepository.save(*account))
+        return false;
 
-    lastTransactionObject = Transaction(
+    Transaction transaction(
         nextTransactionId++,
         accountId,
         Transaction::Type::Deposit,
@@ -30,17 +37,22 @@ bool AccountService::deposit(qint64 accountId,
         description
     );
 
+    if (!transactionRepository.save(transaction))
+        return false;
+
     return true;
 }
 
-bool AccountService::withdraw(qint64 accountId,
-                              qint64 amount,
-                              const QString& description)
+bool AccountService::withdraw(
+    qint64 accountId,
+    qint64 amount,
+    const QString& description)
 {
     if (amount <= 0)
         return false;
 
-    Account* account = repository.findById(accountId);
+    Account* account =
+        accountRepository.findById(accountId);
 
     if (account == nullptr)
         return false;
@@ -48,9 +60,10 @@ bool AccountService::withdraw(qint64 accountId,
     if (!account->withdraw(amount))
         return false;
 
-    repository.save(*account);
+    if (!accountRepository.save(*account))
+        return false;
 
-    lastTransactionObject = Transaction(
+    Transaction transaction(
         nextTransactionId++,
         accountId,
         Transaction::Type::Withdrawal,
@@ -58,10 +71,8 @@ bool AccountService::withdraw(qint64 accountId,
         description
     );
 
-    return true;
-}
+    if (!transactionRepository.save(transaction))
+        return false;
 
-const Transaction& AccountService::lastTransaction() const
-{
-    return lastTransactionObject;
+    return true;
 }
