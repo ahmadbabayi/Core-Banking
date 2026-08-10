@@ -3,7 +3,10 @@
 
 #include "domain/customer.h"
 #include "domain/account.h"
+
 #include "application/accountservice.h"
+
+#include "infrastructure/repository/memoryaccountrepository.h"
 
 int main(int argc, char *argv[])
 {
@@ -22,19 +25,32 @@ int main(int argc, char *argv[])
         customer.getId()
     );
 
-    AccountService accountService;
+    MemoryAccountRepository repository;
 
-    bool depositResult = accountService.deposit(
-        account,
+    repository.save(account);
+
+    AccountService accountService(repository);
+
+    bool result = accountService.deposit(
+        account.getId(),
         10000000,
         "Initial deposit"
     );
 
     qDebug() << "Deposit:"
-             << depositResult;
+             << result;
 
-    qDebug() << "Balance:"
-             << account.getBalance();
+    Account* savedAccount =
+        repository.findById(account.getId());
+
+    if (savedAccount != nullptr)
+    {
+        qDebug() << "Account:"
+                 << savedAccount->getAccountNumber();
+
+        qDebug() << "Balance:"
+                 << savedAccount->getBalance();
+    }
 
     const Transaction& transaction =
         accountService.lastTransaction();
@@ -44,9 +60,6 @@ int main(int argc, char *argv[])
 
     qDebug() << "Transaction Amount:"
              << transaction.getAmount();
-
-    qDebug() << "Description:"
-             << transaction.getDescription();
 
     return 0;
 }

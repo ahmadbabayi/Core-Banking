@@ -3,23 +3,26 @@
 
 #include "../domain/account.h"
 #include "../domain/transaction.h"
+#include "../infrastructure/repository/iaccountrepository.h"
 
 class AccountService
 {
 public:
-    AccountService();
+    explicit AccountService(IAccountRepository& repository);
 
-    bool deposit(Account& account,
+    bool deposit(qint64 accountId,
                  qint64 amount,
                  const QString& description);
 
-    bool withdraw(Account& account,
+    bool withdraw(qint64 accountId,
                   qint64 amount,
                   const QString& description);
 
     const Transaction& lastTransaction() const;
 
 private:
+    IAccountRepository& repository;
+
     qint64 nextTransactionId;
     Transaction lastTransactionObject;
 };

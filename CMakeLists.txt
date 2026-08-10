@@ -24,6 +24,12 @@ add_executable(CoreBanking
 
     src/application/accountservice.h
     src/application/accountservice.cpp
+
+    src/infrastructure/repository/iaccountrepository.h
+
+    src/infrastructure/repository/memoryaccountrepository.h
+    src/infrastructure/repository/memoryaccountrepository.cpp
+
 )
 
 target_link_libraries(CoreBanking

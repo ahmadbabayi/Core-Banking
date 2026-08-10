@@ -1,22 +1,30 @@
 #include "accountservice.h"
 
-AccountService::AccountService()
-    : nextTransactionId(1)
+AccountService::AccountService(IAccountRepository& repository)
+    : repository(repository),
+      nextTransactionId(1)
 {
 }
 
-bool AccountService::deposit(Account& account,
-                              qint64 amount,
-                              const QString& description)
+bool AccountService::deposit(qint64 accountId,
+                             qint64 amount,
+                             const QString& description)
 {
     if (amount <= 0)
         return false;
 
-    account.deposit(amount);
+    Account* account = repository.findById(accountId);
+
+    if (account == nullptr)
+        return false;
+
+    account->deposit(amount);
+
+    repository.save(*account);
 
     lastTransactionObject = Transaction(
         nextTransactionId++,
-        account.getId(),
+        accountId,
         Transaction::Type::Deposit,
         amount,
         description
@@ -25,19 +33,26 @@ bool AccountService::deposit(Account& account,
     return true;
 }
 
-bool AccountService::withdraw(Account& account,
-                               qint64 amount,
-                               const QString& description)
+bool AccountService::withdraw(qint64 accountId,
+                              qint64 amount,
+                              const QString& description)
 {
     if (amount <= 0)
         return false;
 
-    if (!account.withdraw(amount))
+    Account* account = repository.findById(accountId);
+
+    if (account == nullptr)
         return false;
+
+    if (!account->withdraw(amount))
+        return false;
+
+    repository.save(*account);
 
     lastTransactionObject = Transaction(
         nextTransactionId++,
-        account.getId(),
+        accountId,
         Transaction::Type::Withdrawal,
         amount,
         description
