@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(CoreBanking
+    VERSION 0.1
+    LANGUAGES CXX
+)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(Qt5 REQUIRED COMPONENTS Core)
+
+add_executable(CoreBanking
+    src/main.cpp
+
+    src/domain/customer.cpp
+    src/domain/customer.h
+
+    src/domain/account.cpp
+    src/domain/account.h
+)
+
+target_link_libraries(CoreBanking
+    PRIVATE Qt5::Core
+)
