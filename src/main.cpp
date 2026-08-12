@@ -2,87 +2,74 @@
 #include <QDebug>
 
 #include "infrastructure/database.h"
-#include "infrastructure/repository/customerrepository.h"
-#include "application/customerservice.h"
+#include "infrastructure/repository/accountrepository.h"
 
 int main(int argc, char *argv[])
 {
-    QCoreApplication a(argc, argv);
+    QCoreApplication app(argc, argv);
 
-    // -------------------------------------------------
-    // Database connection
-    // -------------------------------------------------
-
+    // Connect to database
     if (!Database::instance().connect())
     {
         qDebug() << "Database connection failed!";
         return 1;
     }
 
-    // -------------------------------------------------
-    // Repository
-    // -------------------------------------------------
+    // Create PostgreSQL Account Repository
+    AccountRepository accountRepository;
 
-    CustomerRepository customerRepository;
+    // Find account
+    Account* account = accountRepository.findById(5001);
 
-    // -------------------------------------------------
-    // Service
-    // -------------------------------------------------
-
-    CustomerService customerService(customerRepository);
-
-    // -------------------------------------------------
-    // Block customer
-    // -------------------------------------------------
-
-    if (customerService.blockCustomer(1001))
+    if (account == nullptr)
     {
-        qDebug() << "Block operation completed!";
+        qDebug() << "Account not found!";
+        return 1;
+    }
+
+    qDebug() << "Account found!";
+    qDebug() << "Account ID:" << account->getId();
+    qDebug() << "Account Number:" << account->getAccountNumber();
+    qDebug() << "Customer ID:" << account->getCustomerId();
+
+    // Account type
+    QString type;
+
+    if (account->getType() == Account::Type::CURRENT)
+    {
+        type = "CURRENT";
     }
     else
     {
-        qDebug() << "Block operation failed!";
+        type = "SAVINGS";
     }
 
-    // -------------------------------------------------
-    // Verify customer
-    // -------------------------------------------------
+    qDebug() << "Type:" << type;
 
-    Customer customer;
+    qDebug() << "Balance:" << account->getBalance();
 
-    if (customerRepository.findById(1001, customer))
+    // Account status
+    QString status;
+
+    switch (account->getStatus())
     {
-        qDebug() << "Customer found!";
+    case Account::Status::ACTIVE:
+        status = "ACTIVE";
+        break;
 
-        qDebug() << "Customer ID:"
-                 << customer.getId();
+    case Account::Status::BLOCKED:
+        status = "BLOCKED";
+        break;
 
-        qDebug() << "Name:"
-                 << customer.getFirstName()
-                 << customer.getLastName();
-
-        qDebug() << "National ID:"
-                 << customer.getNationalId();
-
-        switch (customer.getStatus())
-        {
-        case Customer::Status::ACTIVE:
-            qDebug() << "Status: ACTIVE";
-            break;
-
-        case Customer::Status::INACTIVE:
-            qDebug() << "Status: INACTIVE";
-            break;
-
-        case Customer::Status::BLOCKED:
-            qDebug() << "Status: BLOCKED";
-            break;
-        }
+    case Account::Status::CLOSED:
+        status = "CLOSED";
+        break;
     }
-    else
-    {
-        qDebug() << "Customer not found!";
-    }
+
+    qDebug() << "Status:" << status;
+
+    // Release memory
+    delete account;
 
     return 0;
 }

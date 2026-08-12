@@ -24,7 +24,8 @@ bool AccountService::deposit(
     if (account == nullptr)
         return false;
 
-    account->deposit(amount);
+    if (!account->deposit(amount))
+        return false;
 
     if (!accountRepository.save(*account))
         return false;

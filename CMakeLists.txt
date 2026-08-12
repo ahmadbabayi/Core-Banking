@@ -35,6 +35,9 @@ add_executable(CoreBanking
     src/domain/transfer.h
     src/domain/transfer.cpp
 
+    src/infrastructure/repository/accountrepository.h
+    src/infrastructure/repository/accountrepository.cpp
+
     src/infrastructure/repository/iaccountrepository.h
     src/infrastructure/repository/icustomerrepository.h
     src/infrastructure/repository/itransferrepository.h
