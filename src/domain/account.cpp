@@ -3,24 +3,30 @@
 Account::Account()
     : id(0),
       customerId(0),
+      type(Type::CURRENT),
       balance(0),
-      status(Status::Active)
+      status(Status::ACTIVE)
 {
 }
 
-Account::Account(qint64 id,
-                 const QString& accountNumber,
-                 qint64 customerId,
-                 qint64 balance)
+Account::Account(
+    int id,
+    const QString& accountNumber,
+    int customerId,
+    Type type,
+    qint64 balance,
+    Status status
+)
     : id(id),
       accountNumber(accountNumber),
       customerId(customerId),
+      type(type),
       balance(balance),
-      status(Status::Active)
+      status(status)
 {
 }
 
-qint64 Account::getId() const
+int Account::getId() const
 {
     return id;
 }
@@ -30,9 +36,14 @@ QString Account::getAccountNumber() const
     return accountNumber;
 }
 
-qint64 Account::getCustomerId() const
+int Account::getCustomerId() const
 {
     return customerId;
+}
+
+Account::Type Account::getType() const
+{
+    return type;
 }
 
 qint64 Account::getBalance() const
@@ -45,21 +56,44 @@ Account::Status Account::getStatus() const
     return status;
 }
 
-void Account::deposit(qint64 amount)
+bool Account::deposit(qint64 amount)
 {
+    // Amount must be positive
     if (amount <= 0)
-        return;
+    {
+        return false;
+    }
+
+    // Only active accounts can receive deposits
+    if (status != Status::ACTIVE)
+    {
+        return false;
+    }
 
     balance += amount;
+
+    return true;
 }
 
 bool Account::withdraw(qint64 amount)
 {
+    // Amount must be positive
     if (amount <= 0)
+    {
         return false;
+    }
 
-    if (amount > balance)
+    // Only active accounts can be used
+    if (status != Status::ACTIVE)
+    {
         return false;
+    }
+
+    // Insufficient funds
+    if (amount > balance)
+    {
+        return false;
+    }
 
     balance -= amount;
 

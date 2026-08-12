@@ -9,7 +9,9 @@ public:
     static Database& instance();
 
     bool connect();
-    QSqlDatabase connection();
+    bool isConnected() const;
+
+    QSqlDatabase connection() const;
 
 private:
     Database();

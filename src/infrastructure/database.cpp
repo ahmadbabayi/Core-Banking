@@ -3,6 +3,11 @@
 #include <QDebug>
 #include <QSqlError>
 
+namespace
+{
+const QString CONNECTION_NAME = "CoreBankingConnection";
+}
+
 Database& Database::instance()
 {
     static Database database;
@@ -23,12 +28,29 @@ Database::~Database()
 
 bool Database::connect()
 {
-    if (m_database.isOpen())
+    // Already connected
+    if (m_database.isValid() && m_database.isOpen())
     {
         return true;
     }
 
-    m_database = QSqlDatabase::addDatabase("QPSQL");
+    // Reuse existing Qt SQL connection if it already exists
+    if (QSqlDatabase::contains(CONNECTION_NAME))
+    {
+        m_database = QSqlDatabase::database(CONNECTION_NAME);
+
+        if (m_database.isOpen())
+        {
+            return true;
+        }
+    }
+    else
+    {
+        m_database = QSqlDatabase::addDatabase(
+            "QPSQL",
+            CONNECTION_NAME
+        );
+    }
 
     m_database.setHostName("localhost");
     m_database.setPort(5432);
@@ -49,7 +71,12 @@ bool Database::connect()
     return true;
 }
 
-QSqlDatabase Database::connection()
+bool Database::isConnected() const
+{
+    return m_database.isValid() && m_database.isOpen();
+}
+
+QSqlDatabase Database::connection() const
 {
     return m_database;
 }

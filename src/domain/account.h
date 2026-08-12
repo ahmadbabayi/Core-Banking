@@ -7,36 +7,59 @@
 class Account
 {
 public:
+
+    enum class Type
+    {
+        CURRENT,
+        SAVINGS
+    };
+
     enum class Status
     {
-        Active,
-        Blocked,
-        Closed
+        ACTIVE,
+        BLOCKED,
+        CLOSED
     };
+
+private:
+
+    int id;
+    QString accountNumber;
+    int customerId;
+
+    Type type;
+    qint64 balance;
+    Status status;
+
+public:
 
     Account();
 
-    Account(qint64 id,
-            const QString& accountNumber,
-            qint64 customerId,
-            qint64 balance = 0);
+    Account(
+        int id,
+        const QString& accountNumber,
+        int customerId,
+        Type type,
+        qint64 balance,
+        Status status
+    );
 
-    qint64 getId() const;
+    int getId() const;
+
     QString getAccountNumber() const;
-    qint64 getCustomerId() const;
+
+    int getCustomerId() const;
+
+    Type getType() const;
+
     qint64 getBalance() const;
 
     Status getStatus() const;
 
-    void deposit(qint64 amount);
-    bool withdraw(qint64 amount);
+    // Financial operations
+    bool deposit(qint64 amount);
 
-private:
-    qint64 id;
-    QString accountNumber;
-    qint64 customerId;
-    qint64 balance;
-    Status status;
+    bool withdraw(qint64 amount);
 };
 
 #endif // ACCOUNT_H

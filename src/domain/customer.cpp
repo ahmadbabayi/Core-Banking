@@ -1,18 +1,21 @@
 #include "customer.h"
 
 Customer::Customer()
-    : id(0)
+    : id(0),
+      status(Status::ACTIVE)
 {
 }
 
 Customer::Customer(int id,
                    const QString& nationalId,
                    const QString& firstName,
-                   const QString& lastName)
+                   const QString& lastName,
+                   Status status)
     : id(id),
       nationalId(nationalId),
       firstName(firstName),
-      lastName(lastName)
+      lastName(lastName),
+      status(status)
 {
 }
 
@@ -34,4 +37,9 @@ QString Customer::getFirstName() const
 QString Customer::getLastName() const
 {
     return lastName;
+}
+
+Customer::Status Customer::getStatus() const
+{
+    return status;
 }

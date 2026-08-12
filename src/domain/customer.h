@@ -5,11 +5,21 @@
 
 class Customer
 {
+public:
+
+    enum class Status
+    {
+        ACTIVE,
+        INACTIVE,
+        BLOCKED
+    };
+
 private:
     int id;
     QString nationalId;
     QString firstName;
     QString lastName;
+    Status status;
 
 public:
     Customer();
@@ -17,12 +27,15 @@ public:
     Customer(int id,
              const QString& nationalId,
              const QString& firstName,
-             const QString& lastName);
+             const QString& lastName,
+             Status status = Status::ACTIVE);
 
     int getId() const;
     QString getNationalId() const;
     QString getFirstName() const;
     QString getLastName() const;
+
+    Status getStatus() const;
 };
 
 #endif // CUSTOMER_H

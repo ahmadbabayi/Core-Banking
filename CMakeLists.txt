@@ -17,6 +17,9 @@ add_executable(CoreBanking
     src/application/accountservice.h
     src/application/accountservice.cpp
 
+    src/application/customerservice.h
+    src/application/customerservice.cpp
+
     src/application/transferservice.h
     src/application/transferservice.cpp
 
@@ -36,6 +39,9 @@ add_executable(CoreBanking
     src/infrastructure/repository/icustomerrepository.h
     src/infrastructure/repository/itransferrepository.h
     src/infrastructure/repository/itransactionrepository.h
+
+    src/infrastructure/repository/customerrepository.h
+    src/infrastructure/repository/customerrepository.cpp
 
     src/infrastructure/repository/memoryaccountrepository.h
     src/infrastructure/repository/memoryaccountrepository.cpp
