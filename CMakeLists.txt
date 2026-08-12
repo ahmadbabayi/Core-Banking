@@ -55,6 +55,9 @@ add_executable(CoreBanking
     src/infrastructure/repository/memorytransferrepository.h
     src/infrastructure/repository/memorytransferrepository.cpp
 
+    src/infrastructure/repository/transactionrepository.h
+    src/infrastructure/repository/transactionrepository.cpp
+
     src/infrastructure/database.h
     src/infrastructure/database.cpp
 )

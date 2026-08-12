@@ -10,9 +10,10 @@ class ITransactionRepository
 public:
     virtual ~ITransactionRepository() = default;
 
-    virtual bool save(const Transaction& transaction) = 0;
+    virtual bool save(Transaction& transaction) = 0;
 
-    virtual QList<Transaction> findByAccountId(qint64 accountId) const = 0;
+    virtual QList<Transaction>
+    findByAccountId(qint64 accountId) const = 0;
 };
 
 #endif // ITRANSACTIONREPOSITORY_H

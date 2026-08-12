@@ -6,7 +6,7 @@
 class MemoryTransactionRepository : public ITransactionRepository
 {
 public:
-    bool save(const Transaction& transaction) override;
+    bool save(Transaction& transaction) override;
 
     QList<Transaction> findByAccountId(qint64 accountId) const override;
 

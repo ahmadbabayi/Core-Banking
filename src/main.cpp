@@ -2,24 +2,37 @@
 #include <QDebug>
 
 #include "infrastructure/database.h"
+
 #include "infrastructure/repository/accountrepository.h"
+#include "infrastructure/repository/transactionrepository.h"
+
+#include "application/accountservice.h"
 
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
 
-    // Connect to database
+    // اتصال به PostgreSQL
     if (!Database::instance().connect())
     {
-        qDebug() << "Database connection failed!";
         return 1;
     }
 
-    // Create PostgreSQL Account Repository
     AccountRepository accountRepository;
 
-    // Find account
-    Account* account = accountRepository.findById(5001);
+    TransactionRepository transactionRepository;
+
+    AccountService accountService(
+        accountRepository,
+        transactionRepository
+    );
+
+    // -----------------------------
+    // نمایش موجودی قبل از Deposit
+    // -----------------------------
+
+    Account* account =
+        accountRepository.findById(5001);
 
     if (account == nullptr)
     {
@@ -27,49 +40,66 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    qDebug() << "Account found!";
-    qDebug() << "Account ID:" << account->getId();
-    qDebug() << "Account Number:" << account->getAccountNumber();
-    qDebug() << "Customer ID:" << account->getCustomerId();
+    qDebug() << "Balance before deposit:"
+             << account->getBalance();
 
-    // Account type
-    QString type;
+    // -----------------------------
+    // Deposit
+    // -----------------------------
 
-    if (account->getType() == Account::Type::CURRENT)
+    bool result =
+        accountService.deposit(
+            5001,
+            5000000,
+            "Real atomic deposit test"
+        );
+
+    if (!result)
     {
-        type = "CURRENT";
-    }
-    else
-    {
-        type = "SAVINGS";
-    }
-
-    qDebug() << "Type:" << type;
-
-    qDebug() << "Balance:" << account->getBalance();
-
-    // Account status
-    QString status;
-
-    switch (account->getStatus())
-    {
-    case Account::Status::ACTIVE:
-        status = "ACTIVE";
-        break;
-
-    case Account::Status::BLOCKED:
-        status = "BLOCKED";
-        break;
-
-    case Account::Status::CLOSED:
-        status = "CLOSED";
-        break;
+        qDebug() << "Deposit failed!";
+        return 1;
     }
 
-    qDebug() << "Status:" << status;
+    qDebug() << "Deposit successful!";
 
-    // Release memory
-    delete account;
+    // -----------------------------
+    // خواندن دوباره Account
+    // -----------------------------
+
+    Account* updatedAccount =
+        accountRepository.findById(5001);
+
+    if (updatedAccount == nullptr)
+    {
+        qDebug() << "Account not found!";
+        return 1;
+    }
+
+    qDebug() << "Balance after deposit:"
+             << updatedAccount->getBalance();
+
+    // -----------------------------
+    // خواندن Transactionها
+    // -----------------------------
+
+    QList<Transaction> transactions =
+        transactionRepository.findByAccountId(5001);
+
+    qDebug() << "Transaction count:"
+             << transactions.size();
+
+    for (const Transaction& transaction :
+         transactions)
+    {
+        qDebug() << "Transaction ID:"
+                 << transaction.getId();
+
+        qDebug() << "Amount:"
+                 << transaction.getAmount();
+
+        qDebug() << "Description:"
+                 << transaction.getDescription();
+    }
 
     return 0;
 }

@@ -45,3 +45,8 @@ QString Transaction::getDescription() const
 {
     return description;
 }
+
+void Transaction::setId(qint64 id)
+{
+    this->id = id;
+}

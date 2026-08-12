@@ -1,8 +1,13 @@
 #include "memorytransactionrepository.h"
 
 bool MemoryTransactionRepository::save(
-    const Transaction& transaction)
+    Transaction& transaction)
 {
+    if (transaction.getId() == 0)
+    {
+        transaction.setId(transactions.size() + 1);
+    }
+
     transactions.append(transaction);
 
     return true;

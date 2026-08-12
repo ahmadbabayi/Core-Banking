@@ -7,6 +7,9 @@
 #include "../infrastructure/repository/iaccountrepository.h"
 #include "../infrastructure/repository/itransactionrepository.h"
 
+#include <QString>
+#include <QtGlobal>
+
 class AccountService
 {
 public:
