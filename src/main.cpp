@@ -5,101 +5,112 @@
 
 #include "infrastructure/repository/accountrepository.h"
 #include "infrastructure/repository/transactionrepository.h"
+#include "infrastructure/repository/transferrepository.h"
 
-#include "application/accountservice.h"
+#include "application/transferservice.h"
 
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
 
-    // اتصال به PostgreSQL
     if (!Database::instance().connect())
     {
         return 1;
     }
 
     AccountRepository accountRepository;
-
     TransactionRepository transactionRepository;
+    TransferRepository transferRepository;
 
-    AccountService accountService(
+    TransferService transferService(
         accountRepository,
-        transactionRepository
+        transactionRepository,
+        transferRepository
     );
 
-    // -----------------------------
-    // نمایش موجودی قبل از Deposit
-    // -----------------------------
+    const qint64 sourceAccountId = 5001;
+    const qint64 destinationAccountId = 5002;
+    const qint64 amount = 10000000;
 
-    Account* account =
-        accountRepository.findById(5001);
+    Account* sourceBefore =
+        accountRepository.findById(sourceAccountId);
 
-    if (account == nullptr)
+    Account* destinationBefore =
+        accountRepository.findById(destinationAccountId);
+
+    if (sourceBefore == nullptr ||
+        destinationBefore == nullptr)
     {
-        qDebug() << "Account not found!";
+        qDebug() << "Source or destination account not found!";
         return 1;
     }
 
-    qDebug() << "Balance before deposit:"
-             << account->getBalance();
+    qDebug() << "======================================";
+    qDebug() << "TRANSFER TEST";
+    qDebug() << "======================================";
 
-    // -----------------------------
-    // Deposit
-    // -----------------------------
+    qDebug() << "Source balance before:"
+             << sourceBefore->getBalance();
+
+    qDebug() << "Destination balance before:"
+             << destinationBefore->getBalance();
+
+    qDebug() << "Transfer amount:"
+             << amount;
 
     bool result =
-        accountService.deposit(
-            5001,
-            5000000,
-            "Real atomic deposit test"
+        transferService.transfer(
+            sourceAccountId,
+            destinationAccountId,
+            amount,
+            "First real transfer test"
         );
 
     if (!result)
     {
-        qDebug() << "Deposit failed!";
+        qDebug() << "Transfer failed!";
         return 1;
     }
 
-    qDebug() << "Deposit successful!";
+    qDebug() << "Transfer successful!";
 
-    // -----------------------------
-    // خواندن دوباره Account
-    // -----------------------------
+    Account* sourceAfter =
+        accountRepository.findById(sourceAccountId);
 
-    Account* updatedAccount =
-        accountRepository.findById(5001);
+    Account* destinationAfter =
+        accountRepository.findById(destinationAccountId);
 
-    if (updatedAccount == nullptr)
+    if (sourceAfter == nullptr ||
+        destinationAfter == nullptr)
     {
-        qDebug() << "Account not found!";
+        qDebug() << "Failed to reload accounts!";
         return 1;
     }
 
-    qDebug() << "Balance after deposit:"
-             << updatedAccount->getBalance();
+    qDebug() << "Source balance after:"
+             << sourceAfter->getBalance();
 
-    // -----------------------------
-    // خواندن Transactionها
-    // -----------------------------
+    qDebug() << "Destination balance after:"
+             << destinationAfter->getBalance();
 
-    QList<Transaction> transactions =
-        transactionRepository.findByAccountId(5001);
+    qDebug() << "======================================";
 
-    qDebug() << "Transaction count:"
-             << transactions.size();
-
-    for (const Transaction& transaction :
-         transactions)
+    if (sourceAfter->getBalance()
+            == sourceBefore->getBalance() - amount
+        &&
+        destinationAfter->getBalance()
+            == destinationBefore->getBalance() + amount)
     {
-        qDebug() << "Transaction ID:"
-                 << transaction.getId();
-
-        qDebug() << "Amount:"
-                 << transaction.getAmount();
-
-        qDebug() << "Description:"
-                 << transaction.getDescription();
+        qDebug() << "TRANSFER TEST PASSED!";
+        qDebug() << "Source account debited correctly.";
+        qDebug() << "Destination account credited correctly.";
     }
+    else
+    {
+        qDebug() << "TRANSFER TEST FAILED!";
+    }
+
+    qDebug() << "======================================";
 
     return 0;
 }

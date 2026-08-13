@@ -1,9 +1,9 @@
-#ifndef MEMORYTRANSFERREPOSITORY_H
-#define MEMORYTRANSFERREPOSITORY_H
+#ifndef TRANSFERREPOSITORY_H
+#define TRANSFERREPOSITORY_H
 
 #include "itransferrepository.h"
 
-class MemoryTransferRepository
+class TransferRepository
     : public ITransferRepository
 {
 public:
@@ -21,10 +21,6 @@ public:
     findByDestinationAccountId(
         qint64 accountId
     ) const override;
-
-private:
-
-    QList<Transfer> transfers;
 };
 
-#endif // MEMORYTRANSFERREPOSITORY_H
+#endif // TRANSFERREPOSITORY_H

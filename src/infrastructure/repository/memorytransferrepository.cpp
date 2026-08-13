@@ -1,19 +1,29 @@
 #include "memorytransferrepository.h"
 
 bool MemoryTransferRepository::save(
-    const Transfer& transfer)
+    Transfer& transfer)
 {
+    /*
+     * Memory repository مانند PostgreSQL
+     * ID تولید نمی‌کند.
+     *
+     * ID موجود در object را نگه می‌داریم.
+     */
+
     transfers.append(transfer);
 
     return true;
 }
 
-Transfer* MemoryTransferRepository::findById(qint64 id)
+Transfer*
+MemoryTransferRepository::findById(qint64 id)
 {
     for (Transfer& transfer : transfers)
     {
         if (transfer.getId() == id)
+        {
             return &transfer;
+        }
     }
 
     return nullptr;
@@ -27,7 +37,8 @@ MemoryTransferRepository::findBySourceAccountId(
 
     for (const Transfer& transfer : transfers)
     {
-        if (transfer.getSourceAccountId() == accountId)
+        if (transfer.getSourceAccountId()
+            == accountId)
         {
             result.append(transfer);
         }
@@ -44,7 +55,8 @@ MemoryTransferRepository::findByDestinationAccountId(
 
     for (const Transfer& transfer : transfers)
     {
-        if (transfer.getDestinationAccountId() == accountId)
+        if (transfer.getDestinationAccountId()
+            == accountId)
         {
             result.append(transfer);
         }

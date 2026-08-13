@@ -2,6 +2,7 @@
 #define TRANSFERSERVICE_H
 
 #include "../domain/account.h"
+#include "../domain/transaction.h"
 #include "../domain/transfer.h"
 
 #include "../infrastructure/repository/iaccountrepository.h"

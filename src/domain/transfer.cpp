@@ -9,11 +9,13 @@ Transfer::Transfer()
 {
 }
 
-Transfer::Transfer(qint64 id,
-                   qint64 sourceAccountId,
-                   qint64 destinationAccountId,
-                   qint64 amount,
-                   const QString& description)
+Transfer::Transfer(
+    qint64 id,
+    qint64 sourceAccountId,
+    qint64 destinationAccountId,
+    qint64 amount,
+    const QString& description
+)
     : id(id),
       sourceAccountId(sourceAccountId),
       destinationAccountId(destinationAccountId),
@@ -51,6 +53,11 @@ QString Transfer::getDescription() const
 Transfer::Status Transfer::getStatus() const
 {
     return status;
+}
+
+void Transfer::setId(qint64 id)
+{
+    this->id = id;
 }
 
 void Transfer::complete()

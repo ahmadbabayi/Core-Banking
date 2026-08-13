@@ -7,6 +7,7 @@
 class Transaction
 {
 public:
+
     enum class Type
     {
         Deposit,
@@ -15,11 +16,13 @@ public:
 
     Transaction();
 
-    Transaction(qint64 id,
-                qint64 accountId,
-                Type type,
-                qint64 amount,
-                const QString& description);
+    Transaction(
+        qint64 id,
+        qint64 accountId,
+        Type type,
+        qint64 amount,
+        const QString& description
+    );
 
     qint64 getId() const;
 
@@ -34,10 +37,14 @@ public:
     void setId(qint64 id);
 
 private:
+
     qint64 id;
     qint64 accountId;
+
     Type type;
+
     qint64 amount;
+
     QString description;
 };
 

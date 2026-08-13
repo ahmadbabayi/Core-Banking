@@ -3,13 +3,15 @@
 
 #include "itransactionrepository.h"
 
-class TransactionRepository : public ITransactionRepository
+class TransactionRepository
+    : public ITransactionRepository
 {
 public:
+
     bool save(Transaction& transaction) override;
 
-    QList<Transaction> findByAccountId(
-        qint64 accountId) const override;
+    QList<Transaction>
+    findByAccountId(qint64 accountId) const override;
 };
 
 #endif // TRANSACTIONREPOSITORY_H

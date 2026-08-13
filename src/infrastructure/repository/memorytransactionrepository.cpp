@@ -3,10 +3,12 @@
 bool MemoryTransactionRepository::save(
     Transaction& transaction)
 {
-    if (transaction.getId() == 0)
-    {
-        transaction.setId(transactions.size() + 1);
-    }
+    /*
+     * Memory repository هنوز ID تولید نمی‌کند.
+     *
+     * در تست‌های Memory، اگر ID از قبل تعیین شده باشد
+     * همان ID نگهداری می‌شود.
+     */
 
     transactions.append(transaction);
 

@@ -1,5 +1,11 @@
 #include "transferservice.h"
 
+#include "../infrastructure/database.h"
+
+#include <QDebug>
+#include <QSqlDatabase>
+#include <QSqlError>
+
 TransferService::TransferService(
     IAccountRepository& accountRepository,
     ITransactionRepository& transactionRepository,
@@ -8,7 +14,7 @@ TransferService::TransferService(
     : accountRepository(accountRepository),
       transactionRepository(transactionRepository),
       transferRepository(transferRepository),
-      nextTransactionId(1000),
+      nextTransactionId(1),
       nextTransferId(1)
 {
 }
@@ -19,62 +25,117 @@ bool TransferService::transfer(
     qint64 amount,
     const QString& description)
 {
-    // 1. مبلغ انتقال باید مثبت باشد
     if (amount <= 0)
+    {
+        qDebug() << "Invalid transfer amount!";
         return false;
+    }
 
-    // 2. حساب مبدأ و مقصد نباید یکی باشند
     if (sourceAccountId == destinationAccountId)
+    {
+        qDebug() << "Source and destination accounts are the same!";
         return false;
+    }
 
-    // 3. پیدا کردن حساب مبدأ
-    Account* sourceAccount =
+    QSqlDatabase db =
+        Database::instance().connection();
+
+    // -----------------------------------------
+    // BEGIN
+    // -----------------------------------------
+
+    if (!db.transaction())
+    {
+        qDebug() << "Failed to start database transaction!";
+        qDebug() << db.lastError().text();
+
+        return false;
+    }
+
+    qDebug() << "Transfer database transaction started.";
+
+    // -----------------------------------------
+    // Find source account
+    // -----------------------------------------
+
+    Account* source =
         accountRepository.findById(sourceAccountId);
 
-    if (sourceAccount == nullptr)
-        return false;
+    if (source == nullptr)
+    {
+        qDebug() << "Source account not found!";
 
-    // 4. پیدا کردن حساب مقصد
-    Account* destinationAccount =
+        db.rollback();
+        return false;
+    }
+
+    // -----------------------------------------
+    // Find destination account
+    // -----------------------------------------
+
+    Account* destination =
         accountRepository.findById(destinationAccountId);
 
-    if (destinationAccount == nullptr)
-        return false;
-
-    // 5. ایجاد Transfer با وضعیت Pending
-    Transfer transfer(
-        nextTransferId++,
-        sourceAccountId,
-        destinationAccountId,
-        amount,
-        description
-    );
-
-    // 6. برداشت از حساب مبدأ
-    if (!sourceAccount->withdraw(amount))
+    if (destination == nullptr)
     {
-        transfer.fail();
+        qDebug() << "Destination account not found!";
+
+        db.rollback();
         return false;
     }
 
-    // 7. واریز به حساب مقصد
-    destinationAccount->deposit(amount);
+    // -----------------------------------------
+    // Withdraw from source
+    // -----------------------------------------
 
-    // 8. ذخیره حساب مبدأ
-    if (!accountRepository.save(*sourceAccount))
+    if (!source->withdraw(amount))
     {
-        transfer.fail();
+        qDebug() << "Insufficient balance in source account!";
+
+        db.rollback();
         return false;
     }
 
-    // 9. ذخیره حساب مقصد
-    if (!accountRepository.save(*destinationAccount))
+    // -----------------------------------------
+    // Deposit to destination
+    // -----------------------------------------
+
+    if (!destination->deposit(amount))
     {
-        transfer.fail();
+        qDebug() << "Failed to deposit to destination account!";
+
+        db.rollback();
         return false;
     }
 
-    // 10. ایجاد Transaction برای حساب مبدأ
+    // -----------------------------------------
+    // Save source
+    // -----------------------------------------
+
+    if (!accountRepository.save(*source))
+    {
+        qDebug() << "Failed to save source account!";
+
+        db.rollback();
+        return false;
+    }
+
+    // -----------------------------------------
+    // Save destination
+    // -----------------------------------------
+
+    if (!accountRepository.save(*destination))
+    {
+        qDebug() << "Failed to save destination account!";
+
+        db.rollback();
+        return false;
+    }
+
+    // -----------------------------------------
+    // Withdrawal transaction
+    // -----------------------------------------
+
     Transaction withdrawalTransaction(
         nextTransactionId++,
         sourceAccountId,
@@ -83,14 +144,19 @@ bool TransferService::transfer(
         description
     );
 
-    // 11. ذخیره Transaction مبدأ
-    if (!transactionRepository.save(withdrawalTransaction))
+    if (!transactionRepository.save(
+            withdrawalTransaction))
     {
-        transfer.fail();
+        qDebug() << "Failed to save withdrawal transaction!";
+
+        db.rollback();
         return false;
     }
 
-    // 12. ایجاد Transaction برای حساب مقصد
+    // -----------------------------------------
+    // Deposit transaction
+    // -----------------------------------------
+
     Transaction depositTransaction(
         nextTransactionId++,
         destinationAccountId,
@@ -99,21 +165,54 @@ bool TransferService::transfer(
         description
     );
 
-    // 13. ذخیره Transaction مقصد
-    if (!transactionRepository.save(depositTransaction))
+    if (!transactionRepository.save(
+            depositTransaction))
     {
-        transfer.fail();
+        qDebug() << "Failed to save deposit transaction!";
+
+        db.rollback();
         return false;
     }
 
-    // 14. انتقال با موفقیت انجام شد
+    // -----------------------------------------
+    // Transfer entity
+    // -----------------------------------------
+
+    Transfer transfer(
+        nextTransferId++,
+        sourceAccountId,
+        destinationAccountId,
+        amount,
+        description
+    );
+
     transfer.complete();
 
-    // 15. ذخیره Transfer
     if (!transferRepository.save(transfer))
     {
+        qDebug() << "Failed to save transfer!";
+
+        db.rollback();
         return false;
     }
+
+    // -----------------------------------------
+    // COMMIT
+    // -----------------------------------------
+
+    if (!db.commit())
+    {
+        qDebug() << "Transfer COMMIT failed!";
+        qDebug() << db.lastError().text();
+
+        db.rollback();
+
+        return false;
+    }
+
+    qDebug() << "Transfer committed successfully!";
+    qDebug() << "Transfer ID:"
+             << transfer.getId();
 
     return true;
 }

@@ -8,6 +8,7 @@
 class ITransactionRepository
 {
 public:
+
     virtual ~ITransactionRepository() = default;
 
     virtual bool save(Transaction& transaction) = 0;

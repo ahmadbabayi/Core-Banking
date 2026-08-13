@@ -30,11 +30,16 @@ public:
         const QString& description
     );
 
+    // فقط برای تست مکانیزم ROLLBACK
+    bool depositWithFailureForTest(
+        qint64 accountId,
+        qint64 amount,
+        const QString& description
+    );
+
 private:
     IAccountRepository& accountRepository;
     ITransactionRepository& transactionRepository;
-
-    qint64 nextTransactionId;
 };
 
 #endif // ACCOUNTSERVICE_H

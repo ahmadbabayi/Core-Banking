@@ -8,11 +8,13 @@ Transaction::Transaction()
 {
 }
 
-Transaction::Transaction(qint64 id,
-                         qint64 accountId,
-                         Type type,
-                         qint64 amount,
-                         const QString& description)
+Transaction::Transaction(
+    qint64 id,
+    qint64 accountId,
+    Type type,
+    qint64 amount,
+    const QString& description
+)
     : id(id),
       accountId(accountId),
       type(type),
