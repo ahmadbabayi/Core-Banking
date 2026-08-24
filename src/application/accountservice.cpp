@@ -1,19 +1,24 @@
 #include "accountservice.h"
 
-#include "../infrastructure/database.h"
-
 #include <QDebug>
-#include <QSqlDatabase>
 #include <QSqlError>
+
 
 AccountService::AccountService(
     IAccountRepository& accountRepository,
-    ITransactionRepository& transactionRepository
+    ITransactionRepository& transactionRepository,
+    const QSqlDatabase& database
 )
     : accountRepository(accountRepository),
-      transactionRepository(transactionRepository)
+      transactionRepository(transactionRepository),
+      db(database)
 {
 }
+
+
+// =========================================================
+// DEPOSIT
+// =========================================================
 
 bool AccountService::deposit(
     qint64 accountId,
@@ -22,51 +27,57 @@ bool AccountService::deposit(
 {
     if (amount <= 0)
     {
-        qDebug() << "Invalid deposit amount!";
+        qDebug()
+            << "Invalid deposit amount!";
+
         return false;
     }
 
+    if (!db.transaction())
+    {
+        qDebug()
+            << "Could not start deposit transaction!";
+
+        qDebug()
+            << db.lastError().text();
+
+        return false;
+    }
+
+    qDebug()
+        << "Deposit database transaction started.";
+
     Account* account =
-        accountRepository.findById(accountId);
+        accountRepository.findByIdForUpdate(accountId);
 
     if (account == nullptr)
     {
-        qDebug() << "Account not found!";
+        db.rollback();
         return false;
     }
 
-    QSqlDatabase db =
-        Database::instance().connection();
-
-    if (!db.isOpen())
+    if (account->getStatus()
+        != Account::Status::ACTIVE)
     {
-        qDebug() << "Database is not open!";
+        delete account;
+        db.rollback();
         return false;
     }
 
-    // BEGIN
-    if (!db.transaction())
+    if (!account->deposit(amount))
     {
-        qDebug() << "Failed to start database transaction!";
-        qDebug() << db.lastError().text();
-
+        delete account;
+        db.rollback();
         return false;
     }
 
-    // تغییر موجودی
-    account->deposit(amount);
-
-    // UPDATE account
     if (!accountRepository.save(*account))
     {
-        qDebug() << "Failed to save account!";
-
+        delete account;
         db.rollback();
-
         return false;
     }
 
-    // ایجاد Transaction
     Transaction transaction(
         0,
         accountId,
@@ -75,33 +86,36 @@ bool AccountService::deposit(
         description
     );
 
-    // INSERT transaction
     if (!transactionRepository.save(transaction))
     {
-        qDebug() << "Failed to save transaction!";
-
+        delete account;
         db.rollback();
-
         return false;
     }
 
-    // COMMIT
     if (!db.commit())
     {
-        qDebug() << "Failed to commit database transaction!";
-        qDebug() << db.lastError().text();
+        qDebug()
+            << "Deposit commit failed:"
+            << db.lastError().text();
 
-        db.rollback();
+        delete account;
 
         return false;
     }
 
-    qDebug() << "Deposit transaction committed successfully!";
-    qDebug() << "Transaction ID:"
-             << transaction.getId();
+    qDebug()
+        << "Deposit transaction committed successfully.";
+
+    delete account;
 
     return true;
 }
+
+
+// =========================================================
+// WITHDRAW
+// =========================================================
 
 bool AccountService::withdraw(
     qint64 accountId,
@@ -110,54 +124,63 @@ bool AccountService::withdraw(
 {
     if (amount <= 0)
     {
-        qDebug() << "Invalid withdrawal amount!";
+        qDebug()
+            << "Invalid withdrawal amount!";
+
         return false;
     }
 
+    if (!db.transaction())
+    {
+        qDebug()
+            << "Could not start withdrawal transaction!";
+
+        qDebug()
+            << db.lastError().text();
+
+        return false;
+    }
+
+    qDebug()
+        << "Withdrawal database transaction started.";
+
     Account* account =
-        accountRepository.findById(accountId);
+        accountRepository.findByIdForUpdate(accountId);
 
     if (account == nullptr)
     {
-        qDebug() << "Account not found!";
+        db.rollback();
         return false;
     }
 
-    QSqlDatabase db =
-        Database::instance().connection();
-
-    if (!db.isOpen())
+    if (account->getStatus()
+        != Account::Status::ACTIVE)
     {
-        qDebug() << "Database is not open!";
+        delete account;
+        db.rollback();
         return false;
     }
 
-    // BEGIN
-    if (!db.transaction())
-    {
-        qDebug() << "Failed to start database transaction!";
-        qDebug() << db.lastError().text();
-
-        return false;
-    }
-
-    // برداشت از حساب
     if (!account->withdraw(amount))
     {
-        qDebug() << "Insufficient balance or invalid withdrawal!";
+        qDebug()
+            << "Insufficient balance or invalid withdrawal!";
+
+        delete account;
 
         db.rollback();
 
         return false;
     }
 
-    // UPDATE account
+    qDebug()
+        << "Balance changed inside transaction:"
+        << account->getBalance();
+
     if (!accountRepository.save(*account))
     {
-        qDebug() << "Failed to save account!";
-
+        delete account;
         db.rollback();
-
         return false;
     }
 
@@ -169,138 +192,28 @@ bool AccountService::withdraw(
         description
     );
 
-    // INSERT transaction
     if (!transactionRepository.save(transaction))
     {
-        qDebug() << "Failed to save transaction!";
-
+        delete account;
         db.rollback();
-
         return false;
     }
 
-    // COMMIT
     if (!db.commit())
     {
-        qDebug() << "Failed to commit database transaction!";
-        qDebug() << db.lastError().text();
+        qDebug()
+            << "Withdrawal commit failed:"
+            << db.lastError().text();
 
-        db.rollback();
+        delete account;
 
         return false;
     }
 
-    qDebug() << "Withdrawal transaction committed successfully!";
-    qDebug() << "Transaction ID:"
-             << transaction.getId();
+    qDebug()
+        << "Withdrawal transaction committed successfully.";
+
+    delete account;
 
     return true;
-}
-
-bool AccountService::depositWithFailureForTest(
-    qint64 accountId,
-    qint64 amount,
-    const QString& description)
-{
-    if (amount <= 0)
-    {
-        qDebug() << "Invalid deposit amount!";
-        return false;
-    }
-
-    Account* account =
-        accountRepository.findById(accountId);
-
-    if (account == nullptr)
-    {
-        qDebug() << "Account not found!";
-        return false;
-    }
-
-    QSqlDatabase db =
-        Database::instance().connection();
-
-    if (!db.isOpen())
-    {
-        qDebug() << "Database is not open!";
-        return false;
-    }
-
-    // -----------------------------------------
-    // BEGIN
-    // -----------------------------------------
-
-    if (!db.transaction())
-    {
-        qDebug() << "Failed to start database transaction!";
-        qDebug() << db.lastError().text();
-
-        return false;
-    }
-
-    qDebug() << "Database transaction started.";
-
-    // -----------------------------------------
-    // UPDATE account
-    // -----------------------------------------
-
-    account->deposit(amount);
-
-    qDebug() << "Balance changed inside transaction:"
-             << account->getBalance();
-
-    if (!accountRepository.save(*account))
-    {
-        qDebug() << "Failed to save account!";
-
-        db.rollback();
-
-        return false;
-    }
-
-    qDebug() << "Account update executed.";
-
-    // -----------------------------------------
-    // ایجاد Transaction
-    // -----------------------------------------
-
-    Transaction transaction(
-        0,
-        accountId,
-        Transaction::Type::Deposit,
-        amount,
-        description
-    );
-
-    if (!transactionRepository.save(transaction))
-    {
-        qDebug() << "Failed to save transaction!";
-
-        db.rollback();
-
-        return false;
-    }
-
-    qDebug() << "Transaction temporarily inserted.";
-    qDebug() << "Transaction ID:"
-             << transaction.getId();
-
-    // -----------------------------------------
-    // FAILURE INJECTION
-    // -----------------------------------------
-
-    qDebug() << "!!! TEST FAILURE !!!";
-    qDebug() << "Rolling back transaction...";
-
-    if (!db.rollback())
-    {
-        qDebug() << "ROLLBACK FAILED!";
-        qDebug() << db.lastError().text();
-
-        return false;
-    }
-
-    qDebug() << "ROLLBACK completed successfully.";
-
-    return false;
 }

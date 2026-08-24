@@ -1,102 +1,49 @@
 #include "accountrepository.h"
 
-#include "../database.h"
-
-#include <QSqlQuery>
-#include <QSqlError>
-#include <QVariant>
 #include <QDebug>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QVariant>
 
-bool AccountRepository::save(const Account& account)
+
+AccountRepository::AccountRepository(
+    const QSqlDatabase& database)
+    : db(database)
 {
-    QSqlDatabase db = Database::instance().connection();
+}
 
-    if (!db.isOpen())
-    {
-        qDebug() << "Database is not open!";
-        return false;
-    }
 
+// =========================================================
+// SAVE
+// =========================================================
+
+bool AccountRepository::save(
+    const Account& account)
+{
     QSqlQuery query(db);
 
-    /*
-     * First check whether the account already exists.
-     */
     query.prepare(
-        "SELECT id "
-        "FROM account "
+        "UPDATE account "
+        "SET account_number = :account_number, "
+        "customer_id = :customer_id, "
+        "type = :type, "
+        "balance = :balance, "
+        "status = :status "
         "WHERE id = :id"
-    );
-
-    query.bindValue(":id", account.getId());
-
-    if (!query.exec())
-    {
-        qDebug() << "Failed to check account!";
-        qDebug() << "Database error:"
-                 << query.lastError().text();
-
-        return false;
-    }
-
-    /*
-     * Account already exists -> UPDATE
-     */
-    if (query.next())
-    {
-        query.prepare(
-            "UPDATE account "
-            "SET account_number = :account_number, "
-            "    customer_id = :customer_id, "
-            "    type = :type, "
-            "    balance = :balance, "
-            "    status = :status "
-            "WHERE id = :id"
-        );
-    }
-    /*
-     * Account does not exist -> INSERT
-     */
-    else
-    {
-        query.prepare(
-            "INSERT INTO account "
-            "(id, account_number, customer_id, type, balance, status) "
-            "VALUES "
-            "(:id, :account_number, :customer_id, "
-            " :type, :balance, :status)"
-        );
-    }
-
-    query.bindValue(":id", account.getId());
-
-    query.bindValue(
-        ":account_number",
-        account.getAccountNumber()
-    );
-
-    query.bindValue(
-        ":customer_id",
-        account.getCustomerId()
     );
 
     QString type;
 
-    if (account.getType() == Account::Type::CURRENT)
+    switch (account.getType())
     {
+    case Account::Type::CURRENT:
         type = "CURRENT";
-    }
-    else
-    {
+        break;
+
+    case Account::Type::SAVINGS:
         type = "SAVINGS";
+        break;
     }
-
-    query.bindValue(":type", type);
-
-    query.bindValue(
-        ":balance",
-        account.getBalance()
-    );
 
     QString status;
 
@@ -115,32 +62,61 @@ bool AccountRepository::save(const Account& account)
         break;
     }
 
-    query.bindValue(":status", status);
+    query.bindValue(
+        ":id",
+        account.getId()
+    );
+
+    query.bindValue(
+        ":account_number",
+        account.getAccountNumber()
+    );
+
+    query.bindValue(
+        ":customer_id",
+        account.getCustomerId()
+    );
+
+    query.bindValue(
+        ":type",
+        type
+    );
+
+    query.bindValue(
+        ":balance",
+        account.getBalance()
+    );
+
+    query.bindValue(
+        ":status",
+        status
+    );
 
     if (!query.exec())
     {
-        qDebug() << "Failed to save account!";
-        qDebug() << "Database error:"
-                 << query.lastError().text();
+        qDebug()
+            << "Failed to save account!";
+
+        qDebug()
+            << query.lastError().text();
 
         return false;
     }
 
-    qDebug() << "Account saved successfully!";
+    qDebug()
+        << "Account saved successfully!";
 
     return true;
 }
 
-Account* AccountRepository::findById(qint64 id)
+
+// =========================================================
+// FIND BY ID
+// =========================================================
+
+Account* AccountRepository::findById(
+    qint64 id)
 {
-    QSqlDatabase db = Database::instance().connection();
-
-    if (!db.isOpen())
-    {
-        qDebug() << "Database is not open!";
-        return nullptr;
-    }
-
     QSqlQuery query(db);
 
     query.prepare(
@@ -155,13 +131,18 @@ Account* AccountRepository::findById(qint64 id)
         "WHERE id = :id"
     );
 
-    query.bindValue(":id", id);
+    query.bindValue(
+        ":id",
+        id
+    );
 
     if (!query.exec())
     {
-        qDebug() << "Failed to find account!";
-        qDebug() << "Database error:"
-                 << query.lastError().text();
+        qDebug()
+            << "Failed to find account!";
+
+        qDebug()
+            << query.lastError().text();
 
         return nullptr;
     }
@@ -171,36 +152,31 @@ Account* AccountRepository::findById(qint64 id)
         return nullptr;
     }
 
-    Account::Type type;
+    Account::Type type =
+        Account::Type::CURRENT;
 
-    if (query.value("type").toString() == "CURRENT")
-    {
-        type = Account::Type::CURRENT;
-    }
-    else
+    if (query.value("type").toString()
+        == "SAVINGS")
     {
         type = Account::Type::SAVINGS;
     }
 
-    Account::Status status;
+    Account::Status status =
+        Account::Status::ACTIVE;
 
     QString statusString =
         query.value("status").toString();
 
-    if (statusString == "ACTIVE")
-    {
-        status = Account::Status::ACTIVE;
-    }
-    else if (statusString == "BLOCKED")
+    if (statusString == "BLOCKED")
     {
         status = Account::Status::BLOCKED;
     }
-    else
+    else if (statusString == "CLOSED")
     {
         status = Account::Status::CLOSED;
     }
 
-    Account* account = new Account(
+    return new Account(
         query.value("id").toInt(),
         query.value("account_number").toString(),
         query.value("customer_id").toInt(),
@@ -208,6 +184,86 @@ Account* AccountRepository::findById(qint64 id)
         query.value("balance").toLongLong(),
         status
     );
+}
 
-    return account;
+
+// =========================================================
+// FIND BY ID FOR UPDATE
+// =========================================================
+
+Account* AccountRepository::findByIdForUpdate(
+    qint64 id)
+{
+    QSqlQuery query(db);
+
+    query.prepare(
+        "SELECT "
+        "id, "
+        "account_number, "
+        "customer_id, "
+        "type, "
+        "balance, "
+        "status "
+        "FROM account "
+        "WHERE id = :id "
+        "FOR UPDATE"
+    );
+
+    query.bindValue(
+        ":id",
+        id
+    );
+
+    if (!query.exec())
+    {
+        qDebug()
+            << "Failed to lock account!";
+
+        qDebug()
+            << query.lastError().text();
+
+        return nullptr;
+    }
+
+    if (!query.next())
+    {
+        return nullptr;
+    }
+
+    Account::Type type =
+        Account::Type::CURRENT;
+
+    if (query.value("type").toString()
+        == "SAVINGS")
+    {
+        type = Account::Type::SAVINGS;
+    }
+
+    Account::Status status =
+        Account::Status::ACTIVE;
+
+    QString statusString =
+        query.value("status").toString();
+
+    if (statusString == "BLOCKED")
+    {
+        status = Account::Status::BLOCKED;
+    }
+    else if (statusString == "CLOSED")
+    {
+        status = Account::Status::CLOSED;
+    }
+
+    qDebug()
+        << "Account locked with SELECT FOR UPDATE:"
+        << id;
+
+    return new Account(
+        query.value("id").toInt(),
+        query.value("account_number").toString(),
+        query.value("customer_id").toInt(),
+        type,
+        query.value("balance").toLongLong(),
+        status
+    );
 }

@@ -1,116 +1,278 @@
 #include <QCoreApplication>
 #include <QDebug>
+#include <QSqlDatabase>
 
 #include "infrastructure/database.h"
 
 #include "infrastructure/repository/accountrepository.h"
 #include "infrastructure/repository/transactionrepository.h"
-#include "infrastructure/repository/transferrepository.h"
 
-#include "application/transferservice.h"
+#include "application/accountservice.h"
+
 
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
 
-    if (!Database::instance().connect())
+    // =====================================================
+    // DATABASE
+    // =====================================================
+
+    Database& database =
+        Database::instance();
+
+    if (!database.connect())
     {
+        qDebug()
+            << "Database connection failed!";
+
         return 1;
     }
 
-    AccountRepository accountRepository;
-    TransactionRepository transactionRepository;
-    TransferRepository transferRepository;
 
-    TransferService transferService(
+    // =====================================================
+    // DATABASE CONNECTION
+    // =====================================================
+
+    QSqlDatabase db =
+        database.connection();
+
+
+    // =====================================================
+    // REPOSITORIES
+    // =====================================================
+
+    AccountRepository accountRepository(db);
+
+    TransactionRepository transactionRepository(db);
+
+
+    // =====================================================
+    // ACCOUNT SERVICE
+    // =====================================================
+
+    AccountService accountService(
         accountRepository,
         transactionRepository,
-        transferRepository
+        db
     );
 
-    const qint64 sourceAccountId = 5001;
-    const qint64 destinationAccountId = 5002;
-    const qint64 amount = 10000000;
 
-    Account* sourceBefore =
-        accountRepository.findById(sourceAccountId);
+    // =====================================================
+    // TEST PARAMETERS
+    // =====================================================
 
-    Account* destinationBefore =
-        accountRepository.findById(destinationAccountId);
+    const qint64 accountId = 5001;
 
-    if (sourceBefore == nullptr ||
-        destinationBefore == nullptr)
+    const qint64 withdrawalAmount = 5000000;
+
+    const QString description =
+        "Connection aware withdrawal test";
+
+
+    // =====================================================
+    // READ BALANCE BEFORE
+    // =====================================================
+
+    Account* accountBefore =
+        accountRepository.findById(accountId);
+
+    if (accountBefore == nullptr)
     {
-        qDebug() << "Source or destination account not found!";
+        qDebug()
+            << "Account not found!";
+
         return 1;
     }
 
-    qDebug() << "======================================";
-    qDebug() << "TRANSFER TEST";
-    qDebug() << "======================================";
 
-    qDebug() << "Source balance before:"
-             << sourceBefore->getBalance();
+    qint64 balanceBefore =
+        accountBefore->getBalance();
 
-    qDebug() << "Destination balance before:"
-             << destinationBefore->getBalance();
 
-    qDebug() << "Transfer amount:"
-             << amount;
+    qDebug()
+        << "======================================";
+
+    qDebug()
+        << "CONNECTION AWARE WITHDRAWAL TEST";
+
+    qDebug()
+        << "======================================";
+
+
+    qDebug()
+        << "Balance before withdrawal:"
+        << balanceBefore;
+
+    qDebug()
+        << "Withdrawal amount:"
+        << withdrawalAmount;
+
+
+    delete accountBefore;
+
+
+    // =====================================================
+    // WITHDRAW
+    // =====================================================
 
     bool result =
-        transferService.transfer(
-            sourceAccountId,
-            destinationAccountId,
-            amount,
-            "First real transfer test"
+        accountService.withdraw(
+            accountId,
+            withdrawalAmount,
+            description
         );
+
 
     if (!result)
     {
-        qDebug() << "Transfer failed!";
+        qDebug()
+            << "Withdrawal failed!";
+
         return 1;
     }
 
-    qDebug() << "Transfer successful!";
 
-    Account* sourceAfter =
-        accountRepository.findById(sourceAccountId);
+    qDebug()
+        << "Withdrawal returned SUCCESS.";
 
-    Account* destinationAfter =
-        accountRepository.findById(destinationAccountId);
 
-    if (sourceAfter == nullptr ||
-        destinationAfter == nullptr)
+    // =====================================================
+    // READ BALANCE AFTER
+    // =====================================================
+
+    Account* accountAfter =
+        accountRepository.findById(accountId);
+
+    if (accountAfter == nullptr)
     {
-        qDebug() << "Failed to reload accounts!";
+        qDebug()
+            << "Could not read account after withdrawal!";
+
         return 1;
     }
 
-    qDebug() << "Source balance after:"
-             << sourceAfter->getBalance();
 
-    qDebug() << "Destination balance after:"
-             << destinationAfter->getBalance();
+    qint64 balanceAfter =
+        accountAfter->getBalance();
 
-    qDebug() << "======================================";
 
-    if (sourceAfter->getBalance()
-            == sourceBefore->getBalance() - amount
-        &&
-        destinationAfter->getBalance()
-            == destinationBefore->getBalance() + amount)
+    qDebug()
+        << "Balance after withdrawal:"
+        << balanceAfter;
+
+
+    qint64 expectedBalance =
+        balanceBefore - withdrawalAmount;
+
+
+    qDebug()
+        << "Expected balance:"
+        << expectedBalance;
+
+
+    // =====================================================
+    // CHECK RESULT
+    // =====================================================
+
+    if (balanceAfter != expectedBalance)
     {
-        qDebug() << "TRANSFER TEST PASSED!";
-        qDebug() << "Source account debited correctly.";
-        qDebug() << "Destination account credited correctly.";
-    }
-    else
-    {
-        qDebug() << "TRANSFER TEST FAILED!";
+        qDebug()
+            << "======================================";
+
+        qDebug()
+            << "TEST FAILED!";
+
+        qDebug()
+            << "Balance is incorrect.";
+
+        qDebug()
+            << "======================================";
+
+        delete accountAfter;
+
+        return 1;
     }
 
-    qDebug() << "======================================";
+
+    delete accountAfter;
+
+
+    // =====================================================
+    // READ TRANSACTIONS
+    // =====================================================
+
+    QList<Transaction> transactions =
+        transactionRepository.findByAccountId(
+            accountId
+        );
+
+
+    qDebug()
+        << "Transaction count:"
+        << transactions.size();
+
+
+    if (!transactions.isEmpty())
+    {
+        const Transaction& latest =
+            transactions.last();
+
+        qDebug()
+            << "Latest transaction:";
+
+        qDebug()
+            << "Transaction ID:"
+            << latest.getId();
+
+        qDebug()
+            << "Account ID:"
+            << latest.getAccountId();
+
+        qDebug()
+            << "Amount:"
+            << latest.getAmount();
+
+        qDebug()
+            << "Description:"
+            << latest.getDescription();
+    }
+
+
+    // =====================================================
+    // SUCCESS
+    // =====================================================
+
+    qDebug()
+        << "======================================";
+
+    qDebug()
+        << "CONNECTION AWARE WITHDRAWAL TEST PASSED!";
+
+    qDebug()
+        << "======================================";
+
+    qDebug()
+        << "AccountRepository uses explicit connection.";
+
+    qDebug()
+        << "TransactionRepository uses explicit connection.";
+
+    qDebug()
+        << "AccountService uses explicit connection.";
+
+    qDebug()
+        << "SELECT FOR UPDATE is used.";
+
+    qDebug()
+        << "Withdrawal was committed.";
+
+    qDebug()
+        << "Balance updated correctly.";
+
+    qDebug()
+        << "======================================";
+
 
     return 0;
 }

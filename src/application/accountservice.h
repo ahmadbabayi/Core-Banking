@@ -2,20 +2,21 @@
 #define ACCOUNTSERVICE_H
 
 #include "../domain/account.h"
-#include "../domain/transaction.h"
-
 #include "../infrastructure/repository/iaccountrepository.h"
 #include "../infrastructure/repository/itransactionrepository.h"
 
+#include <QSqlDatabase>
 #include <QString>
 #include <QtGlobal>
 
 class AccountService
 {
 public:
+
     AccountService(
         IAccountRepository& accountRepository,
-        ITransactionRepository& transactionRepository
+        ITransactionRepository& transactionRepository,
+        const QSqlDatabase& database
     );
 
     bool deposit(
@@ -30,16 +31,13 @@ public:
         const QString& description
     );
 
-    // فقط برای تست مکانیزم ROLLBACK
-    bool depositWithFailureForTest(
-        qint64 accountId,
-        qint64 amount,
-        const QString& description
-    );
-
 private:
+
     IAccountRepository& accountRepository;
+
     ITransactionRepository& transactionRepository;
+
+    QSqlDatabase db;
 };
 
 #endif // ACCOUNTSERVICE_H

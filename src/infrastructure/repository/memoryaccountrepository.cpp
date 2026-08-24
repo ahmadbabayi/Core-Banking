@@ -1,16 +1,45 @@
 #include "memoryaccountrepository.h"
 
-bool MemoryAccountRepository::save(const Account& account)
+bool MemoryAccountRepository::save(
+    const Account& account)
 {
-    accounts[account.getId()] = account;
+    for (Account& existing : accounts)
+    {
+        if (existing.getId() == account.getId())
+        {
+            existing = account;
+            return true;
+        }
+    }
+
+    accounts.append(account);
 
     return true;
 }
 
-Account* MemoryAccountRepository::findById(qint64 id)
+Account*
+MemoryAccountRepository::findById(qint64 id)
 {
-    if (!accounts.contains(id))
-        return nullptr;
+    for (Account& account : accounts)
+    {
+        if (account.getId() == id)
+        {
+            return &account;
+        }
+    }
 
-    return &accounts[id];
+    return nullptr;
+}
+
+Account*
+MemoryAccountRepository::findByIdForUpdate(qint64 id)
+{
+    /*
+     * Memory repository Lock واقعی ندارد.
+     *
+     * Lock فقط در Repository دیتابیسی
+     * توسط PostgreSQL انجام می‌شود.
+     */
+
+    return findById(id);
 }

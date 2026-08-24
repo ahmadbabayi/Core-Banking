@@ -3,17 +3,21 @@
 
 #include "iaccountrepository.h"
 
-#include <QMap>
+#include <QList>
 
 class MemoryAccountRepository : public IAccountRepository
 {
 public:
+
     bool save(const Account& account) override;
 
     Account* findById(qint64 id) override;
 
+    Account* findByIdForUpdate(qint64 id) override;
+
 private:
-    QMap<qint64, Account> accounts;
+
+    QList<Account> accounts;
 };
 
 #endif // MEMORYACCOUNTREPOSITORY_H
