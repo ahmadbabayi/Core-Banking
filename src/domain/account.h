@@ -21,18 +21,6 @@ public:
         CLOSED
     };
 
-private:
-
-    int id;
-    QString accountNumber;
-    int customerId;
-
-    Type type;
-    qint64 balance;
-    Status status;
-
-public:
-
     Account();
 
     Account(
@@ -56,10 +44,27 @@ public:
 
     Status getStatus() const;
 
-    // Financial operations
     bool deposit(qint64 amount);
 
     bool withdraw(qint64 amount);
+
+    bool block();
+
+    bool close();
+
+private:
+
+    int id;
+
+    QString accountNumber;
+
+    int customerId;
+
+    Type type;
+
+    qint64 balance;
+
+    Status status;
 };
 
 #endif // ACCOUNT_H

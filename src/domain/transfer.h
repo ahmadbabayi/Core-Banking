@@ -15,15 +15,19 @@ public:
         Failed
     };
 
+
     Transfer();
+
 
     Transfer(
         qint64 id,
         qint64 sourceAccountId,
         qint64 destinationAccountId,
         qint64 amount,
-        const QString& description
+        const QString& description,
+        Status status = Status::Pending
     );
+
 
     qint64 getId() const;
 
@@ -37,11 +41,13 @@ public:
 
     Status getStatus() const;
 
+
     void setId(qint64 id);
 
     void complete();
 
     void fail();
+
 
 private:
 

@@ -1,5 +1,6 @@
 #include "transaction.h"
 
+
 Transaction::Transaction()
     : id(0),
       accountId(0),
@@ -7,6 +8,7 @@ Transaction::Transaction()
       amount(0)
 {
 }
+
 
 Transaction::Transaction(
     qint64 id,
@@ -23,30 +25,44 @@ Transaction::Transaction(
 {
 }
 
+
+// =========================================================
+// GETTERS
+// =========================================================
+
 qint64 Transaction::getId() const
 {
     return id;
 }
+
 
 qint64 Transaction::getAccountId() const
 {
     return accountId;
 }
 
+
 Transaction::Type Transaction::getType() const
 {
     return type;
 }
+
 
 qint64 Transaction::getAmount() const
 {
     return amount;
 }
 
+
 QString Transaction::getDescription() const
 {
     return description;
 }
+
+
+// =========================================================
+// SET ID
+// =========================================================
 
 void Transaction::setId(qint64 id)
 {

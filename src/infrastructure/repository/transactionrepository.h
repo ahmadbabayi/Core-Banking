@@ -5,7 +5,8 @@
 
 #include <QSqlDatabase>
 
-class TransactionRepository : public ITransactionRepository
+class TransactionRepository
+    : public ITransactionRepository
 {
 public:
 
@@ -13,14 +14,23 @@ public:
         const QSqlDatabase& database
     );
 
+
     bool save(
         Transaction& transaction
     ) override;
+
+
+    bool findById(
+        qint64 id,
+        Transaction& transaction
+    ) const override;
+
 
     QList<Transaction>
     findByAccountId(
         qint64 accountId
     ) const override;
+
 
 private:
 

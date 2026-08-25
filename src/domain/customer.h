@@ -14,28 +14,53 @@ public:
         BLOCKED
     };
 
-private:
-    int id;
-    QString nationalId;
-    QString firstName;
-    QString lastName;
-    Status status;
 
-public:
     Customer();
 
-    Customer(int id,
-             const QString& nationalId,
-             const QString& firstName,
-             const QString& lastName,
-             Status status = Status::ACTIVE);
+    Customer(
+        int id,
+        const QString& nationalId,
+        const QString& firstName,
+        const QString& lastName,
+        Status status = Status::ACTIVE
+    );
+
 
     int getId() const;
+
     QString getNationalId() const;
+
     QString getFirstName() const;
+
     QString getLastName() const;
 
     Status getStatus() const;
+
+
+    // -----------------------------------------------------
+    // Domain operations
+    // -----------------------------------------------------
+
+    bool activate();
+
+    bool deactivate();
+
+    bool block();
+
+    bool unblock();
+
+
+private:
+
+    int id;
+
+    QString nationalId;
+
+    QString firstName;
+
+    QString lastName;
+
+    Status status;
 };
 
 #endif // CUSTOMER_H

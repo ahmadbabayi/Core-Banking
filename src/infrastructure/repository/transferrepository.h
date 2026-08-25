@@ -3,24 +3,44 @@
 
 #include "itransferrepository.h"
 
+#include <QSqlDatabase>
+
 class TransferRepository
     : public ITransferRepository
 {
 public:
 
-    bool save(Transfer& transfer) override;
+    explicit TransferRepository(
+        const QSqlDatabase& database
+    );
 
-    Transfer* findById(qint64 id) override;
+
+    bool save(
+        Transfer& transfer
+    ) override;
+
+
+    bool findById(
+        qint64 id,
+        Transfer& transfer
+    ) const override;
+
 
     QList<Transfer>
     findBySourceAccountId(
         qint64 accountId
     ) const override;
 
+
     QList<Transfer>
     findByDestinationAccountId(
         qint64 accountId
     ) const override;
+
+
+private:
+
+    QSqlDatabase db;
 };
 
 #endif // TRANSFERREPOSITORY_H

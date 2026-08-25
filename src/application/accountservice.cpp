@@ -1,6 +1,5 @@
 #include "accountservice.h"
 
-#include <QDebug>
 #include <QSqlError>
 
 
@@ -25,30 +24,29 @@ bool AccountService::deposit(
     qint64 amount,
     const QString& description)
 {
-    if (amount <= 0)
+    if (accountId <= 0 || amount <= 0)
     {
-        qDebug()
-            << "Invalid deposit amount!";
-
         return false;
     }
+
+
+    // -----------------------------------------------------
+    // Start database transaction
+    // -----------------------------------------------------
 
     if (!db.transaction())
     {
-        qDebug()
-            << "Could not start deposit transaction!";
-
-        qDebug()
-            << db.lastError().text();
-
         return false;
     }
 
-    qDebug()
-        << "Deposit database transaction started.";
+
+    // -----------------------------------------------------
+    // Lock account
+    // -----------------------------------------------------
 
     Account* account =
         accountRepository.findByIdForUpdate(accountId);
+
 
     if (account == nullptr)
     {
@@ -56,27 +54,38 @@ bool AccountService::deposit(
         return false;
     }
 
-    if (account->getStatus()
-        != Account::Status::ACTIVE)
-    {
-        delete account;
-        db.rollback();
-        return false;
-    }
+
+    // -----------------------------------------------------
+    // Perform domain operation
+    // -----------------------------------------------------
 
     if (!account->deposit(amount))
     {
         delete account;
+
         db.rollback();
+
         return false;
     }
+
+
+    // -----------------------------------------------------
+    // Persist account
+    // -----------------------------------------------------
 
     if (!accountRepository.save(*account))
     {
         delete account;
+
         db.rollback();
+
         return false;
     }
+
+
+    // -----------------------------------------------------
+    // Create financial transaction
+    // -----------------------------------------------------
 
     Transaction transaction(
         0,
@@ -86,26 +95,28 @@ bool AccountService::deposit(
         description
     );
 
+
     if (!transactionRepository.save(transaction))
     {
         delete account;
+
         db.rollback();
+
         return false;
     }
 
+
+    // -----------------------------------------------------
+    // Commit
+    // -----------------------------------------------------
+
     if (!db.commit())
     {
-        qDebug()
-            << "Deposit commit failed:"
-            << db.lastError().text();
-
         delete account;
 
         return false;
     }
 
-    qDebug()
-        << "Deposit transaction committed successfully.";
 
     delete account;
 
@@ -122,50 +133,44 @@ bool AccountService::withdraw(
     qint64 amount,
     const QString& description)
 {
-    if (amount <= 0)
+    if (accountId <= 0 || amount <= 0)
     {
-        qDebug()
-            << "Invalid withdrawal amount!";
-
         return false;
     }
+
+
+    // -----------------------------------------------------
+    // Start database transaction
+    // -----------------------------------------------------
 
     if (!db.transaction())
     {
-        qDebug()
-            << "Could not start withdrawal transaction!";
-
-        qDebug()
-            << db.lastError().text();
-
         return false;
     }
 
-    qDebug()
-        << "Withdrawal database transaction started.";
+
+    // -----------------------------------------------------
+    // Lock account
+    // -----------------------------------------------------
 
     Account* account =
         accountRepository.findByIdForUpdate(accountId);
 
+
     if (account == nullptr)
     {
         db.rollback();
+
         return false;
     }
 
-    if (account->getStatus()
-        != Account::Status::ACTIVE)
-    {
-        delete account;
-        db.rollback();
-        return false;
-    }
+
+    // -----------------------------------------------------
+    // Perform domain operation
+    // -----------------------------------------------------
 
     if (!account->withdraw(amount))
     {
-        qDebug()
-            << "Insufficient balance or invalid withdrawal!";
-
         delete account;
 
         db.rollback();
@@ -173,16 +178,24 @@ bool AccountService::withdraw(
         return false;
     }
 
-    qDebug()
-        << "Balance changed inside transaction:"
-        << account->getBalance();
+
+    // -----------------------------------------------------
+    // Persist account
+    // -----------------------------------------------------
 
     if (!accountRepository.save(*account))
     {
         delete account;
+
         db.rollback();
+
         return false;
     }
+
+
+    // -----------------------------------------------------
+    // Create financial transaction
+    // -----------------------------------------------------
 
     Transaction transaction(
         0,
@@ -192,26 +205,158 @@ bool AccountService::withdraw(
         description
     );
 
+
     if (!transactionRepository.save(transaction))
     {
         delete account;
+
         db.rollback();
+
         return false;
     }
 
+
+    // -----------------------------------------------------
+    // Commit
+    // -----------------------------------------------------
+
     if (!db.commit())
     {
-        qDebug()
-            << "Withdrawal commit failed:"
-            << db.lastError().text();
-
         delete account;
 
         return false;
     }
 
-    qDebug()
-        << "Withdrawal transaction committed successfully.";
+
+    delete account;
+
+    return true;
+}
+
+
+// =========================================================
+// BLOCK ACCOUNT
+// =========================================================
+
+bool AccountService::block(
+    qint64 accountId)
+{
+    if (accountId <= 0)
+    {
+        return false;
+    }
+
+
+    if (!db.transaction())
+    {
+        return false;
+    }
+
+
+    Account* account =
+        accountRepository.findByIdForUpdate(accountId);
+
+
+    if (account == nullptr)
+    {
+        db.rollback();
+
+        return false;
+    }
+
+
+    if (!account->block())
+    {
+        delete account;
+
+        db.rollback();
+
+        return false;
+    }
+
+
+    if (!accountRepository.save(*account))
+    {
+        delete account;
+
+        db.rollback();
+
+        return false;
+    }
+
+
+    if (!db.commit())
+    {
+        delete account;
+
+        return false;
+    }
+
+
+    delete account;
+
+    return true;
+}
+
+
+// =========================================================
+// CLOSE ACCOUNT
+// =========================================================
+
+bool AccountService::close(
+    qint64 accountId)
+{
+    if (accountId <= 0)
+    {
+        return false;
+    }
+
+
+    if (!db.transaction())
+    {
+        return false;
+    }
+
+
+    Account* account =
+        accountRepository.findByIdForUpdate(accountId);
+
+
+    if (account == nullptr)
+    {
+        db.rollback();
+
+        return false;
+    }
+
+
+    if (!account->close())
+    {
+        delete account;
+
+        db.rollback();
+
+        return false;
+    }
+
+
+    if (!accountRepository.save(*account))
+    {
+        delete account;
+
+        db.rollback();
+
+        return false;
+    }
+
+
+    if (!db.commit())
+    {
+        delete account;
+
+        return false;
+    }
+
 
     delete account;
 

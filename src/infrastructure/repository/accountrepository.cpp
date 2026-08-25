@@ -3,7 +3,6 @@
 #include <QDebug>
 #include <QSqlError>
 #include <QSqlQuery>
-#include <QVariant>
 
 
 AccountRepository::AccountRepository(
@@ -32,6 +31,7 @@ bool AccountRepository::save(
         "WHERE id = :id"
     );
 
+
     QString type;
 
     switch (account.getType())
@@ -44,6 +44,7 @@ bool AccountRepository::save(
         type = "SAVINGS";
         break;
     }
+
 
     QString status;
 
@@ -61,6 +62,7 @@ bool AccountRepository::save(
         status = "CLOSED";
         break;
     }
+
 
     query.bindValue(
         ":id",
@@ -92,19 +94,27 @@ bool AccountRepository::save(
         status
     );
 
+
     if (!query.exec())
     {
         qDebug()
-            << "Failed to save account!";
-
-        qDebug()
+            << "Failed to save account:"
             << query.lastError().text();
 
         return false;
     }
 
-    qDebug()
-        << "Account saved successfully!";
+
+    if (query.numRowsAffected() != 1)
+    {
+        qDebug()
+            << "Account update affected"
+            << query.numRowsAffected()
+            << "rows.";
+
+        return false;
+    }
+
 
     return true;
 }
@@ -131,26 +141,28 @@ Account* AccountRepository::findById(
         "WHERE id = :id"
     );
 
+
     query.bindValue(
         ":id",
         id
     );
 
+
     if (!query.exec())
     {
         qDebug()
-            << "Failed to find account!";
-
-        qDebug()
+            << "Failed to find account:"
             << query.lastError().text();
 
         return nullptr;
     }
 
+
     if (!query.next())
     {
         return nullptr;
     }
+
 
     Account::Type type =
         Account::Type::CURRENT;
@@ -158,23 +170,29 @@ Account* AccountRepository::findById(
     if (query.value("type").toString()
         == "SAVINGS")
     {
-        type = Account::Type::SAVINGS;
+        type =
+            Account::Type::SAVINGS;
     }
+
 
     Account::Status status =
         Account::Status::ACTIVE;
 
-    QString statusString =
+    const QString statusString =
         query.value("status").toString();
+
 
     if (statusString == "BLOCKED")
     {
-        status = Account::Status::BLOCKED;
+        status =
+            Account::Status::BLOCKED;
     }
     else if (statusString == "CLOSED")
     {
-        status = Account::Status::CLOSED;
+        status =
+            Account::Status::CLOSED;
     }
+
 
     return new Account(
         query.value("id").toInt(),
@@ -209,26 +227,28 @@ Account* AccountRepository::findByIdForUpdate(
         "FOR UPDATE"
     );
 
+
     query.bindValue(
         ":id",
         id
     );
 
+
     if (!query.exec())
     {
         qDebug()
-            << "Failed to lock account!";
-
-        qDebug()
+            << "Failed to lock account:"
             << query.lastError().text();
 
         return nullptr;
     }
 
+
     if (!query.next())
     {
         return nullptr;
     }
+
 
     Account::Type type =
         Account::Type::CURRENT;
@@ -236,27 +256,29 @@ Account* AccountRepository::findByIdForUpdate(
     if (query.value("type").toString()
         == "SAVINGS")
     {
-        type = Account::Type::SAVINGS;
+        type =
+            Account::Type::SAVINGS;
     }
+
 
     Account::Status status =
         Account::Status::ACTIVE;
 
-    QString statusString =
+    const QString statusString =
         query.value("status").toString();
+
 
     if (statusString == "BLOCKED")
     {
-        status = Account::Status::BLOCKED;
+        status =
+            Account::Status::BLOCKED;
     }
     else if (statusString == "CLOSED")
     {
-        status = Account::Status::CLOSED;
+        status =
+            Account::Status::CLOSED;
     }
 
-    qDebug()
-        << "Account locked with SELECT FOR UPDATE:"
-        << id;
 
     return new Account(
         query.value("id").toInt(),

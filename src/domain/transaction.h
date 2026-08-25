@@ -14,7 +14,9 @@ public:
         Withdrawal
     };
 
+
     Transaction();
+
 
     Transaction(
         qint64 id,
@@ -23,6 +25,7 @@ public:
         qint64 amount,
         const QString& description
     );
+
 
     qint64 getId() const;
 
@@ -34,11 +37,15 @@ public:
 
     QString getDescription() const;
 
+
+    // Database-generated ID
     void setId(qint64 id);
+
 
 private:
 
     qint64 id;
+
     qint64 accountId;
 
     Type type;

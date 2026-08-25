@@ -1,22 +1,27 @@
 #ifndef TRANSFERSERVICE_H
 #define TRANSFERSERVICE_H
 
-#include "../domain/account.h"
-#include "../domain/transaction.h"
 #include "../domain/transfer.h"
 
 #include "../infrastructure/repository/iaccountrepository.h"
 #include "../infrastructure/repository/itransactionrepository.h"
 #include "../infrastructure/repository/itransferrepository.h"
 
+#include <QSqlDatabase>
+#include <QString>
+#include <QtGlobal>
+
 class TransferService
 {
 public:
+
     TransferService(
         IAccountRepository& accountRepository,
         ITransactionRepository& transactionRepository,
-        ITransferRepository& transferRepository
+        ITransferRepository& transferRepository,
+        const QSqlDatabase& database
     );
+
 
     bool transfer(
         qint64 sourceAccountId,
@@ -25,13 +30,16 @@ public:
         const QString& description
     );
 
+
 private:
+
     IAccountRepository& accountRepository;
+
     ITransactionRepository& transactionRepository;
+
     ITransferRepository& transferRepository;
 
-    qint64 nextTransactionId;
-    qint64 nextTransferId;
+    QSqlDatabase db;
 };
 
 #endif // TRANSFERSERVICE_H

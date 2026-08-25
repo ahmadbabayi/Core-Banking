@@ -1,5 +1,8 @@
 #include "account.h"
 
+#include <limits>
+
+
 Account::Account()
     : id(0),
       customerId(0),
@@ -8,6 +11,7 @@ Account::Account()
       status(Status::ACTIVE)
 {
 }
+
 
 Account::Account(
     int id,
@@ -26,46 +30,66 @@ Account::Account(
 {
 }
 
+
+// =========================================================
+// GETTERS
+// =========================================================
+
 int Account::getId() const
 {
     return id;
 }
+
 
 QString Account::getAccountNumber() const
 {
     return accountNumber;
 }
 
+
 int Account::getCustomerId() const
 {
     return customerId;
 }
+
 
 Account::Type Account::getType() const
 {
     return type;
 }
 
+
 qint64 Account::getBalance() const
 {
     return balance;
 }
+
 
 Account::Status Account::getStatus() const
 {
     return status;
 }
 
+
+// =========================================================
+// DEPOSIT
+// =========================================================
+
 bool Account::deposit(qint64 amount)
 {
-    // Amount must be positive
     if (amount <= 0)
     {
         return false;
     }
 
-    // Only active accounts can receive deposits
     if (status != Status::ACTIVE)
+    {
+        return false;
+    }
+
+    // Prevent signed integer overflow.
+    if (amount >
+        std::numeric_limits<qint64>::max() - balance)
     {
         return false;
     }
@@ -75,27 +99,70 @@ bool Account::deposit(qint64 amount)
     return true;
 }
 
+
+// =========================================================
+// WITHDRAW
+// =========================================================
+
 bool Account::withdraw(qint64 amount)
 {
-    // Amount must be positive
     if (amount <= 0)
     {
         return false;
     }
 
-    // Only active accounts can be used
     if (status != Status::ACTIVE)
     {
         return false;
     }
 
-    // Insufficient funds
     if (amount > balance)
     {
         return false;
     }
 
     balance -= amount;
+
+    return true;
+}
+
+
+// =========================================================
+// BLOCK
+// =========================================================
+
+bool Account::block()
+{
+    if (status != Status::ACTIVE)
+    {
+        return false;
+    }
+
+    status = Status::BLOCKED;
+
+    return true;
+}
+
+
+// =========================================================
+// CLOSE
+// =========================================================
+
+bool Account::close()
+{
+    if (status == Status::CLOSED)
+    {
+        return false;
+    }
+
+    // A bank account must not be closed
+    // while money remains in it.
+    if (balance != 0)
+    {
+        return false;
+    }
+
+    status = Status::CLOSED;
 
     return true;
 }

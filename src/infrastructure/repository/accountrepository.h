@@ -13,11 +13,17 @@ public:
         const QSqlDatabase& database
     );
 
-    bool save(const Account& account) override;
+    bool save(
+        const Account& account
+    ) override;
 
-    Account* findById(qint64 id) override;
+    Account* findById(
+        qint64 id
+    ) override;
 
-    Account* findByIdForUpdate(qint64 id) override;
+    Account* findByIdForUpdate(
+        qint64 id
+    ) override;
 
 private:
 

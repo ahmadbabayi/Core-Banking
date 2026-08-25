@@ -1,121 +1,170 @@
 #include "transferrepository.h"
 
-#include "../database.h"
-
 #include <QDebug>
-#include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
-#include <QVariant>
+
+
+// =========================================================
+// STATUS CONVERSION
+// =========================================================
+
+static QString statusToString(
+    Transfer::Status status)
+{
+    switch (status)
+    {
+    case Transfer::Status::Pending:
+        return "PENDING";
+
+    case Transfer::Status::Completed:
+        return "COMPLETED";
+
+    case Transfer::Status::Failed:
+        return "FAILED";
+    }
+
+    return "PENDING";
+}
+
+
+static Transfer::Status stringToStatus(
+    const QString& status)
+{
+    if (status == "COMPLETED")
+    {
+        return Transfer::Status::Completed;
+    }
+
+    if (status == "FAILED")
+    {
+        return Transfer::Status::Failed;
+    }
+
+    return Transfer::Status::Pending;
+}
+
+
+// =========================================================
+// CONSTRUCTOR
+// =========================================================
+
+TransferRepository::TransferRepository(
+    const QSqlDatabase& database)
+    : db(database)
+{
+}
+
+
+// =========================================================
+// SAVE
+// =========================================================
 
 bool TransferRepository::save(
     Transfer& transfer)
 {
-    QSqlDatabase db =
-        Database::instance().connection();
-
     QSqlQuery query(db);
 
-    /*
-     * ID را PostgreSQL تولید می‌کند.
-     */
 
     query.prepare(
         "INSERT INTO transfer "
         "(source_account_id, "
-        "destination_account_id, "
-        "amount, "
-        "description, "
-        "status) "
+        " destination_account_id, "
+        " amount, "
+        " description, "
+        " status) "
         "VALUES "
         "(:source_account_id, "
-        ":destination_account_id, "
-        ":amount, "
-        ":description, "
-        ":status) "
+        " :destination_account_id, "
+        " :amount, "
+        " :description, "
+        " :status) "
         "RETURNING id"
     );
 
-    QString status;
-
-    switch (transfer.getStatus())
-    {
-    case Transfer::Status::Pending:
-        status = "PENDING";
-        break;
-
-    case Transfer::Status::Completed:
-        status = "COMPLETED";
-        break;
-
-    case Transfer::Status::Failed:
-        status = "FAILED";
-        break;
-    }
 
     query.bindValue(
         ":source_account_id",
         transfer.getSourceAccountId()
     );
 
+
     query.bindValue(
         ":destination_account_id",
         transfer.getDestinationAccountId()
     );
+
 
     query.bindValue(
         ":amount",
         transfer.getAmount()
     );
 
+
     query.bindValue(
         ":description",
         transfer.getDescription()
     );
 
+
     query.bindValue(
         ":status",
-        status
+        statusToString(
+            transfer.getStatus()
+        )
     );
+
 
     if (!query.exec())
     {
-        qDebug() << "Failed to save transfer!";
+        qDebug()
+            << "Failed to save transfer!";
 
-        qDebug() << "Database error:"
-                 << query.lastError().text();
+        qDebug()
+            << "Database error:"
+            << query.lastError().text();
 
         return false;
     }
+
 
     if (!query.next())
     {
         qDebug()
-            << "Transfer inserted but ID was not returned!";
+            << "Transfer inserted but ID "
+               "could not be retrieved.";
 
         return false;
     }
 
-    qint64 generatedId =
-        query.value(0).toLongLong();
 
-    transfer.setId(generatedId);
+    transfer.setId(
+        query.value(0).toLongLong()
+    );
 
-    qDebug() << "Transfer saved successfully!";
 
-    qDebug() << "Transfer ID:"
-             << transfer.getId();
+    qDebug()
+        << "Transfer saved successfully!";
+
+    qDebug()
+        << "Transfer ID:"
+        << transfer.getId();
+
 
     return true;
 }
 
-Transfer*
-TransferRepository::findById(qint64 id)
-{
-    QSqlDatabase db =
-        Database::instance().connection();
 
+// =========================================================
+// FIND BY ID
+// =========================================================
+
+bool TransferRepository::findById(
+    qint64 id,
+    Transfer& transfer) const
+{
     QSqlQuery query(db);
+
 
     query.prepare(
         "SELECT "
@@ -129,10 +178,12 @@ TransferRepository::findById(qint64 id)
         "WHERE id = :id"
     );
 
+
     query.bindValue(
         ":id",
         id
     );
+
 
     if (!query.exec())
     {
@@ -143,46 +194,46 @@ TransferRepository::findById(qint64 id)
             << "Database error:"
             << query.lastError().text();
 
-        return nullptr;
+        return false;
     }
+
 
     if (!query.next())
     {
-        return nullptr;
+        return false;
     }
 
-    Transfer* transfer =
-        new Transfer(
-            query.value("id")
-                .toLongLong(),
 
-            query.value("source_account_id")
-                .toLongLong(),
+    transfer = Transfer(
+        query.value("id")
+            .toLongLong(),
 
-            query.value("destination_account_id")
-                .toLongLong(),
+        query.value("source_account_id")
+            .toLongLong(),
 
-            query.value("amount")
-                .toLongLong(),
+        query.value("destination_account_id")
+            .toLongLong(),
 
-            query.value("description")
+        query.value("amount")
+            .toLongLong(),
+
+        query.value("description")
+            .toString(),
+
+        stringToStatus(
+            query.value("status")
                 .toString()
-        );
+        )
+    );
 
-    QString status =
-        query.value("status").toString();
 
-    if (status == "COMPLETED")
-    {
-        transfer->complete();
-    }
-    else if (status == "FAILED")
-    {
-        transfer->fail();
-    }
-
-    return transfer;
+    return true;
 }
+
+
+// =========================================================
+// FIND BY SOURCE ACCOUNT
+// =========================================================
 
 QList<Transfer>
 TransferRepository::findBySourceAccountId(
@@ -190,10 +241,9 @@ TransferRepository::findBySourceAccountId(
 {
     QList<Transfer> result;
 
-    QSqlDatabase db =
-        Database::instance().connection();
 
     QSqlQuery query(db);
+
 
     query.prepare(
         "SELECT "
@@ -205,13 +255,15 @@ TransferRepository::findBySourceAccountId(
         "status "
         "FROM transfer "
         "WHERE source_account_id = :account_id "
-        "ORDER BY id"
+        "ORDER BY id ASC"
     );
+
 
     query.bindValue(
         ":account_id",
         accountId
     );
+
 
     if (!query.exec())
     {
@@ -219,48 +271,47 @@ TransferRepository::findBySourceAccountId(
             << "Failed to find source transfers!";
 
         qDebug()
-            << "Database error:"
             << query.lastError().text();
 
         return result;
     }
 
+
     while (query.next())
     {
-        Transfer transfer(
-            query.value("id")
-                .toLongLong(),
+        result.append(
+            Transfer(
+                query.value("id")
+                    .toLongLong(),
 
-            query.value("source_account_id")
-                .toLongLong(),
+                query.value("source_account_id")
+                    .toLongLong(),
 
-            query.value("destination_account_id")
-                .toLongLong(),
+                query.value("destination_account_id")
+                    .toLongLong(),
 
-            query.value("amount")
-                .toLongLong(),
+                query.value("amount")
+                    .toLongLong(),
 
-            query.value("description")
-                .toString()
+                query.value("description")
+                    .toString(),
+
+                stringToStatus(
+                    query.value("status")
+                        .toString()
+                )
+            )
         );
-
-        QString status =
-            query.value("status").toString();
-
-        if (status == "COMPLETED")
-        {
-            transfer.complete();
-        }
-        else if (status == "FAILED")
-        {
-            transfer.fail();
-        }
-
-        result.append(transfer);
     }
+
 
     return result;
 }
+
+
+// =========================================================
+// FIND BY DESTINATION ACCOUNT
+// =========================================================
 
 QList<Transfer>
 TransferRepository::findByDestinationAccountId(
@@ -268,10 +319,9 @@ TransferRepository::findByDestinationAccountId(
 {
     QList<Transfer> result;
 
-    QSqlDatabase db =
-        Database::instance().connection();
 
     QSqlQuery query(db);
+
 
     query.prepare(
         "SELECT "
@@ -283,13 +333,15 @@ TransferRepository::findByDestinationAccountId(
         "status "
         "FROM transfer "
         "WHERE destination_account_id = :account_id "
-        "ORDER BY id"
+        "ORDER BY id ASC"
     );
+
 
     query.bindValue(
         ":account_id",
         accountId
     );
+
 
     if (!query.exec())
     {
@@ -297,45 +349,39 @@ TransferRepository::findByDestinationAccountId(
             << "Failed to find destination transfers!";
 
         qDebug()
-            << "Database error:"
             << query.lastError().text();
 
         return result;
     }
 
+
     while (query.next())
     {
-        Transfer transfer(
-            query.value("id")
-                .toLongLong(),
+        result.append(
+            Transfer(
+                query.value("id")
+                    .toLongLong(),
 
-            query.value("source_account_id")
-                .toLongLong(),
+                query.value("source_account_id")
+                    .toLongLong(),
 
-            query.value("destination_account_id")
-                .toLongLong(),
+                query.value("destination_account_id")
+                    .toLongLong(),
 
-            query.value("amount")
-                .toLongLong(),
+                query.value("amount")
+                    .toLongLong(),
 
-            query.value("description")
-                .toString()
+                query.value("description")
+                    .toString(),
+
+                stringToStatus(
+                    query.value("status")
+                        .toString()
+                )
+            )
         );
-
-        QString status =
-            query.value("status").toString();
-
-        if (status == "COMPLETED")
-        {
-            transfer.complete();
-        }
-        else if (status == "FAILED")
-        {
-            transfer.fail();
-        }
-
-        result.append(transfer);
     }
+
 
     return result;
 }

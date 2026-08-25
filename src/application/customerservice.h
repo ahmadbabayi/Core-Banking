@@ -6,16 +6,40 @@
 
 class CustomerService
 {
+public:
+
+    explicit CustomerService(
+        ICustomerRepository& customerRepository
+    );
+
+    // -----------------------------------------------------
+    // Deactivate customer
+    //
+    // ACTIVE -> INACTIVE
+    //
+    // A BLOCKED customer cannot be deactivated directly.
+    // -----------------------------------------------------
+    bool deactivateCustomer(
+        int customerId
+    );
+
+    // -----------------------------------------------------
+    // Block customer
+    //
+    // ACTIVE -> BLOCKED
+    // -----------------------------------------------------
+    bool blockCustomer(
+        int customerId
+    );
+
 private:
+
     ICustomerRepository& customerRepository;
 
-public:
-    explicit CustomerService(
-        ICustomerRepository& customerRepository);
-
-    bool deactivateCustomer(int customerId);
-
-    bool blockCustomer(int customerId);
+    bool customerExists(
+        int customerId,
+        Customer& customer
+    );
 };
 
 #endif // CUSTOMERSERVICE_H

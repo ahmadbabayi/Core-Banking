@@ -19,6 +19,11 @@ public:
         const QSqlDatabase& database
     );
 
+
+    // =====================================================
+    // Financial operations
+    // =====================================================
+
     bool deposit(
         qint64 accountId,
         qint64 amount,
@@ -30,6 +35,20 @@ public:
         qint64 amount,
         const QString& description
     );
+
+
+    // =====================================================
+    // Account lifecycle
+    // =====================================================
+
+    bool block(
+        qint64 accountId
+    );
+
+    bool close(
+        qint64 accountId
+    );
+
 
 private:
 
