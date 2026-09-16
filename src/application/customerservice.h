@@ -4,42 +4,46 @@
 #include "../domain/customer.h"
 #include "../infrastructure/repository/icustomerrepository.h"
 
+#include <QSqlDatabase>
+#include <QString>
+
 class CustomerService
 {
 public:
-
-    explicit CustomerService(
-        ICustomerRepository& customerRepository
+    CustomerService(
+        ICustomerRepository& customerRepository,
+        const QSqlDatabase& database
     );
 
-    // -----------------------------------------------------
-    // Deactivate customer
-    //
-    // ACTIVE -> INACTIVE
-    //
-    // A BLOCKED customer cannot be deactivated directly.
-    // -----------------------------------------------------
+    bool createCustomer(
+        int id,
+        const QString& nationalId,
+        const QString& firstName,
+        const QString& lastName,
+        Customer& createdCustomer
+    );
+
+    bool findCustomerById(
+        int customerId,
+        Customer& customer
+    );
+
+    bool findCustomerByNationalId(
+        const QString& nationalId,
+        Customer& customer
+    );
+
     bool deactivateCustomer(
         int customerId
     );
 
-    // -----------------------------------------------------
-    // Block customer
-    //
-    // ACTIVE -> BLOCKED
-    // -----------------------------------------------------
     bool blockCustomer(
         int customerId
     );
 
 private:
-
     ICustomerRepository& customerRepository;
-
-    bool customerExists(
-        int customerId,
-        Customer& customer
-    );
+    QSqlDatabase db;
 };
 
 #endif // CUSTOMERSERVICE_H

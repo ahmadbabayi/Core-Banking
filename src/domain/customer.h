@@ -6,14 +6,12 @@
 class Customer
 {
 public:
-
     enum class Status
     {
         ACTIVE,
         INACTIVE,
         BLOCKED
     };
-
 
     Customer();
 
@@ -25,41 +23,17 @@ public:
         Status status = Status::ACTIVE
     );
 
-
     int getId() const;
-
     QString getNationalId() const;
-
     QString getFirstName() const;
-
     QString getLastName() const;
-
     Status getStatus() const;
 
-
-    // -----------------------------------------------------
-    // Domain operations
-    // -----------------------------------------------------
-
-    bool activate();
-
-    bool deactivate();
-
-    bool block();
-
-    bool unblock();
-
-
 private:
-
     int id;
-
     QString nationalId;
-
     QString firstName;
-
     QString lastName;
-
     Status status;
 };
 

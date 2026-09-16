@@ -1,18 +1,20 @@
 #include "customerrepository.h"
 
-#include "../database.h"
-
-#include <QDebug>
-#include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlError>
+#include <QVariant>
+#include <QDebug>
 
+CustomerRepository::CustomerRepository(
+    const QSqlDatabase& database
+)
+    : db(database)
+{
+}
 
-// =========================================================
-// STATUS CONVERSION
-// =========================================================
-
-static QString statusToString(
-    Customer::Status status)
+QString CustomerRepository::statusToString(
+    Customer::Status status
+) const
 {
     switch (status)
     {
@@ -29,152 +31,86 @@ static QString statusToString(
     return "ACTIVE";
 }
 
-
-static Customer::Status stringToStatus(
-    const QString& status)
+Customer::Status CustomerRepository::stringToStatus(
+    const QString& status
+) const
 {
     if (status == "INACTIVE")
-    {
         return Customer::Status::INACTIVE;
-    }
 
     if (status == "BLOCKED")
-    {
         return Customer::Status::BLOCKED;
-    }
 
     return Customer::Status::ACTIVE;
 }
 
-
-// =========================================================
-// SAVE
-// =========================================================
-
 bool CustomerRepository::save(
-    const Customer& customer)
+    const Customer& customer
+)
 {
-    QSqlQuery query(
-        Database::instance().connection()
-    );
-
+    QSqlQuery query(db);
 
     query.prepare(
         "INSERT INTO customer "
         "(id, national_id, first_name, last_name, status) "
         "VALUES "
-        "(:id, :national_id, :first_name, "
-        ":last_name, :status)"
+        "(:id, :national_id, :first_name, :last_name, :status)"
     );
 
-
-    query.bindValue(
-        ":id",
-        customer.getId()
-    );
-
-    query.bindValue(
-        ":national_id",
-        customer.getNationalId()
-    );
-
-    query.bindValue(
-        ":first_name",
-        customer.getFirstName()
-    );
-
-    query.bindValue(
-        ":last_name",
-        customer.getLastName()
-    );
-
+    query.bindValue(":id", customer.getId());
+    query.bindValue(":national_id", customer.getNationalId());
+    query.bindValue(":first_name", customer.getFirstName());
+    query.bindValue(":last_name", customer.getLastName());
     query.bindValue(
         ":status",
-        statusToString(
-            customer.getStatus()
-        )
+        statusToString(customer.getStatus())
     );
-
 
     if (!query.exec())
     {
-        const QSqlError error =
-            query.lastError();
-
-
         qDebug()
-            << "Failed to save customer!";
+            << "CustomerRepository::save failed:"
+            << query.lastError().text();
 
-        qDebug()
-            << "Database error:"
-            << error.text();
-
-
-        if (error.nativeErrorCode() == "23505")
+        if (query.lastError().nativeErrorCode() == "23505")
         {
             qDebug()
-                << "Customer already exists "
-                   "or national ID is duplicated.";
+                << "Customer already exists or national ID is duplicate.";
         }
-
 
         return false;
     }
 
-
     return true;
 }
 
-
-// =========================================================
-// FIND BY ID
-// =========================================================
-
 bool CustomerRepository::findById(
     int id,
-    Customer& customer)
+    Customer& customer
+)
 {
-    QSqlQuery query(
-        Database::instance().connection()
-    );
-
+    QSqlQuery query(db);
 
     query.prepare(
         "SELECT "
-        "id, "
-        "national_id, "
-        "first_name, "
-        "last_name, "
-        "status "
+        "id, national_id, first_name, last_name, status "
         "FROM customer "
         "WHERE id = :id"
     );
 
-
-    query.bindValue(
-        ":id",
-        id
-    );
-
+    query.bindValue(":id", id);
 
     if (!query.exec())
     {
         qDebug()
-            << "Failed to find customer!";
-
-        qDebug()
-            << "Database error:"
+            << "CustomerRepository::findById failed:"
             << query.lastError().text();
 
         return false;
     }
 
-
     if (!query.next())
-    {
         return false;
-    }
-
 
     customer = Customer(
         query.value("id").toInt(),
@@ -186,61 +122,37 @@ bool CustomerRepository::findById(
         )
     );
 
-
     return true;
 }
 
-
-// =========================================================
-// FIND BY ID FOR UPDATE
-// =========================================================
-
 bool CustomerRepository::findByIdForUpdate(
     int id,
-    Customer& customer)
+    Customer& customer
+)
 {
-    QSqlQuery query(
-        Database::instance().connection()
-    );
-
+    QSqlQuery query(db);
 
     query.prepare(
         "SELECT "
-        "id, "
-        "national_id, "
-        "first_name, "
-        "last_name, "
-        "status "
+        "id, national_id, first_name, last_name, status "
         "FROM customer "
         "WHERE id = :id "
         "FOR UPDATE"
     );
 
-
-    query.bindValue(
-        ":id",
-        id
-    );
-
+    query.bindValue(":id", id);
 
     if (!query.exec())
     {
         qDebug()
-            << "Failed to lock customer!";
-
-        qDebug()
-            << "Database error:"
+            << "CustomerRepository::findByIdForUpdate failed:"
             << query.lastError().text();
 
         return false;
     }
 
-
     if (!query.next())
-    {
         return false;
-    }
-
 
     customer = Customer(
         query.value("id").toInt(),
@@ -252,66 +164,43 @@ bool CustomerRepository::findByIdForUpdate(
         )
     );
 
-
     qDebug()
         << "Customer locked with SELECT FOR UPDATE:"
         << id;
 
-
     return true;
 }
 
-
-// =========================================================
-// FIND BY NATIONAL ID
-// =========================================================
-
 bool CustomerRepository::findByNationalId(
     const QString& nationalId,
-    Customer& customer)
+    Customer& customer
+)
 {
-    QSqlQuery query(
-        Database::instance().connection()
-    );
-
+    QSqlQuery query(db);
 
     query.prepare(
         "SELECT "
-        "id, "
-        "national_id, "
-        "first_name, "
-        "last_name, "
-        "status "
+        "id, national_id, first_name, last_name, status "
         "FROM customer "
         "WHERE national_id = :national_id"
     );
-
 
     query.bindValue(
         ":national_id",
         nationalId
     );
 
-
     if (!query.exec())
     {
         qDebug()
-            << "Failed to find customer "
-               "by national ID!";
-
-        qDebug()
-            << "Database error:"
+            << "CustomerRepository::findByNationalId failed:"
             << query.lastError().text();
 
         return false;
     }
 
-
     if (!query.next())
-    {
         return false;
-    }
-
 
     customer = Customer(
         query.value("id").toInt(),
@@ -323,32 +212,23 @@ bool CustomerRepository::findByNationalId(
         )
     );
 
-
     return true;
 }
 
-
-// =========================================================
-// UPDATE
-// =========================================================
-
 bool CustomerRepository::update(
-    const Customer& customer)
+    const Customer& customer
+)
 {
-    QSqlQuery query(
-        Database::instance().connection()
-    );
-
+    QSqlQuery query(db);
 
     query.prepare(
         "UPDATE customer "
         "SET national_id = :national_id, "
-        "    first_name = :first_name, "
-        "    last_name = :last_name, "
-        "    status = :status "
+        "first_name = :first_name, "
+        "last_name = :last_name, "
+        "status = :status "
         "WHERE id = :id"
     );
-
 
     query.bindValue(
         ":id",
@@ -372,35 +252,27 @@ bool CustomerRepository::update(
 
     query.bindValue(
         ":status",
-        statusToString(
-            customer.getStatus()
-        )
+        statusToString(customer.getStatus())
     );
-
 
     if (!query.exec())
     {
         qDebug()
-            << "Failed to update customer!";
-
-        qDebug()
-            << "Database error:"
+            << "CustomerRepository::update failed:"
             << query.lastError().text();
 
         return false;
     }
 
-
-    if (query.numRowsAffected() != 1)
+    if (query.numRowsAffected() == 0)
     {
         qDebug()
-            << "Customer update affected"
-            << query.numRowsAffected()
-            << "rows.";
+            << "CustomerRepository::update:"
+            << "customer not found:"
+            << customer.getId();
 
         return false;
     }
-
 
     return true;
 }

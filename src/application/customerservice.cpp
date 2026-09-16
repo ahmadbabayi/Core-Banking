@@ -1,120 +1,184 @@
 #include "customerservice.h"
 
 #include <QDebug>
-
-
-// =========================================================
-// CONSTRUCTOR
-// =========================================================
+#include <QSqlError>
 
 CustomerService::CustomerService(
-    ICustomerRepository& customerRepository
+    ICustomerRepository& customerRepository,
+    const QSqlDatabase& database
 )
-    : customerRepository(customerRepository)
+    : customerRepository(customerRepository),
+      db(database)
 {
 }
 
+bool CustomerService::createCustomer(
+    int id,
+    const QString& nationalId,
+    const QString& firstName,
+    const QString& lastName,
+    Customer& createdCustomer
+)
+{
+    if (id <= 0)
+    {
+        qDebug()
+            << "CustomerService::createCustomer:"
+            << "invalid customer ID";
 
-// =========================================================
-// CUSTOMER EXISTS
-// =========================================================
+        return false;
+    }
 
-bool CustomerService::customerExists(
+    if (nationalId.trimmed().isEmpty())
+    {
+        qDebug()
+            << "CustomerService::createCustomer:"
+            << "national ID is empty";
+
+        return false;
+    }
+
+    if (firstName.trimmed().isEmpty())
+    {
+        qDebug()
+            << "CustomerService::createCustomer:"
+            << "first name is empty";
+
+        return false;
+    }
+
+    if (lastName.trimmed().isEmpty())
+    {
+        qDebug()
+            << "CustomerService::createCustomer:"
+            << "last name is empty";
+
+        return false;
+    }
+
+    Customer existingCustomer;
+
+    if (customerRepository.findByNationalId(
+            nationalId,
+            existingCustomer))
+    {
+        qDebug()
+            << "CustomerService::createCustomer:"
+            << "national ID already exists:"
+            << nationalId;
+
+        return false;
+    }
+
+    Customer customer(
+        id,
+        nationalId,
+        firstName,
+        lastName,
+        Customer::Status::ACTIVE
+    );
+
+    if (!customerRepository.save(customer))
+    {
+        qDebug()
+            << "CustomerService::createCustomer:"
+            << "repository save failed";
+
+        return false;
+    }
+
+    createdCustomer = customer;
+
+    qDebug()
+        << "Customer created:"
+        << "ID =" << customer.getId()
+        << "National ID =" << customer.getNationalId();
+
+    return true;
+}
+
+bool CustomerService::findCustomerById(
     int customerId,
     Customer& customer
 )
 {
     if (customerId <= 0)
-    {
-        qDebug()
-            << "Invalid customer ID:"
-            << customerId;
-
         return false;
-    }
 
-    if (!customerRepository.findById(
-            customerId,
-            customer))
-    {
-        qDebug()
-            << "Customer not found:"
-            << customerId;
-
-        return false;
-    }
-
-    return true;
+    return customerRepository.findById(
+        customerId,
+        customer
+    );
 }
 
+bool CustomerService::findCustomerByNationalId(
+    const QString& nationalId,
+    Customer& customer
+)
+{
+    if (nationalId.trimmed().isEmpty())
+        return false;
 
-// =========================================================
-// DEACTIVATE CUSTOMER
-// =========================================================
+    return customerRepository.findByNationalId(
+        nationalId,
+        customer
+    );
+}
 
 bool CustomerService::deactivateCustomer(
     int customerId
 )
 {
-    qDebug()
-        << "Deactivating customer:"
-        << customerId;
+    if (customerId <= 0)
+        return false;
 
+    if (!db.transaction())
+    {
+        qDebug()
+            << "CustomerService::deactivateCustomer:"
+            << "transaction begin failed:"
+            << db.lastError().text();
 
-    // -----------------------------------------------------
-    // Find customer
-    // -----------------------------------------------------
+        return false;
+    }
 
     Customer customer;
 
-    if (!customerExists(
+    if (!customerRepository.findByIdForUpdate(
             customerId,
             customer))
     {
-        return false;
-    }
+        db.rollback();
 
-
-    // -----------------------------------------------------
-    // Check current status
-    // -----------------------------------------------------
-
-    if (customer.getStatus()
-        == Customer::Status::INACTIVE)
-    {
         qDebug()
-            << "Customer is already inactive:"
+            << "CustomerService::deactivateCustomer:"
+            << "customer not found:"
             << customerId;
 
         return false;
     }
 
-
-    // -----------------------------------------------------
-    // A blocked customer cannot be directly deactivated.
-    //
-    // This keeps the state transitions explicit:
-    //
-    // ACTIVE  -> INACTIVE
-    // ACTIVE  -> BLOCKED
-    //
-    // BLOCKED -> INACTIVE is not allowed here.
-    // -----------------------------------------------------
-
-    if (customer.getStatus()
-        == Customer::Status::BLOCKED)
+    if (customer.getStatus() == Customer::Status::INACTIVE)
     {
+        db.rollback();
+
         qDebug()
-            << "Blocked customer cannot be deactivated directly:"
-            << customerId;
+            << "CustomerService::deactivateCustomer:"
+            << "customer already inactive";
 
         return false;
     }
 
+    if (customer.getStatus() == Customer::Status::BLOCKED)
+    {
+        db.rollback();
 
-    // -----------------------------------------------------
-    // Create updated customer
-    // -----------------------------------------------------
+        qDebug()
+            << "CustomerService::deactivateCustomer:"
+            << "blocked customer cannot be deactivated";
+
+        return false;
+    }
 
     Customer updatedCustomer(
         customer.getId(),
@@ -124,92 +188,89 @@ bool CustomerService::deactivateCustomer(
         Customer::Status::INACTIVE
     );
 
-
-    // -----------------------------------------------------
-    // Persist change
-    // -----------------------------------------------------
-
-    if (!customerRepository.update(
-            updatedCustomer))
+    if (!customerRepository.update(updatedCustomer))
     {
+        db.rollback();
+
         qDebug()
-            << "Failed to deactivate customer:"
-            << customerId;
+            << "CustomerService::deactivateCustomer:"
+            << "update failed";
 
         return false;
     }
 
+    if (!db.commit())
+    {
+        qDebug()
+            << "CustomerService::deactivateCustomer:"
+            << "commit failed:"
+            << db.lastError().text();
+
+        db.rollback();
+        return false;
+    }
 
     qDebug()
-        << "Customer deactivated successfully:"
+        << "Customer deactivated:"
         << customerId;
 
     return true;
 }
 
-
-// =========================================================
-// BLOCK CUSTOMER
-// =========================================================
-
 bool CustomerService::blockCustomer(
     int customerId
 )
 {
-    qDebug()
-        << "Blocking customer:"
-        << customerId;
+    if (customerId <= 0)
+        return false;
 
+    if (!db.transaction())
+    {
+        qDebug()
+            << "CustomerService::blockCustomer:"
+            << "transaction begin failed:"
+            << db.lastError().text();
 
-    // -----------------------------------------------------
-    // Find customer
-    // -----------------------------------------------------
+        return false;
+    }
 
     Customer customer;
 
-    if (!customerExists(
+    if (!customerRepository.findByIdForUpdate(
             customerId,
             customer))
     {
-        return false;
-    }
+        db.rollback();
 
-
-    // -----------------------------------------------------
-    // Check current status
-    // -----------------------------------------------------
-
-    if (customer.getStatus()
-        == Customer::Status::BLOCKED)
-    {
         qDebug()
-            << "Customer is already blocked:"
+            << "CustomerService::blockCustomer:"
+            << "customer not found:"
             << customerId;
 
         return false;
     }
 
-
-    // -----------------------------------------------------
-    // Only ACTIVE customers can be blocked.
-    //
-    // INACTIVE -> BLOCKED is deliberately not allowed here.
-    // -----------------------------------------------------
-
-    if (customer.getStatus()
-        != Customer::Status::ACTIVE)
+    if (customer.getStatus() == Customer::Status::BLOCKED)
     {
+        db.rollback();
+
         qDebug()
-            << "Only active customers can be blocked:"
-            << customerId;
+            << "CustomerService::blockCustomer:"
+            << "customer already blocked";
 
         return false;
     }
 
+    if (customer.getStatus() != Customer::Status::ACTIVE)
+    {
+        db.rollback();
 
-    // -----------------------------------------------------
-    // Create updated customer
-    // -----------------------------------------------------
+        qDebug()
+            << "CustomerService::blockCustomer:"
+            << "only active customer can be blocked";
+
+        return false;
+    }
 
     Customer updatedCustomer(
         customer.getId(),
@@ -219,24 +280,30 @@ bool CustomerService::blockCustomer(
         Customer::Status::BLOCKED
     );
 
-
-    // -----------------------------------------------------
-    // Persist change
-    // -----------------------------------------------------
-
-    if (!customerRepository.update(
-            updatedCustomer))
+    if (!customerRepository.update(updatedCustomer))
     {
+        db.rollback();
+
         qDebug()
-            << "Failed to block customer:"
-            << customerId;
+            << "CustomerService::blockCustomer:"
+            << "update failed";
 
         return false;
     }
 
+    if (!db.commit())
+    {
+        qDebug()
+            << "CustomerService::blockCustomer:"
+            << "commit failed:"
+            << db.lastError().text();
+
+        db.rollback();
+        return false;
+    }
 
     qDebug()
-        << "Customer blocked successfully:"
+        << "Customer blocked:"
         << customerId;
 
     return true;
