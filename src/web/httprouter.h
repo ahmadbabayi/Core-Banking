@@ -13,6 +13,7 @@ public:
     HttpResponse route(
         const QByteArray& method,
         const QByteArray& path,
+        const QByteArray& query,
         const QByteArray& body
     );
 

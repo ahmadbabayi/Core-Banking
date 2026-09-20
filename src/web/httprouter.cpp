@@ -12,13 +12,15 @@ HttpRouter::HttpRouter(
 HttpResponse HttpRouter::route(
     const QByteArray& method,
     const QByteArray& path,
+    const QByteArray& query,
     const QByteArray& body
 )
 {
     qDebug()
         << "HttpRouter::route:"
         << "method =" << method
-        << "path =" << path;
+        << "path =" << path
+        << "query =" << query;
 
     /*
      * GET /api/v1/health

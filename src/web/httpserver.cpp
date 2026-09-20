@@ -290,15 +290,12 @@ void HttpServer::incomingConnection(
 
             /*
              * Delegate routing to HttpRouter.
-             *
-             * Query string is intentionally not
-             * sent to the router yet. In this stage
-             * we only separate it from the path.
              */
             const HttpResponse response =
                 router.route(
                     method,
                     path,
+                    query,
                     body
                 );
 
