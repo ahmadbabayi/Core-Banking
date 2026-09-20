@@ -26,6 +26,10 @@ public:
         int customerId
     );
 
+    HttpResponse getCustomerByNationalId(
+        const QString& nationalId
+    );
+
 private:
     CustomerService& customerService;
 };

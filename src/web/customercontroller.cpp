@@ -234,3 +234,77 @@ HttpResponse CustomerController::getCustomerById(
             .toJson(QJsonDocument::Compact)
     };
 }
+
+HttpResponse CustomerController::getCustomerByNationalId(
+    const QString& nationalId
+)
+{
+    qDebug()
+        << "CustomerController::getCustomerByNationalId:"
+        << nationalId;
+
+    /*
+     * Validate national ID.
+     */
+    if (nationalId.trimmed().isEmpty())
+    {
+        return {
+            "400 Bad Request",
+            "{\"error\":\"Invalid national ID\"}"
+        };
+    }
+
+    Customer customer;
+
+    /*
+     * Ask the application service to
+     * find the customer by national ID.
+     */
+    if (!customerService.findCustomerByNationalId(
+            nationalId,
+            customer))
+    {
+        return {
+            "404 Not Found",
+            "{\"error\":\"Customer not found\"}"
+        };
+    }
+
+    /*
+     * Convert domain object to JSON.
+     */
+    QJsonObject response;
+
+    response["id"] =
+        customer.getId();
+
+    response["nationalId"] =
+        customer.getNationalId();
+
+    response["firstName"] =
+        customer.getFirstName();
+
+    response["lastName"] =
+        customer.getLastName();
+
+    switch (customer.getStatus())
+    {
+    case Customer::Status::ACTIVE:
+        response["status"] = "ACTIVE";
+        break;
+
+    case Customer::Status::INACTIVE:
+        response["status"] = "INACTIVE";
+        break;
+
+    case Customer::Status::BLOCKED:
+        response["status"] = "BLOCKED";
+        break;
+    }
+
+    return {
+        "200 OK",
+        QJsonDocument(response)
+            .toJson(QJsonDocument::Compact)
+    };
+}

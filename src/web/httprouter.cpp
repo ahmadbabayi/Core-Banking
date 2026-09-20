@@ -1,6 +1,7 @@
 #include "httprouter.h"
 
 #include <QDebug>
+#include <QUrlQuery>
 
 HttpRouter::HttpRouter(
     CustomerController& customerController
@@ -42,6 +43,38 @@ HttpResponse HttpRouter::route(
     {
         return customerController.createCustomer(
             body
+        );
+    }
+
+    /*
+     * GET /api/v1/customers?nationalId=...
+     *
+     * Example:
+     *
+     * GET /api/v1/customers?nationalId=0012345684
+     */
+    if (method == "GET"
+        && path == "/api/v1/customers")
+    {
+        QUrlQuery urlQuery(
+            QString::fromUtf8(query)
+        );
+
+        const QString nationalId =
+            urlQuery.queryItemValue(
+                "nationalId"
+            );
+
+        if (nationalId.isEmpty())
+        {
+            return {
+                "400 Bad Request",
+                "{\"error\":\"Missing nationalId query parameter\"}"
+            };
+        }
+
+        return customerController.getCustomerByNationalId(
+            nationalId
         );
     }
 
