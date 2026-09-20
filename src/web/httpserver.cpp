@@ -3,6 +3,40 @@
 #include <QTcpSocket>
 #include <QDebug>
 
+namespace
+{
+
+QByteArray createHttpResponse(
+    const QByteArray& status,
+    const QByteArray& body
+)
+{
+    QByteArray response;
+
+    response +=
+        "HTTP/1.1 " + status + "\r\n";
+
+    response +=
+        "Content-Type: application/json\r\n";
+
+    response +=
+        "Content-Length: "
+        + QByteArray::number(body.size())
+        + "\r\n";
+
+    response +=
+        "Connection: close\r\n";
+
+    response +=
+        "\r\n";
+
+    response += body;
+
+    return response;
+}
+
+}
+
 HttpServer::HttpServer(QObject* parent)
     : QTcpServer(parent)
 {
@@ -12,9 +46,11 @@ void HttpServer::incomingConnection(
     qintptr socketDescriptor
 )
 {
-    QTcpSocket* socket = new QTcpSocket(this);
+    QTcpSocket* socket =
+        new QTcpSocket(this);
 
-    if (!socket->setSocketDescriptor(socketDescriptor))
+    if (!socket->setSocketDescriptor(
+            socketDescriptor))
     {
         qDebug()
             << "Failed to set socket descriptor:"
@@ -29,36 +65,149 @@ void HttpServer::incomingConnection(
         << socket->peerAddress().toString()
         << socket->peerPort();
 
+    /*
+     * The request can arrive in multiple TCP packets.
+     *
+     * Therefore we keep the received data in this
+     * buffer until the complete HTTP request is available.
+     */
+    auto* requestBuffer =
+        new QByteArray();
+
     connect(
         socket,
         &QTcpSocket::readyRead,
         this,
-        [socket]()
+        [socket, requestBuffer]()
         {
-            const QByteArray request = socket->readAll();
+            requestBuffer->append(
+                socket->readAll()
+            );
 
             qDebug()
-                << "HTTP request received:"
-                << request;
+                << "Received bytes:"
+                << requestBuffer->size();
 
-            // -------------------------------------------------
-            // Extract the first line of the HTTP request.
-            //
-            // Example:
-            // GET /api/v1/health HTTP/1.1
-            // -------------------------------------------------
+            /*
+             * We need the complete HTTP header first.
+             */
+            const int headerEnd =
+                requestBuffer->indexOf(
+                    "\r\n\r\n"
+                );
 
-            const QList<QByteArray> lines =
-                request.split('\n');
-
-            if (lines.isEmpty())
+            if (headerEnd == -1)
             {
+                return;
+            }
+
+            /*
+             * headerEnd points to the beginning of
+             * "\r\n\r\n".
+             *
+             * Therefore the body starts 4 bytes later.
+             */
+            const int bodyStart =
+                headerEnd + 4;
+
+            const QByteArray header =
+                requestBuffer->left(
+                    headerEnd
+                );
+
+            qDebug()
+                << "HTTP header:"
+                << header;
+
+            /*
+             * Extract Content-Length.
+             */
+            int contentLength = 0;
+
+            const QList<QByteArray> headerLines =
+                header.split('\n');
+
+            for (const QByteArray& rawLine :
+                 headerLines)
+            {
+                const QByteArray line =
+                    rawLine.trimmed();
+
+                const QByteArray lowerLine =
+                    line.toLower();
+
+                if (lowerLine.startsWith(
+                        "content-length:"))
+                {
+                    const QByteArray value =
+                        line.mid(
+                            QByteArray(
+                                "Content-Length:"
+                            ).size()
+                        ).trimmed();
+
+                    contentLength =
+                        value.toInt();
+
+                    break;
+                }
+            }
+
+            /*
+             * Wait until the complete body has
+             * arrived.
+             */
+            const int receivedBodySize =
+                requestBuffer->size()
+                - bodyStart;
+
+            if (receivedBodySize <
+                contentLength)
+            {
+                qDebug()
+                    << "Waiting for complete body."
+                    << "Expected:"
+                    << contentLength
+                    << "Received:"
+                    << receivedBodySize;
+
+                return;
+            }
+
+            /*
+             * Extract the first request line.
+             *
+             * Example:
+             *
+             * POST /api/v1/customers HTTP/1.1
+             */
+            const int firstLineEnd =
+                requestBuffer->indexOf(
+                    "\r\n"
+                );
+
+            if (firstLineEnd == -1)
+            {
+                const QByteArray body =
+                    "{\"error\":\"Bad Request\"}";
+
+                socket->write(
+                    createHttpResponse(
+                        "400 Bad Request",
+                        body
+                    )
+                );
+
+                socket->flush();
                 socket->disconnectFromHost();
+
                 return;
             }
 
             const QByteArray requestLine =
-                lines.first().trimmed();
+                requestBuffer->left(
+                    firstLineEnd
+                ).trimmed();
 
             qDebug()
                 << "HTTP request line:"
@@ -72,28 +221,13 @@ void HttpServer::incomingConnection(
                 const QByteArray body =
                     "{\"error\":\"Bad Request\"}";
 
-                QByteArray response;
+                socket->write(
+                    createHttpResponse(
+                        "400 Bad Request",
+                        body
+                    )
+                );
 
-                response +=
-                    "HTTP/1.1 400 Bad Request\r\n";
-
-                response +=
-                    "Content-Type: application/json\r\n";
-
-                response +=
-                    "Content-Length: "
-                    + QByteArray::number(body.size())
-                    + "\r\n";
-
-                response +=
-                    "Connection: close\r\n";
-
-                response +=
-                    "\r\n";
-
-                response += body;
-
-                socket->write(response);
                 socket->flush();
                 socket->disconnectFromHost();
 
@@ -121,75 +255,82 @@ void HttpServer::incomingConnection(
                 << "HTTP version:"
                 << httpVersion;
 
-            // -------------------------------------------------
-            // GET /api/v1/health
-            // -------------------------------------------------
-
+            /*
+             * GET /api/v1/health
+             */
             if (method == "GET"
                 && path == "/api/v1/health")
             {
                 const QByteArray body =
                     "{\"status\":\"UP\"}";
 
-                QByteArray response;
+                socket->write(
+                    createHttpResponse(
+                        "200 OK",
+                        body
+                    )
+                );
 
-                response +=
-                    "HTTP/1.1 200 OK\r\n";
-
-                response +=
-                    "Content-Type: application/json\r\n";
-
-                response +=
-                    "Content-Length: "
-                    + QByteArray::number(body.size())
-                    + "\r\n";
-
-                response +=
-                    "Connection: close\r\n";
-
-                response +=
-                    "\r\n";
-
-                response += body;
-
-                socket->write(response);
                 socket->flush();
                 socket->disconnectFromHost();
 
                 return;
             }
 
-            // -------------------------------------------------
-            // Unknown route
-            // -------------------------------------------------
+            /*
+             * POST /api/v1/customers
+             */
+            if (method == "POST"
+                && path == "/api/v1/customers")
+            {
+                const QByteArray body =
+                    requestBuffer->mid(
+                        bodyStart,
+                        contentLength
+                    );
 
+                qDebug()
+                    << "Customer request body:"
+                    << body;
+
+                /*
+                 * CustomerController needs a
+                 * CustomerService instance.
+                 *
+                 * The actual service/controller
+                 * connection will be completed
+                 * in the next step.
+                 */
+                const QByteArray responseBody =
+                    "{\"error\":\"Customer service not connected\"}";
+
+                socket->write(
+                    createHttpResponse(
+                        "501 Not Implemented",
+                        responseBody
+                    )
+                );
+
+                socket->flush();
+                socket->disconnectFromHost();
+
+                return;
+            }
+
+            /*
+             * Route not found.
+             */
             const QByteArray body =
                 "{\"error\":\"Not Found\"}";
 
-            QByteArray response;
+            socket->write(
+                createHttpResponse(
+                    "404 Not Found",
+                    body
+                )
+            );
 
-            response +=
-                "HTTP/1.1 404 Not Found\r\n";
-
-            response +=
-                "Content-Type: application/json\r\n";
-
-            response +=
-                "Content-Length: "
-                + QByteArray::number(body.size())
-                + "\r\n";
-
-            response +=
-                "Connection: close\r\n";
-
-            response +=
-                "\r\n";
-
-            response += body;
-
-            socket->write(response);
             socket->flush();
-
             socket->disconnectFromHost();
         }
     );
@@ -198,6 +339,10 @@ void HttpServer::incomingConnection(
         socket,
         &QTcpSocket::disconnected,
         socket,
-        &QTcpSocket::deleteLater
+        [socket, requestBuffer]()
+        {
+            delete requestBuffer;
+            socket->deleteLater();
+        }
     );
 }
