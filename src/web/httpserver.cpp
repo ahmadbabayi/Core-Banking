@@ -1,5 +1,7 @@
 #include "httpserver.h"
 
+#include "customercontroller.h"
+
 #include <QTcpSocket>
 #include <QDebug>
 
@@ -37,8 +39,12 @@ QByteArray createHttpResponse(
 
 }
 
-HttpServer::HttpServer(QObject* parent)
-    : QTcpServer(parent)
+HttpServer::HttpServer(
+    CustomerController& customerController,
+    QObject* parent
+)
+    : QTcpServer(parent),
+      customerController(customerController)
 {
 }
 
@@ -65,12 +71,6 @@ void HttpServer::incomingConnection(
         << socket->peerAddress().toString()
         << socket->peerPort();
 
-    /*
-     * The request can arrive in multiple TCP packets.
-     *
-     * Therefore we keep the received data in this
-     * buffer until the complete HTTP request is available.
-     */
     auto* requestBuffer =
         new QByteArray();
 
@@ -78,7 +78,7 @@ void HttpServer::incomingConnection(
         socket,
         &QTcpSocket::readyRead,
         this,
-        [socket, requestBuffer]()
+        [socket, requestBuffer, this]()
         {
             requestBuffer->append(
                 socket->readAll()
@@ -88,9 +88,6 @@ void HttpServer::incomingConnection(
                 << "Received bytes:"
                 << requestBuffer->size();
 
-            /*
-             * We need the complete HTTP header first.
-             */
             const int headerEnd =
                 requestBuffer->indexOf(
                     "\r\n\r\n"
@@ -101,12 +98,6 @@ void HttpServer::incomingConnection(
                 return;
             }
 
-            /*
-             * headerEnd points to the beginning of
-             * "\r\n\r\n".
-             *
-             * Therefore the body starts 4 bytes later.
-             */
             const int bodyStart =
                 headerEnd + 4;
 
@@ -119,9 +110,6 @@ void HttpServer::incomingConnection(
                 << "HTTP header:"
                 << header;
 
-            /*
-             * Extract Content-Length.
-             */
             int contentLength = 0;
 
             const QList<QByteArray> headerLines =
@@ -153,10 +141,6 @@ void HttpServer::incomingConnection(
                 }
             }
 
-            /*
-             * Wait until the complete body has
-             * arrived.
-             */
             const int receivedBodySize =
                 requestBuffer->size()
                 - bodyStart;
@@ -174,13 +158,6 @@ void HttpServer::incomingConnection(
                 return;
             }
 
-            /*
-             * Extract the first request line.
-             *
-             * Example:
-             *
-             * POST /api/v1/customers HTTP/1.1
-             */
             const int firstLineEnd =
                 requestBuffer->indexOf(
                     "\r\n"
@@ -294,19 +271,17 @@ void HttpServer::incomingConnection(
                     << body;
 
                 /*
-                 * CustomerController needs a
-                 * CustomerService instance.
-                 *
-                 * The actual service/controller
-                 * connection will be completed
-                 * in the next step.
+                 * Send the request to the
+                 * CustomerController.
                  */
                 const QByteArray responseBody =
-                    "{\"error\":\"Customer service not connected\"}";
+                    customerController.createCustomer(
+                        body
+                    );
 
                 socket->write(
                     createHttpResponse(
-                        "501 Not Implemented",
+                        "201 Created",
                         responseBody
                     )
                 );
