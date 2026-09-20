@@ -5,6 +5,12 @@
 
 #include <QByteArray>
 
+struct HttpResponse
+{
+    QByteArray status;
+    QByteArray body;
+};
+
 class CustomerController
 {
 public:
@@ -12,7 +18,7 @@ public:
         CustomerService& customerService
     );
 
-    QByteArray createCustomer(
+    HttpResponse createCustomer(
         const QByteArray& body
     );
 

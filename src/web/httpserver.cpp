@@ -270,19 +270,15 @@ void HttpServer::incomingConnection(
                     << "Customer request body:"
                     << body;
 
-                /*
-                 * Send the request to the
-                 * CustomerController.
-                 */
-                const QByteArray responseBody =
+                const HttpResponse response =
                     customerController.createCustomer(
                         body
                     );
 
                 socket->write(
                     createHttpResponse(
-                        "201 Created",
-                        responseBody
+                        response.status,
+                        response.body
                     )
                 );
 

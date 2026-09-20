@@ -11,7 +11,7 @@ CustomerController::CustomerController(
 {
 }
 
-QByteArray CustomerController::createCustomer(
+HttpResponse CustomerController::createCustomer(
     const QByteArray& body
 )
 {
@@ -27,8 +27,10 @@ QByteArray CustomerController::createCustomer(
         qDebug()
             << "Invalid JSON request body";
 
-        return
-            "{\"error\":\"Invalid JSON\"}";
+        return {
+            "400 Bad Request",
+            "{\"error\":\"Invalid JSON\"}"
+        };
     }
 
     const QJsonObject json =
@@ -66,8 +68,10 @@ QByteArray CustomerController::createCustomer(
             << "CustomerController:"
             << "customer creation failed";
 
-        return
-            "{\"error\":\"Customer creation failed\"}";
+        return {
+            "400 Bad Request",
+            "{\"error\":\"Customer creation failed\"}"
+        };
     }
 
     QJsonObject response;
@@ -87,6 +91,9 @@ QByteArray CustomerController::createCustomer(
     response["status"] =
         "ACTIVE";
 
-    return QJsonDocument(response)
-        .toJson(QJsonDocument::Compact);
+    return {
+        "201 Created",
+        QJsonDocument(response)
+            .toJson(QJsonDocument::Compact)
+    };
 }
