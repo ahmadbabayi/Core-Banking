@@ -22,6 +22,10 @@ public:
         const QByteArray& body
     );
 
+    HttpResponse getCustomerById(
+        int customerId
+    );
+
 private:
     CustomerService& customerService;
 };

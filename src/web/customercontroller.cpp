@@ -48,9 +48,6 @@ HttpResponse CustomerController::createCustomer(
 
     /*
      * Required fields validation.
-     *
-     * We use contains() instead of relying on
-     * toInt() / toString() to detect missing fields.
      */
     if (!json.contains("id")
         || !json.contains("nationalId")
@@ -159,6 +156,80 @@ HttpResponse CustomerController::createCustomer(
 
     return {
         "201 Created",
+        QJsonDocument(response)
+            .toJson(QJsonDocument::Compact)
+    };
+}
+
+HttpResponse CustomerController::getCustomerById(
+    int customerId
+)
+{
+    qDebug()
+        << "CustomerController::getCustomerById:"
+        << customerId;
+
+    /*
+     * Validate customer ID.
+     */
+    if (customerId <= 0)
+    {
+        return {
+            "400 Bad Request",
+            "{\"error\":\"Invalid customer ID\"}"
+        };
+    }
+
+    Customer customer;
+
+    /*
+     * Ask the application service to
+     * find the customer.
+     */
+    if (!customerService.findCustomerById(
+            customerId,
+            customer))
+    {
+        return {
+            "404 Not Found",
+            "{\"error\":\"Customer not found\"}"
+        };
+    }
+
+    /*
+     * Convert domain object to JSON.
+     */
+    QJsonObject response;
+
+    response["id"] =
+        customer.getId();
+
+    response["nationalId"] =
+        customer.getNationalId();
+
+    response["firstName"] =
+        customer.getFirstName();
+
+    response["lastName"] =
+        customer.getLastName();
+
+    switch (customer.getStatus())
+    {
+    case Customer::Status::ACTIVE:
+        response["status"] = "ACTIVE";
+        break;
+
+    case Customer::Status::INACTIVE:
+        response["status"] = "INACTIVE";
+        break;
+
+    case Customer::Status::BLOCKED:
+        response["status"] = "BLOCKED";
+        break;
+    }
+
+    return {
+        "200 OK",
         QJsonDocument(response)
             .toJson(QJsonDocument::Compact)
     };

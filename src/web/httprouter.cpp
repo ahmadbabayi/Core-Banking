@@ -46,6 +46,59 @@ HttpResponse HttpRouter::route(
     }
 
     /*
+     * GET /api/v1/customers/{id}
+     *
+     * Example:
+     *
+     * GET /api/v1/customers/1011
+     */
+    const QByteArray customerPrefix =
+        "/api/v1/customers/";
+
+    if (method == "GET"
+        && path.startsWith(customerPrefix))
+    {
+        const QByteArray idText =
+            path.mid(
+                customerPrefix.size()
+            );
+
+        /*
+         * Empty ID is invalid.
+         */
+        if (idText.isEmpty())
+        {
+            return {
+                "400 Bad Request",
+                "{\"error\":\"Invalid customer ID\"}"
+            };
+        }
+
+        bool conversionOk = false;
+
+        const int customerId =
+            idText.toInt(
+                &conversionOk
+            );
+
+        /*
+         * The complete path segment must
+         * represent a valid integer.
+         */
+        if (!conversionOk)
+        {
+            return {
+                "400 Bad Request",
+                "{\"error\":\"Invalid customer ID\"}"
+            };
+        }
+
+        return customerController.getCustomerById(
+            customerId
+        );
+    }
+
+    /*
      * Route not found.
      */
     return {
