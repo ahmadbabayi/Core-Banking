@@ -18,14 +18,24 @@ HttpResponse CustomerController::createCustomer(
     qDebug()
         << "CustomerController::createCustomer";
 
-    const QJsonDocument document =
-        QJsonDocument::fromJson(body);
+    QJsonParseError parseError;
 
-    if (document.isNull()
+    const QJsonDocument document =
+        QJsonDocument::fromJson(
+            body,
+            &parseError
+        );
+
+    /*
+     * JSON syntax validation.
+     */
+    if (parseError.error !=
+            QJsonParseError::NoError
         || !document.isObject())
     {
         qDebug()
-            << "Invalid JSON request body";
+            << "Invalid JSON request body:"
+            << parseError.errorString();
 
         return {
             "400 Bad Request",
@@ -35,6 +45,43 @@ HttpResponse CustomerController::createCustomer(
 
     const QJsonObject json =
         document.object();
+
+    /*
+     * Required fields validation.
+     *
+     * We use contains() instead of relying on
+     * toInt() / toString() to detect missing fields.
+     */
+    if (!json.contains("id")
+        || !json.contains("nationalId")
+        || !json.contains("firstName")
+        || !json.contains("lastName"))
+    {
+        qDebug()
+            << "Missing required customer fields";
+
+        return {
+            "400 Bad Request",
+            "{\"error\":\"Missing required fields\"}"
+        };
+    }
+
+    /*
+     * Type validation.
+     */
+    if (!json.value("id").isDouble()
+        || !json.value("nationalId").isString()
+        || !json.value("firstName").isString()
+        || !json.value("lastName").isString())
+    {
+        qDebug()
+            << "Invalid customer field types";
+
+        return {
+            "400 Bad Request",
+            "{\"error\":\"Invalid field types\"}"
+        };
+    }
 
     const int id =
         json.value("id").toInt();
