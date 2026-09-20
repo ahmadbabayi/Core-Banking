@@ -214,7 +214,7 @@ void HttpServer::incomingConnection(
             const QByteArray method =
                 parts.at(0);
 
-            const QByteArray path =
+            const QByteArray target =
                 parts.at(1);
 
             const QByteArray httpVersion =
@@ -225,12 +225,55 @@ void HttpServer::incomingConnection(
                 << method;
 
             qDebug()
-                << "HTTP path:"
-                << path;
+                << "HTTP target:"
+                << target;
 
             qDebug()
                 << "HTTP version:"
                 << httpVersion;
+
+            /*
+             * Separate URL path from query string.
+             *
+             * Example:
+             *
+             * /api/v1/customers?nationalId=0012345683
+             *
+             * becomes:
+             *
+             * path  = /api/v1/customers
+             * query = nationalId=0012345683
+             */
+            const int querySeparator =
+                target.indexOf('?');
+
+            QByteArray path;
+            QByteArray query;
+
+            if (querySeparator == -1)
+            {
+                path = target;
+            }
+            else
+            {
+                path =
+                    target.left(
+                        querySeparator
+                    );
+
+                query =
+                    target.mid(
+                        querySeparator + 1
+                    );
+            }
+
+            qDebug()
+                << "HTTP path:"
+                << path;
+
+            qDebug()
+                << "HTTP query:"
+                << query;
 
             /*
              * Extract request body.
@@ -247,6 +290,10 @@ void HttpServer::incomingConnection(
 
             /*
              * Delegate routing to HttpRouter.
+             *
+             * Query string is intentionally not
+             * sent to the router yet. In this stage
+             * we only separate it from the path.
              */
             const HttpResponse response =
                 router.route(
