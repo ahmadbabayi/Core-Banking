@@ -54,6 +54,9 @@ add_executable(CoreBanking
 
     src/infrastructure/database.h
     src/infrastructure/database.cpp
+
+    src/web/httpserver.h
+    src/web/httpserver.cpp
 )
 
 target_link_libraries(CoreBanking
