@@ -12,7 +12,8 @@ CustomerService::CustomerService(
 {
 }
 
-bool CustomerService::createCustomer(
+CustomerService::CreateCustomerResult
+CustomerService::createCustomer(
     int id,
     const QString& nationalId,
     const QString& firstName,
@@ -26,7 +27,7 @@ bool CustomerService::createCustomer(
             << "CustomerService::createCustomer:"
             << "invalid customer ID";
 
-        return false;
+        return CreateCustomerResult::InvalidInput;
     }
 
     if (nationalId.trimmed().isEmpty())
@@ -35,7 +36,7 @@ bool CustomerService::createCustomer(
             << "CustomerService::createCustomer:"
             << "national ID is empty";
 
-        return false;
+        return CreateCustomerResult::InvalidInput;
     }
 
     if (firstName.trimmed().isEmpty())
@@ -44,7 +45,7 @@ bool CustomerService::createCustomer(
             << "CustomerService::createCustomer:"
             << "first name is empty";
 
-        return false;
+        return CreateCustomerResult::InvalidInput;
     }
 
     if (lastName.trimmed().isEmpty())
@@ -53,11 +54,29 @@ bool CustomerService::createCustomer(
             << "CustomerService::createCustomer:"
             << "last name is empty";
 
-        return false;
+        return CreateCustomerResult::InvalidInput;
     }
 
+    /*
+     * Check whether the customer ID already exists.
+     */
     Customer existingCustomer;
 
+    if (customerRepository.findById(
+            id,
+            existingCustomer))
+    {
+        qDebug()
+            << "CustomerService::createCustomer:"
+            << "customer ID already exists:"
+            << id;
+
+        return CreateCustomerResult::Conflict;
+    }
+
+    /*
+     * Check whether the national ID already exists.
+     */
     if (customerRepository.findByNationalId(
             nationalId,
             existingCustomer))
@@ -67,7 +86,7 @@ bool CustomerService::createCustomer(
             << "national ID already exists:"
             << nationalId;
 
-        return false;
+        return CreateCustomerResult::Conflict;
     }
 
     Customer customer(
@@ -84,7 +103,7 @@ bool CustomerService::createCustomer(
             << "CustomerService::createCustomer:"
             << "repository save failed";
 
-        return false;
+        return CreateCustomerResult::InternalError;
     }
 
     createdCustomer = customer;
@@ -94,7 +113,7 @@ bool CustomerService::createCustomer(
         << "ID =" << customer.getId()
         << "National ID =" << customer.getNationalId();
 
-    return true;
+    return CreateCustomerResult::Success;
 }
 
 bool CustomerService::findCustomerById(

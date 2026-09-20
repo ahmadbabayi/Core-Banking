@@ -57,20 +57,39 @@ HttpResponse CustomerController::createCustomer(
 
     Customer createdCustomer;
 
-    if (!customerService.createCustomer(
+    const CustomerService::CreateCustomerResult result =
+        customerService.createCustomer(
             id,
             nationalId,
             firstName,
             lastName,
-            createdCustomer))
-    {
-        qDebug()
-            << "CustomerController:"
-            << "customer creation failed";
+            createdCustomer
+        );
 
+    if (result ==
+        CustomerService::CreateCustomerResult::InvalidInput)
+    {
         return {
             "400 Bad Request",
-            "{\"error\":\"Customer creation failed\"}"
+            "{\"error\":\"Invalid customer data\"}"
+        };
+    }
+
+    if (result ==
+        CustomerService::CreateCustomerResult::Conflict)
+    {
+        return {
+            "409 Conflict",
+            "{\"error\":\"Customer already exists\"}"
+        };
+    }
+
+    if (result ==
+        CustomerService::CreateCustomerResult::InternalError)
+    {
+        return {
+            "500 Internal Server Error",
+            "{\"error\":\"Internal server error\"}"
         };
     }
 

@@ -10,12 +10,21 @@
 class CustomerService
 {
 public:
+
+    enum class CreateCustomerResult
+    {
+        Success,
+        InvalidInput,
+        Conflict,
+        InternalError
+    };
+
     CustomerService(
         ICustomerRepository& customerRepository,
         const QSqlDatabase& database
     );
 
-    bool createCustomer(
+    CreateCustomerResult createCustomer(
         int id,
         const QString& nationalId,
         const QString& firstName,
