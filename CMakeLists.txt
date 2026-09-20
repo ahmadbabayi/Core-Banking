@@ -8,7 +8,7 @@ project(CoreBanking
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Sql)
+find_package(Qt5 REQUIRED COMPONENTS Core Sql Network)
 
 add_executable(CoreBanking
 
@@ -60,4 +60,5 @@ target_link_libraries(CoreBanking
     PRIVATE
         Qt5::Core
         Qt5::Sql
+        Qt5::Network
 )
