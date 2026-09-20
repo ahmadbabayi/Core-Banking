@@ -1,6 +1,6 @@
 #include "httpserver.h"
 
-#include "customercontroller.h"
+#include "httprouter.h"
 
 #include <QTcpSocket>
 #include <QDebug>
@@ -40,11 +40,11 @@ QByteArray createHttpResponse(
 }
 
 HttpServer::HttpServer(
-    CustomerController& customerController,
+    HttpRouter& router,
     QObject* parent
 )
     : QTcpServer(parent),
-      customerController(customerController)
+      router(router)
 {
 }
 
@@ -233,71 +233,32 @@ void HttpServer::incomingConnection(
                 << httpVersion;
 
             /*
-             * GET /api/v1/health
-             */
-            if (method == "GET"
-                && path == "/api/v1/health")
-            {
-                const QByteArray body =
-                    "{\"status\":\"UP\"}";
-
-                socket->write(
-                    createHttpResponse(
-                        "200 OK",
-                        body
-                    )
-                );
-
-                socket->flush();
-                socket->disconnectFromHost();
-
-                return;
-            }
-
-            /*
-             * POST /api/v1/customers
-             */
-            if (method == "POST"
-                && path == "/api/v1/customers")
-            {
-                const QByteArray body =
-                    requestBuffer->mid(
-                        bodyStart,
-                        contentLength
-                    );
-
-                qDebug()
-                    << "Customer request body:"
-                    << body;
-
-                const HttpResponse response =
-                    customerController.createCustomer(
-                        body
-                    );
-
-                socket->write(
-                    createHttpResponse(
-                        response.status,
-                        response.body
-                    )
-                );
-
-                socket->flush();
-                socket->disconnectFromHost();
-
-                return;
-            }
-
-            /*
-             * Route not found.
+             * Extract request body.
              */
             const QByteArray body =
-                "{\"error\":\"Not Found\"}";
+                requestBuffer->mid(
+                    bodyStart,
+                    contentLength
+                );
+
+            qDebug()
+                << "HTTP request body:"
+                << body;
+
+            /*
+             * Delegate routing to HttpRouter.
+             */
+            const HttpResponse response =
+                router.route(
+                    method,
+                    path,
+                    body
+                );
 
             socket->write(
                 createHttpResponse(
-                    "404 Not Found",
-                    body
+                    response.status,
+                    response.body
                 )
             );
 

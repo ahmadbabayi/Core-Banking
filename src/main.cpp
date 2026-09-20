@@ -6,6 +6,7 @@
 #include "infrastructure/repository/customerrepository.h"
 #include "application/customerservice.h"
 #include "web/customercontroller.h"
+#include "web/httprouter.h"
 #include "web/httpserver.h"
 
 int main(int argc, char *argv[])
@@ -64,14 +65,24 @@ int main(int argc, char *argv[])
     );
 
     /*
-     * 6. Create HTTP server.
+     * 6. Create HTTP router.
      *
-     * Server receives HTTP requests and
-     * delegates customer requests to
-     * CustomerController.
+     * Router decides which controller should
+     * handle each HTTP method and path.
+     */
+    HttpRouter router(
+        customerController
+    );
+
+    /*
+     * 7. Create HTTP server.
+     *
+     * Server handles TCP connections and
+     * HTTP parsing. Routing is delegated
+     * to HttpRouter.
      */
     HttpServer server(
-        customerController
+        router
     );
 
     const quint16 port = 8080;

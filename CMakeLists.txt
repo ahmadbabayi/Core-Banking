@@ -17,6 +17,9 @@ add_executable(CoreBanking
     src/web/httpserver.h
     src/web/httpserver.cpp
 
+    src/web/httprouter.h
+    src/web/httprouter.cpp
+
     src/web/customercontroller.h
     src/web/customercontroller.cpp
 

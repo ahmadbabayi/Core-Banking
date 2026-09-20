@@ -3,13 +3,13 @@
 
 #include <QTcpServer>
 
-class CustomerController;
+class HttpRouter;
 
 class HttpServer : public QTcpServer
 {
 public:
     explicit HttpServer(
-        CustomerController& customerController,
+        HttpRouter& router,
         QObject* parent = nullptr
     );
 
@@ -19,7 +19,7 @@ protected:
     ) override;
 
 private:
-    CustomerController& customerController;
+    HttpRouter& router;
 };
 
 #endif // HTTPSERVER_H
