@@ -52,15 +52,27 @@ bool CustomerRepository::save(
 
     query.prepare(
         "INSERT INTO customer "
-        "(id, national_id, first_name, last_name, status) "
+        "(national_id, first_name, last_name, status) "
         "VALUES "
-        "(:id, :national_id, :first_name, :last_name, :status)"
+        "(:national_id, :first_name, :last_name, :status) "
+        "RETURNING id"
     );
 
-    query.bindValue(":id", customer.getId());
-    query.bindValue(":national_id", customer.getNationalId());
-    query.bindValue(":first_name", customer.getFirstName());
-    query.bindValue(":last_name", customer.getLastName());
+    query.bindValue(
+        ":national_id",
+        customer.getNationalId()
+    );
+
+    query.bindValue(
+        ":first_name",
+        customer.getFirstName()
+    );
+
+    query.bindValue(
+        ":last_name",
+        customer.getLastName()
+    );
+
     query.bindValue(
         ":status",
         statusToString(customer.getStatus())
@@ -80,6 +92,24 @@ bool CustomerRepository::save(
 
         return false;
     }
+
+    if (!query.next())
+    {
+        qDebug()
+            << "CustomerRepository::save failed:"
+            << "database did not return generated customer ID.";
+
+        return false;
+    }
+
+    const int generatedId =
+        query.value(0).toInt();
+
+    customer.setId(generatedId);
+
+    qDebug()
+        << "Customer saved with generated ID:"
+        << generatedId;
 
     return true;
 }
