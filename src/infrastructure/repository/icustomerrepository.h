@@ -8,7 +8,9 @@ class ICustomerRepository
 public:
     virtual ~ICustomerRepository() = default;
 
-    virtual bool save(const Customer& customer) = 0;
+    virtual bool save(
+        Customer& customer
+    ) = 0;
 
     virtual bool findById(
         int id,

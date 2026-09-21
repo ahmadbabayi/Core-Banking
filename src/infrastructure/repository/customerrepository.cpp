@@ -45,7 +45,7 @@ Customer::Status CustomerRepository::stringToStatus(
 }
 
 bool CustomerRepository::save(
-    const Customer& customer
+    Customer& customer
 )
 {
     QSqlQuery query(db);

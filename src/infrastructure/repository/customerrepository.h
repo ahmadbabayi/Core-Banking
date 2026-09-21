@@ -4,6 +4,7 @@
 #include "icustomerrepository.h"
 
 #include <QSqlDatabase>
+#include <QString>
 
 class CustomerRepository : public ICustomerRepository
 {
@@ -13,7 +14,7 @@ public:
     );
 
     bool save(
-        const Customer& customer
+        Customer& customer
     ) override;
 
     bool findById(
@@ -36,8 +37,6 @@ public:
     ) override;
 
 private:
-    QSqlDatabase db;
-
     QString statusToString(
         Customer::Status status
     ) const;
@@ -45,6 +44,8 @@ private:
     Customer::Status stringToStatus(
         const QString& status
     ) const;
+
+    QSqlDatabase db;
 };
 
 #endif // CUSTOMERREPOSITORY_H
