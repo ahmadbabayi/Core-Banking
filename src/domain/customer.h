@@ -24,6 +24,9 @@ public:
     );
 
     int getId() const;
+
+    void setId(int id);
+
     QString getNationalId() const;
     QString getFirstName() const;
     QString getLastName() const;

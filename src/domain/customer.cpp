@@ -26,6 +26,11 @@ int Customer::getId() const
     return id;
 }
 
+void Customer::setId(int id)
+{
+    this->id = id;
+}
+
 QString Customer::getNationalId() const
 {
     return nationalId;
