@@ -26,15 +26,10 @@ HttpResponse CustomerController::createCustomer(
             &parseError
         );
 
-    /*
-     * JSON syntax validation.
-     */
-    if (parseError.error !=
-            QJsonParseError::NoError
-        || !document.isObject())
+    if (parseError.error != QJsonParseError::NoError)
     {
         qDebug()
-            << "Invalid JSON request body:"
+            << "Invalid JSON:"
             << parseError.errorString();
 
         return {
@@ -43,121 +38,105 @@ HttpResponse CustomerController::createCustomer(
         };
     }
 
-    const QJsonObject json =
+    if (!document.isObject())
+    {
+        return {
+            "400 Bad Request",
+            "{\"error\":\"JSON object expected\"}"
+        };
+    }
+
+    const QJsonObject object =
         document.object();
 
-    /*
-     * Required fields validation.
-     */
-    if (!json.contains("id")
-        || !json.contains("nationalId")
-        || !json.contains("firstName")
-        || !json.contains("lastName"))
-    {
-        qDebug()
-            << "Missing required customer fields";
-
-        return {
-            "400 Bad Request",
-            "{\"error\":\"Missing required fields\"}"
-        };
-    }
-
-    /*
-     * Type validation.
-     */
-    if (!json.value("id").isDouble()
-        || !json.value("nationalId").isString()
-        || !json.value("firstName").isString()
-        || !json.value("lastName").isString())
-    {
-        qDebug()
-            << "Invalid customer field types";
-
-        return {
-            "400 Bad Request",
-            "{\"error\":\"Invalid field types\"}"
-        };
-    }
-
-    const int id =
-        json.value("id").toInt();
-
     const QString nationalId =
-        json.value("nationalId").toString();
+        object.value("nationalId").toString().trimmed();
 
     const QString firstName =
-        json.value("firstName").toString();
+        object.value("firstName").toString().trimmed();
 
     const QString lastName =
-        json.value("lastName").toString();
+        object.value("lastName").toString().trimmed();
 
     qDebug()
         << "Customer data:"
-        << "id =" << id
         << "nationalId =" << nationalId
         << "firstName =" << firstName
         << "lastName =" << lastName;
+
+    if (nationalId.isEmpty() ||
+        firstName.isEmpty() ||
+        lastName.isEmpty())
+    {
+        return {
+            "400 Bad Request",
+            "{\"error\":\"nationalId, firstName and lastName are required\"}"
+        };
+    }
 
     Customer createdCustomer;
 
     const CustomerService::CreateCustomerResult result =
         customerService.createCustomer(
-            id,
             nationalId,
             firstName,
             lastName,
             createdCustomer
         );
 
-    if (result ==
-        CustomerService::CreateCustomerResult::InvalidInput)
+    switch (result)
     {
+    case CustomerService::CreateCustomerResult::Success:
+    {
+        QJsonObject responseObject;
+
+        responseObject["id"] =
+            createdCustomer.getId();
+
+        responseObject["nationalId"] =
+            createdCustomer.getNationalId();
+
+        responseObject["firstName"] =
+            createdCustomer.getFirstName();
+
+        responseObject["lastName"] =
+            createdCustomer.getLastName();
+
+        responseObject["status"] =
+            "ACTIVE";
+
+        const QByteArray responseBody =
+            QJsonDocument(responseObject)
+                .toJson(QJsonDocument::Compact);
+
+        return {
+            "201 Created",
+            responseBody
+        };
+    }
+
+    case CustomerService::CreateCustomerResult::InvalidInput:
         return {
             "400 Bad Request",
             "{\"error\":\"Invalid customer data\"}"
         };
-    }
 
-    if (result ==
-        CustomerService::CreateCustomerResult::Conflict)
-    {
+    case CustomerService::CreateCustomerResult::Conflict:
         return {
             "409 Conflict",
-            "{\"error\":\"Customer already exists\"}"
+            "{\"error\":\"Customer with this national ID already exists\"}"
         };
-    }
 
-    if (result ==
-        CustomerService::CreateCustomerResult::InternalError)
-    {
+    case CustomerService::CreateCustomerResult::InternalError:
         return {
             "500 Internal Server Error",
             "{\"error\":\"Internal server error\"}"
         };
     }
 
-    QJsonObject response;
-
-    response["id"] =
-        createdCustomer.getId();
-
-    response["nationalId"] =
-        createdCustomer.getNationalId();
-
-    response["firstName"] =
-        createdCustomer.getFirstName();
-
-    response["lastName"] =
-        createdCustomer.getLastName();
-
-    response["status"] =
-        "ACTIVE";
-
     return {
-        "201 Created",
-        QJsonDocument(response)
-            .toJson(QJsonDocument::Compact)
+        "500 Internal Server Error",
+        "{\"error\":\"Internal server error\"}"
     };
 }
 
@@ -169,23 +148,8 @@ HttpResponse CustomerController::getCustomerById(
         << "CustomerController::getCustomerById:"
         << customerId;
 
-    /*
-     * Validate customer ID.
-     */
-    if (customerId <= 0)
-    {
-        return {
-            "400 Bad Request",
-            "{\"error\":\"Invalid customer ID\"}"
-        };
-    }
-
     Customer customer;
 
-    /*
-     * Ask the application service to
-     * find the customer.
-     */
     if (!customerService.findCustomerById(
             customerId,
             customer))
@@ -196,42 +160,42 @@ HttpResponse CustomerController::getCustomerById(
         };
     }
 
-    /*
-     * Convert domain object to JSON.
-     */
-    QJsonObject response;
+    QJsonObject responseObject;
 
-    response["id"] =
+    responseObject["id"] =
         customer.getId();
 
-    response["nationalId"] =
+    responseObject["nationalId"] =
         customer.getNationalId();
 
-    response["firstName"] =
+    responseObject["firstName"] =
         customer.getFirstName();
 
-    response["lastName"] =
+    responseObject["lastName"] =
         customer.getLastName();
 
     switch (customer.getStatus())
     {
     case Customer::Status::ACTIVE:
-        response["status"] = "ACTIVE";
+        responseObject["status"] = "ACTIVE";
         break;
 
     case Customer::Status::INACTIVE:
-        response["status"] = "INACTIVE";
+        responseObject["status"] = "INACTIVE";
         break;
 
     case Customer::Status::BLOCKED:
-        response["status"] = "BLOCKED";
+        responseObject["status"] = "BLOCKED";
         break;
     }
 
+    const QByteArray responseBody =
+        QJsonDocument(responseObject)
+            .toJson(QJsonDocument::Compact);
+
     return {
         "200 OK",
-        QJsonDocument(response)
-            .toJson(QJsonDocument::Compact)
+        responseBody
     };
 }
 
@@ -243,23 +207,8 @@ HttpResponse CustomerController::getCustomerByNationalId(
         << "CustomerController::getCustomerByNationalId:"
         << nationalId;
 
-    /*
-     * Validate national ID.
-     */
-    if (nationalId.trimmed().isEmpty())
-    {
-        return {
-            "400 Bad Request",
-            "{\"error\":\"Invalid national ID\"}"
-        };
-    }
-
     Customer customer;
 
-    /*
-     * Ask the application service to
-     * find the customer by national ID.
-     */
     if (!customerService.findCustomerByNationalId(
             nationalId,
             customer))
@@ -270,41 +219,41 @@ HttpResponse CustomerController::getCustomerByNationalId(
         };
     }
 
-    /*
-     * Convert domain object to JSON.
-     */
-    QJsonObject response;
+    QJsonObject responseObject;
 
-    response["id"] =
+    responseObject["id"] =
         customer.getId();
 
-    response["nationalId"] =
+    responseObject["nationalId"] =
         customer.getNationalId();
 
-    response["firstName"] =
+    responseObject["firstName"] =
         customer.getFirstName();
 
-    response["lastName"] =
+    responseObject["lastName"] =
         customer.getLastName();
 
     switch (customer.getStatus())
     {
     case Customer::Status::ACTIVE:
-        response["status"] = "ACTIVE";
+        responseObject["status"] = "ACTIVE";
         break;
 
     case Customer::Status::INACTIVE:
-        response["status"] = "INACTIVE";
+        responseObject["status"] = "INACTIVE";
         break;
 
     case Customer::Status::BLOCKED:
-        response["status"] = "BLOCKED";
+        responseObject["status"] = "BLOCKED";
         break;
     }
 
+    const QByteArray responseBody =
+        QJsonDocument(responseObject)
+            .toJson(QJsonDocument::Compact);
+
     return {
         "200 OK",
-        QJsonDocument(response)
-            .toJson(QJsonDocument::Compact)
+        responseBody
     };
 }

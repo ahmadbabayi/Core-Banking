@@ -10,7 +10,6 @@
 class CustomerService
 {
 public:
-
     enum class CreateCustomerResult
     {
         Success,
@@ -25,7 +24,6 @@ public:
     );
 
     CreateCustomerResult createCustomer(
-        int id,
         const QString& nationalId,
         const QString& firstName,
         const QString& lastName,
