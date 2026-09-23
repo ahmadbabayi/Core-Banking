@@ -26,6 +26,9 @@ add_executable(CoreBanking
     src/application/accountservice.h
     src/application/accountservice.cpp
 
+    src/application/accountnumbergenerator.h
+    src/application/accountnumbergenerator.cpp
+
     src/application/customerservice.h
     src/application/customerservice.cpp
 
