@@ -1,0 +1,6 @@
+*.user
+*.autosave
+build/
+*.o
+*.so
+*.a
