@@ -17,22 +17,22 @@ public:
         Customer& customer
     ) override;
 
-    bool findById(
+    FindResult findById(
         long long id,
         Customer& customer
     ) override;
 
-    bool findByIdForUpdate(
+    FindResult findByIdForUpdate(
         long long id,
         Customer& customer
     ) override;
 
-    bool findByNationalId(
+    FindResult findByNationalId(
         const QString& nationalId,
         Customer& customer
     ) override;
 
-    bool update(
+    UpdateResult update(
         const Customer& customer
     ) override;
 

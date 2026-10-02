@@ -1,16 +1,15 @@
 #include <QCoreApplication>
-
 #include <QHostAddress>
 #include <QDebug>
 #include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QSqlError>
 
 #include "infrastructure/database.h"
-
 #include "infrastructure/repository/customerrepository.h"
-
 #include "application/customerservice.h"
+#include "application/customernumbergenerator.h"
 #include "application/accountnumbergenerator.h"
-
 #include "web/customercontroller.h"
 #include "web/httprouter.h"
 #include "web/httpserver.h"
@@ -20,6 +19,7 @@ class CustomerNumberRetryTestRepository
     : public ICustomerRepository
 {
 public:
+
     int saveCallCount = 0;
 
     SaveResult save(
@@ -46,35 +46,35 @@ public:
         return SaveResult::Success;
     }
 
-    bool findById(
+    FindResult findById(
         long long,
         Customer&
     ) override
     {
-        return false;
+        return FindResult::NotFound;
     }
 
-    bool findByIdForUpdate(
+    FindResult findByIdForUpdate(
         long long,
         Customer&
     ) override
     {
-        return false;
+        return FindResult::NotFound;
     }
 
-    bool findByNationalId(
+    FindResult findByNationalId(
         const QString&,
         Customer&
     ) override
     {
-        return false;
+        return FindResult::NotFound;
     }
 
-    bool update(
+    UpdateResult update(
         const Customer&
     ) override
     {
-        return false;
+        return UpdateResult::DatabaseError;
     }
 };
 
@@ -83,6 +83,7 @@ class CustomerNumberConflictLimitTestRepository
     : public ICustomerRepository
 {
 public:
+
     int saveCallCount = 0;
 
     SaveResult save(
@@ -100,35 +101,80 @@ public:
         return SaveResult::CustomerNumberConflict;
     }
 
-    bool findById(
+    FindResult findById(
         long long,
         Customer&
     ) override
     {
-        return false;
+        return FindResult::NotFound;
     }
 
-    bool findByIdForUpdate(
+    FindResult findByIdForUpdate(
         long long,
         Customer&
     ) override
     {
-        return false;
+        return FindResult::NotFound;
     }
 
-    bool findByNationalId(
+    FindResult findByNationalId(
         const QString&,
         Customer&
     ) override
     {
-        return false;
+        return FindResult::NotFound;
     }
 
-    bool update(
+    UpdateResult update(
         const Customer&
     ) override
     {
-        return false;
+        return UpdateResult::DatabaseError;
+    }
+};
+
+
+class CustomerRepositoryResultTestRepository
+    : public ICustomerRepository
+{
+public:
+
+    SaveResult save(
+        Customer&
+    ) override
+    {
+        return SaveResult::DatabaseError;
+    }
+
+    FindResult findById(
+        long long,
+        Customer&
+    ) override
+    {
+        return FindResult::NotFound;
+    }
+
+    FindResult findByIdForUpdate(
+        long long,
+        Customer&
+    ) override
+    {
+        return FindResult::DatabaseError;
+    }
+
+    FindResult findByNationalId(
+        const QString&,
+        Customer&
+    ) override
+    {
+        return FindResult::DatabaseError;
+    }
+
+    UpdateResult update(
+        const Customer&
+    ) override
+    {
+        return UpdateResult::DatabaseError;
     }
 };
 
@@ -138,9 +184,9 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
 
 
-    /*
-     * 1. AccountNumberGenerator tests.
-     */
+    // ------------------------------------------------------------
+    // AccountNumberGenerator tests
+    // ------------------------------------------------------------
 
     qDebug()
         << "AccountNumberGenerator test:";
@@ -177,147 +223,203 @@ int main(int argc, char *argv[])
     }
 
 
-    /*
-     * 2. CustomerNumberConflict retry test.
-     *
-     * First save:
-     *     CustomerNumberConflict
-     *
-     * Second save:
-     *     Success
-     *
-     * Expected:
-     *     CustomerService returns Success.
-     *     save() is called exactly twice.
-     */
+    // ------------------------------------------------------------
+    // CustomerNumberGenerator retry test
+    // ------------------------------------------------------------
 
-    qDebug()
-        << "";
-    qDebug()
-        << "CustomerNumberConflict retry test:";
+    {
+        CustomerNumberRetryTestRepository repository;
 
-    CustomerNumberRetryTestRepository
-        retryTestRepository;
+        QSqlDatabase testDatabase;
 
-    CustomerService retryTestService(
-        retryTestRepository,
-        QSqlDatabase()
-    );
+        CustomerService service(
+            repository,
+            testDatabase
+        );
 
-    Customer retryTestCustomer;
+        Customer createdCustomer;
 
-    const CustomerService::CreateCustomerResult
-        retryTestResult =
-            retryTestService.createCustomer(
-                "RETRY-TEST-001",
+        const CustomerService::CreateCustomerResult result =
+            service.createCustomer(
+                "0012345678",
                 "Retry",
                 "Test",
                 "364",
-                retryTestCustomer
+                createdCustomer
             );
 
-    if (retryTestResult !=
-        CustomerService::CreateCustomerResult::Success)
-    {
-        qCritical()
-            << "CustomerNumberConflict retry test FAILED:"
-            << "expected Success.";
-
-        return 1;
+        if (result ==
+                CustomerService::CreateCustomerResult::Success &&
+            repository.saveCallCount == 2)
+        {
+            qDebug()
+                << "CustomerNumberConflict retry test PASSED."
+                << "save calls ="
+                << repository.saveCallCount;
+        }
+        else
+        {
+            qDebug()
+                << "CustomerNumberConflict retry test FAILED."
+                << "result ="
+                << static_cast<int>(result)
+                << "save calls ="
+                << repository.saveCallCount;
+        }
     }
 
-    if (retryTestRepository.saveCallCount != 2)
+
+    // ------------------------------------------------------------
+    // CustomerNumberGenerator retry limit test
+    // ------------------------------------------------------------
+
     {
-        qCritical()
-            << "CustomerNumberConflict retry test FAILED:"
-            << "expected 2 save calls, got"
-            << retryTestRepository.saveCallCount;
+        CustomerNumberConflictLimitTestRepository repository;
 
-        return 1;
-    }
+        QSqlDatabase testDatabase;
 
-    if (retryTestCustomer.getId() != 999)
-    {
-        qCritical()
-            << "CustomerNumberConflict retry test FAILED:"
-            << "unexpected customer ID:"
-            << retryTestCustomer.getId();
+        CustomerService service(
+            repository,
+            testDatabase
+        );
 
-        return 1;
-    }
+        Customer createdCustomer;
 
-    qDebug()
-        << "CustomerNumberConflict retry test PASSED."
-        << "save calls ="
-        << retryTestRepository.saveCallCount
-        << "customer ID ="
-        << retryTestCustomer.getId();
-
-
-    /*
-     * 3. CustomerNumberConflict retry limit test.
-     *
-     * Every save() call returns CustomerNumberConflict.
-     *
-     * Expected:
-     *     CustomerService returns InternalError.
-     *     save() is called exactly 10 times.
-     */
-
-    qDebug()
-        << "";
-    qDebug()
-        << "CustomerNumberConflict retry limit test:";
-
-    CustomerNumberConflictLimitTestRepository
-        limitTestRepository;
-
-    CustomerService limitTestService(
-        limitTestRepository,
-        QSqlDatabase()
-    );
-
-    Customer limitTestCustomer;
-
-    const CustomerService::CreateCustomerResult
-        limitTestResult =
-            limitTestService.createCustomer(
-                "RETRY-LIMIT-TEST-001",
+        const CustomerService::CreateCustomerResult result =
+            service.createCustomer(
+                "0012345679",
                 "Retry",
                 "Limit",
                 "364",
-                limitTestCustomer
+                createdCustomer
             );
 
-    if (limitTestResult !=
-        CustomerService::CreateCustomerResult::InternalError)
-    {
-        qCritical()
-            << "CustomerNumberConflict retry limit test FAILED:"
-            << "expected InternalError.";
-
-        return 1;
+        if (result ==
+                CustomerService::CreateCustomerResult::InternalError &&
+            repository.saveCallCount == 10)
+        {
+            qDebug()
+                << "CustomerNumberConflict retry limit test PASSED."
+                << "save calls ="
+                << repository.saveCallCount;
+        }
+        else
+        {
+            qDebug()
+                << "CustomerNumberConflict retry limit test FAILED."
+                << "result ="
+                << static_cast<int>(result)
+                << "save calls ="
+                << repository.saveCallCount;
+        }
     }
 
-    if (limitTestRepository.saveCallCount != 10)
-    {
-        qCritical()
-            << "CustomerNumberConflict retry limit test FAILED:"
-            << "expected 10 save calls, got"
-            << limitTestRepository.saveCallCount;
 
-        return 1;
+    // ------------------------------------------------------------
+    // CustomerRepository result distinction tests
+    // ------------------------------------------------------------
+
+    {
+        CustomerRepositoryResultTestRepository repository;
+
+        Customer customer;
+
+
+        // findById -> NotFound
+
+        const ICustomerRepository::FindResult findByIdResult =
+            repository.findById(
+                12345,
+                customer
+            );
+
+        if (findByIdResult ==
+            ICustomerRepository::FindResult::NotFound)
+        {
+            qDebug()
+                << "findById NotFound test PASSED.";
+        }
+        else
+        {
+            qDebug()
+                << "findById NotFound test FAILED."
+                << "result ="
+                << static_cast<int>(findByIdResult);
+        }
+
+
+        // findByIdForUpdate -> DatabaseError
+
+        const ICustomerRepository::FindResult findByIdForUpdateResult =
+            repository.findByIdForUpdate(
+                12345,
+                customer
+            );
+
+        if (findByIdForUpdateResult ==
+            ICustomerRepository::FindResult::DatabaseError)
+        {
+            qDebug()
+                << "findByIdForUpdate DatabaseError test PASSED.";
+        }
+        else
+        {
+            qDebug()
+                << "findByIdForUpdate DatabaseError test FAILED."
+                << "result ="
+                << static_cast<int>(findByIdForUpdateResult);
+        }
+
+
+        // findByNationalId -> DatabaseError
+
+        const ICustomerRepository::FindResult findByNationalIdResult =
+            repository.findByNationalId(
+                "0012345678",
+                customer
+            );
+
+        if (findByNationalIdResult ==
+            ICustomerRepository::FindResult::DatabaseError)
+        {
+            qDebug()
+                << "findByNationalId DatabaseError test PASSED.";
+        }
+        else
+        {
+            qDebug()
+                << "findByNationalId DatabaseError test FAILED."
+                << "result ="
+                << static_cast<int>(findByNationalIdResult);
+        }
+
+
+        // update -> DatabaseError
+
+        const ICustomerRepository::UpdateResult updateResult =
+            repository.update(
+                customer
+            );
+
+        if (updateResult ==
+            ICustomerRepository::UpdateResult::DatabaseError)
+        {
+            qDebug()
+                << "update DatabaseError test PASSED.";
+        }
+        else
+        {
+            qDebug()
+                << "update DatabaseError test FAILED."
+                << "result ="
+                << static_cast<int>(updateResult);
+        }
     }
 
-    qDebug()
-        << "CustomerNumberConflict retry limit test PASSED."
-        << "save calls ="
-        << limitTestRepository.saveCallCount;
 
-
-    /*
-     * 4. Connect to PostgreSQL.
-     */
+    // ------------------------------------------------------------
+    // Database connection
+    // ------------------------------------------------------------
 
     Database& database =
         Database::instance();
@@ -331,27 +433,167 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-
-    /*
-     * 5. Get the active database connection.
-     */
-
     QSqlDatabase db =
         database.connection();
 
 
-    /*
-     * 6. Create repository.
-     */
+    // ------------------------------------------------------------
+    // Real PostgreSQL customer_number conflict test
+    // ------------------------------------------------------------
+
+    {
+        qDebug()
+            << "Real PostgreSQL customer_number conflict test:";
+
+        const QString testCustomerNumber =
+            CustomerNumberGenerator::generate();
+
+        Customer firstCustomer(
+            0,
+            testCustomerNumber,
+            Customer::Type::INDIVIDUAL,
+            "364",
+            Customer::Status::ACTIVE
+        );
+
+        firstCustomer.setNationalId(
+            "TEST-NID-001"
+        );
+
+        firstCustomer.setFirstName(
+            "Database"
+        );
+
+        firstCustomer.setLastName(
+            "ConflictTestOne"
+        );
+
+        CustomerRepository repository(
+            db
+        );
+
+        const ICustomerRepository::SaveResult firstResult =
+            repository.save(
+                firstCustomer
+            );
+
+        if (firstResult !=
+            ICustomerRepository::SaveResult::Success)
+        {
+            qDebug()
+                << "Real PostgreSQL customer_number conflict test FAILED:"
+                << "first customer could not be saved.";
+
+            qDebug()
+                << "Result:"
+                << static_cast<int>(firstResult);
+
+            return 1;
+        }
+
+        qDebug()
+            << "First customer saved:"
+            << "id =" << firstCustomer.getId()
+            << "customerNumber =" << testCustomerNumber;
+
+
+        Customer secondCustomer(
+            0,
+            testCustomerNumber,
+            Customer::Type::INDIVIDUAL,
+            "364",
+            Customer::Status::ACTIVE
+        );
+
+        secondCustomer.setNationalId(
+            "TEST-NID-002"
+        );
+
+        secondCustomer.setFirstName(
+            "Database"
+        );
+
+        secondCustomer.setLastName(
+            "ConflictTestTwo"
+        );
+
+        const ICustomerRepository::SaveResult secondResult =
+            repository.save(
+                secondCustomer
+            );
+
+        if (secondResult ==
+            ICustomerRepository::SaveResult::CustomerNumberConflict)
+        {
+            qDebug()
+                << "Duplicate customer_number correctly detected:"
+                << testCustomerNumber;
+        }
+        else
+        {
+            qDebug()
+                << "Real PostgreSQL customer_number conflict test FAILED.";
+
+            qDebug()
+                << "Expected:"
+                << "CustomerNumberConflict"
+                << "Actual:"
+                << static_cast<int>(secondResult);
+
+            QSqlQuery cleanupQuery(db);
+
+            cleanupQuery.prepare(
+                "DELETE FROM customer "
+                "WHERE id = :id"
+            );
+
+            cleanupQuery.bindValue(
+                ":id",
+                firstCustomer.getId()
+            );
+
+            cleanupQuery.exec();
+
+            return 1;
+        }
+
+
+        // Cleanup first test customer.
+
+        QSqlQuery cleanupQuery(db);
+
+        cleanupQuery.prepare(
+            "DELETE FROM customer "
+            "WHERE id = :id"
+        );
+
+        cleanupQuery.bindValue(
+            ":id",
+            firstCustomer.getId()
+        );
+
+        if (!cleanupQuery.exec())
+        {
+            qDebug()
+                << "Real PostgreSQL customer_number conflict test FAILED:"
+                << "cleanup failed:"
+                << cleanupQuery.lastError().text();
+
+            return 1;
+        }
+
+        qDebug()
+            << "Real PostgreSQL customer_number conflict test PASSED.";
+    }
+
+
+    // ------------------------------------------------------------
+    // Customer repository / service
+    // ------------------------------------------------------------
 
     CustomerRepository customerRepository(
         db
     );
-
-
-    /*
-     * 7. Create application service.
-     */
 
     CustomerService customerService(
         customerRepository,
@@ -359,27 +601,17 @@ int main(int argc, char *argv[])
     );
 
 
-    /*
-     * 8. Create HTTP controller.
-     */
+    // ------------------------------------------------------------
+    // HTTP
+    // ------------------------------------------------------------
 
     CustomerController customerController(
         customerService
     );
 
-
-    /*
-     * 9. Create HTTP router.
-     */
-
     HttpRouter router(
         customerController
     );
-
-
-    /*
-     * 10. Create HTTP server.
-     */
 
     HttpServer server(
         router

@@ -97,9 +97,14 @@ CustomerService::createCustomer(
 
     Customer existingCustomer;
 
-    if (customerRepository.findByNationalId(
+    const ICustomerRepository::FindResult findResult =
+        customerRepository.findByNationalId(
             normalizedNationalId,
-            existingCustomer))
+            existingCustomer
+        );
+
+    if (findResult ==
+        ICustomerRepository::FindResult::Found)
     {
         qDebug()
             << "CustomerService::createCustomer:"
@@ -107,6 +112,16 @@ CustomerService::createCustomer(
             << normalizedNationalId;
 
         return CreateCustomerResult::Conflict;
+    }
+
+    if (findResult ==
+        ICustomerRepository::FindResult::DatabaseError)
+    {
+        qDebug()
+            << "CustomerService::createCustomer:"
+            << "repository lookup failed with database error.";
+
+        return CreateCustomerResult::InternalError;
     }
 
     constexpr int maxAttempts = 10;
@@ -195,10 +210,14 @@ bool CustomerService::findCustomerById(
     Customer& customer
 )
 {
-    return customerRepository.findById(
-        customerId,
-        customer
-    );
+    const ICustomerRepository::FindResult result =
+        customerRepository.findById(
+            customerId,
+            customer
+        );
+
+    return result ==
+        ICustomerRepository::FindResult::Found;
 }
 
 bool CustomerService::findCustomerByNationalId(
@@ -206,10 +225,14 @@ bool CustomerService::findCustomerByNationalId(
     Customer& customer
 )
 {
-    return customerRepository.findByNationalId(
-        nationalId,
-        customer
-    );
+    const ICustomerRepository::FindResult result =
+        customerRepository.findByNationalId(
+            nationalId,
+            customer
+        );
+
+    return result ==
+        ICustomerRepository::FindResult::Found;
 }
 
 bool CustomerService::deactivateCustomer(
@@ -218,9 +241,14 @@ bool CustomerService::deactivateCustomer(
 {
     Customer customer;
 
-    if (!customerRepository.findById(
+    const ICustomerRepository::FindResult findResult =
+        customerRepository.findById(
             customerId,
-            customer))
+            customer
+        );
+
+    if (findResult !=
+        ICustomerRepository::FindResult::Found)
     {
         return false;
     }
@@ -231,7 +259,7 @@ bool CustomerService::deactivateCustomer(
 
     return customerRepository.update(
         customer
-    );
+    ) == ICustomerRepository::UpdateResult::Success;
 }
 
 bool CustomerService::blockCustomer(
@@ -240,9 +268,14 @@ bool CustomerService::blockCustomer(
 {
     Customer customer;
 
-    if (!customerRepository.findById(
+    const ICustomerRepository::FindResult findResult =
+        customerRepository.findById(
             customerId,
-            customer))
+            customer
+        );
+
+    if (findResult !=
+        ICustomerRepository::FindResult::Found)
     {
         return false;
     }
@@ -253,5 +286,5 @@ bool CustomerService::blockCustomer(
 
     return customerRepository.update(
         customer
-    );
+    ) == ICustomerRepository::UpdateResult::Success;
 }

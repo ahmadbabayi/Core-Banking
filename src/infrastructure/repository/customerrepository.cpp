@@ -198,7 +198,7 @@ CustomerRepository::save(
 
         if (error.nativeErrorCode() == "23505" &&
             error.text().contains(
-                "uq_customer_number_key"
+                "uq_customer_number"
             ))
         {
             qDebug()
@@ -300,7 +300,8 @@ CustomerRepository::save(
     return SaveResult::Success;
 }
 
-bool CustomerRepository::findById(
+ICustomerRepository::FindResult
+CustomerRepository::findById(
     long long id,
     Customer& customer
 )
@@ -336,16 +337,21 @@ bool CustomerRepository::findById(
             << "CustomerRepository::findById failed:"
             << query.lastError().text();
 
-        return false;
+        return FindResult::DatabaseError;
     }
 
-    return loadCustomer(
-        query,
-        customer
-    );
+    if (!loadCustomer(
+            query,
+            customer))
+    {
+        return FindResult::NotFound;
+    }
+
+    return FindResult::Found;
 }
 
-bool CustomerRepository::findByIdForUpdate(
+ICustomerRepository::FindResult
+CustomerRepository::findByIdForUpdate(
     long long id,
     Customer& customer
 )
@@ -382,26 +388,25 @@ bool CustomerRepository::findByIdForUpdate(
             << "CustomerRepository::findByIdForUpdate failed:"
             << query.lastError().text();
 
-        return false;
+        return FindResult::DatabaseError;
     }
 
-    const bool found =
-        loadCustomer(
+    if (!loadCustomer(
             query,
-            customer
-        );
-
-    if (found)
+            customer))
     {
-        qDebug()
-            << "Customer locked with SELECT FOR UPDATE:"
-            << id;
+        return FindResult::NotFound;
     }
 
-    return found;
+    qDebug()
+        << "Customer locked with SELECT FOR UPDATE:"
+        << id;
+
+    return FindResult::Found;
 }
 
-bool CustomerRepository::findByNationalId(
+ICustomerRepository::FindResult
+CustomerRepository::findByNationalId(
     const QString& nationalId,
     Customer& customer
 )
@@ -437,16 +442,21 @@ bool CustomerRepository::findByNationalId(
             << "CustomerRepository::findByNationalId failed:"
             << query.lastError().text();
 
-        return false;
+        return FindResult::DatabaseError;
     }
 
-    return loadCustomer(
-        query,
-        customer
-    );
+    if (!loadCustomer(
+            query,
+            customer))
+    {
+        return FindResult::NotFound;
+    }
+
+    return FindResult::Found;
 }
 
-bool CustomerRepository::update(
+ICustomerRepository::UpdateResult
+CustomerRepository::update(
     const Customer& customer
 )
 {
@@ -456,7 +466,7 @@ bool CustomerRepository::update(
             << "CustomerRepository::update:"
             << "invalid customer ID.";
 
-        return false;
+        return UpdateResult::NotFound;
     }
 
     if (!db.transaction())
@@ -466,7 +476,7 @@ bool CustomerRepository::update(
             << "failed to start transaction:"
             << db.lastError().text();
 
-        return false;
+        return UpdateResult::DatabaseError;
     }
 
     QSqlQuery customerQuery(db);
@@ -515,7 +525,7 @@ bool CustomerRepository::update(
 
         db.rollback();
 
-        return false;
+        return UpdateResult::DatabaseError;
     }
 
     if (customerQuery.numRowsAffected() == 0)
@@ -527,7 +537,7 @@ bool CustomerRepository::update(
 
         db.rollback();
 
-        return false;
+        return UpdateResult::NotFound;
     }
 
     if (customer.getCustomerType() ==
@@ -572,7 +582,7 @@ bool CustomerRepository::update(
 
             db.rollback();
 
-            return false;
+            return UpdateResult::DatabaseError;
         }
 
         if (individualQuery.numRowsAffected() == 0)
@@ -584,7 +594,7 @@ bool CustomerRepository::update(
 
             db.rollback();
 
-            return false;
+            return UpdateResult::NotFound;
         }
     }
 
@@ -597,8 +607,8 @@ bool CustomerRepository::update(
 
         db.rollback();
 
-        return false;
+        return UpdateResult::DatabaseError;
     }
 
-    return true;
+    return UpdateResult::Success;
 }

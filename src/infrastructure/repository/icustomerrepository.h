@@ -15,28 +15,42 @@ public:
         DatabaseError
     };
 
+    enum class FindResult
+    {
+        Found,
+        NotFound,
+        DatabaseError
+    };
+
+    enum class UpdateResult
+    {
+        Success,
+        NotFound,
+        DatabaseError
+    };
+
     virtual ~ICustomerRepository() = default;
 
     virtual SaveResult save(
         Customer& customer
     ) = 0;
 
-    virtual bool findById(
+    virtual FindResult findById(
         long long id,
         Customer& customer
     ) = 0;
 
-    virtual bool findByIdForUpdate(
+    virtual FindResult findByIdForUpdate(
         long long id,
         Customer& customer
     ) = 0;
 
-    virtual bool findByNationalId(
+    virtual FindResult findByNationalId(
         const QString& nationalId,
         Customer& customer
     ) = 0;
 
-    virtual bool update(
+    virtual UpdateResult update(
         const Customer& customer
     ) = 0;
 };
