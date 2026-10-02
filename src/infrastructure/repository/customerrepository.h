@@ -18,12 +18,12 @@ public:
     ) override;
 
     bool findById(
-        int id,
+        long long id,
         Customer& customer
     ) override;
 
     bool findByIdForUpdate(
-        int id,
+        long long id,
         Customer& customer
     ) override;
 
@@ -44,6 +44,19 @@ private:
     Customer::Status stringToStatus(
         const QString& status
     ) const;
+
+    QString typeToString(
+        Customer::Type type
+    ) const;
+
+    Customer::Type stringToType(
+        const QString& type
+    ) const;
+
+    bool loadCustomer(
+        QSqlQuery& query,
+        Customer& customer
+    );
 
     QSqlDatabase db;
 };

@@ -1,8 +1,8 @@
 #include "customerservice.h"
 
+#include "customernumbergenerator.h"
+
 #include <QDebug>
-#include <QSqlError>
-#include <QSqlQuery>
 
 CustomerService::CustomerService(
     ICustomerRepository& customerRepository,
@@ -11,6 +11,26 @@ CustomerService::CustomerService(
     : customerRepository(customerRepository),
       db(database)
 {
+}
+
+bool CustomerService::isValidNationalityCode(
+    const QString& nationalityCode
+) const
+{
+    if (nationalityCode.length() != 3)
+    {
+        return false;
+    }
+
+    for (const QChar character : nationalityCode)
+    {
+        if (!character.isDigit())
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 CustomerService::CreateCustomerResult
@@ -22,11 +42,28 @@ CustomerService::createCustomer(
 )
 {
     qDebug()
+        << "CustomerService::createCustomer:"
+        << "nationality code is required.";
+
+    return CreateCustomerResult::InvalidInput;
+}
+
+CustomerService::CreateCustomerResult
+CustomerService::createCustomer(
+    const QString& nationalId,
+    const QString& firstName,
+    const QString& lastName,
+    const QString& nationalityCode,
+    Customer& createdCustomer
+)
+{
+    qDebug()
         << "CustomerService::createCustomer";
 
     if (nationalId.trimmed().isEmpty() ||
         firstName.trimmed().isEmpty() ||
-        lastName.trimmed().isEmpty())
+        lastName.trimmed().isEmpty() ||
+        nationalityCode.trimmed().isEmpty())
     {
         qDebug()
             << "CustomerService::createCustomer:"
@@ -35,10 +72,24 @@ CustomerService::createCustomer(
         return CreateCustomerResult::InvalidInput;
     }
 
+    const QString normalizedNationalityCode =
+        nationalityCode.trimmed();
+
+    if (!isValidNationalityCode(
+            normalizedNationalityCode))
+    {
+        qDebug()
+            << "CustomerService::createCustomer:"
+            << "invalid nationality code:"
+            << normalizedNationalityCode;
+
+        return CreateCustomerResult::InvalidInput;
+    }
+
     Customer existingCustomer;
 
     if (customerRepository.findByNationalId(
-            nationalId,
+            nationalId.trimmed(),
             existingCustomer))
     {
         qDebug()
@@ -49,35 +100,69 @@ CustomerService::createCustomer(
         return CreateCustomerResult::Conflict;
     }
 
-    Customer customer(
-        0,
-        nationalId,
-        firstName,
-        lastName,
-        Customer::Status::ACTIVE
-    );
+    constexpr int maxAttempts = 10;
 
-    if (!customerRepository.save(customer))
+    for (int attempt = 0;
+         attempt < maxAttempts;
+         ++attempt)
     {
+        const QString customerNumber =
+            CustomerNumberGenerator::generate();
+
+        if (customerNumber.isEmpty())
+        {
+            qDebug()
+                << "CustomerService::createCustomer:"
+                << "failed to generate customer number.";
+
+            return CreateCustomerResult::InternalError;
+        }
+
+        Customer customer(
+            0,
+            customerNumber,
+            Customer::Type::INDIVIDUAL,
+            normalizedNationalityCode,
+            Customer::Status::ACTIVE
+        );
+
+        customer.setNationalId(
+            nationalId.trimmed()
+        );
+
+        customer.setFirstName(
+            firstName.trimmed()
+        );
+
+        customer.setLastName(
+            lastName.trimmed()
+        );
+
+        if (customerRepository.save(customer))
+        {
+            createdCustomer = customer;
+
+            qDebug()
+                << "CustomerService::createCustomer:"
+                << "customer created."
+                << "id =" << createdCustomer.getId()
+                << "customerNumber ="
+                << createdCustomer.getCustomerNumber();
+
+            return CreateCustomerResult::Success;
+        }
+
         qDebug()
             << "CustomerService::createCustomer:"
-            << "repository save failed";
-
-        return CreateCustomerResult::InternalError;
+            << "repository save failed."
+            << "attempt =" << attempt + 1;
     }
 
-    createdCustomer = customer;
-
-    qDebug()
-        << "CustomerService::createCustomer:"
-        << "customer created with ID:"
-        << createdCustomer.getId();
-
-    return CreateCustomerResult::Success;
+    return CreateCustomerResult::InternalError;
 }
 
 bool CustomerService::findCustomerById(
-    int customerId,
+    long long customerId,
     Customer& customer
 )
 {
@@ -99,7 +184,7 @@ bool CustomerService::findCustomerByNationalId(
 }
 
 bool CustomerService::deactivateCustomer(
-    int customerId
+    long long customerId
 )
 {
     Customer customer;
@@ -111,11 +196,7 @@ bool CustomerService::deactivateCustomer(
         return false;
     }
 
-    customer = Customer(
-        customer.getId(),
-        customer.getNationalId(),
-        customer.getFirstName(),
-        customer.getLastName(),
+    customer.setStatus(
         Customer::Status::INACTIVE
     );
 
@@ -125,7 +206,7 @@ bool CustomerService::deactivateCustomer(
 }
 
 bool CustomerService::blockCustomer(
-    int customerId
+    long long customerId
 )
 {
     Customer customer;
@@ -137,11 +218,7 @@ bool CustomerService::blockCustomer(
         return false;
     }
 
-    customer = Customer(
-        customer.getId(),
-        customer.getNationalId(),
-        customer.getFirstName(),
-        customer.getLastName(),
+    customer.setStatus(
         Customer::Status::BLOCKED
     );
 

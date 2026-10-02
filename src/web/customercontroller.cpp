@@ -58,19 +58,24 @@ HttpResponse CustomerController::createCustomer(
     const QString lastName =
         object.value("lastName").toString().trimmed();
 
+    const QString nationalityCode =
+        object.value("nationalityCode").toString().trimmed();
+
     qDebug()
         << "Customer data:"
         << "nationalId =" << nationalId
         << "firstName =" << firstName
-        << "lastName =" << lastName;
+        << "lastName =" << lastName
+        << "nationalityCode =" << nationalityCode;
 
     if (nationalId.isEmpty() ||
         firstName.isEmpty() ||
-        lastName.isEmpty())
+        lastName.isEmpty() ||
+        nationalityCode.isEmpty())
     {
         return {
             "400 Bad Request",
-            "{\"error\":\"nationalId, firstName and lastName are required\"}"
+            "{\"error\":\"nationalId, firstName, lastName and nationalityCode are required\"}"
         };
     }
 
@@ -81,6 +86,7 @@ HttpResponse CustomerController::createCustomer(
             nationalId,
             firstName,
             lastName,
+            nationalityCode,
             createdCustomer
         );
 
@@ -91,7 +97,10 @@ HttpResponse CustomerController::createCustomer(
         QJsonObject responseObject;
 
         responseObject["id"] =
-            createdCustomer.getId();
+            static_cast<qint64>(createdCustomer.getId());
+
+        responseObject["customerNumber"] =
+            createdCustomer.getCustomerNumber();
 
         responseObject["nationalId"] =
             createdCustomer.getNationalId();
@@ -101,6 +110,9 @@ HttpResponse CustomerController::createCustomer(
 
         responseObject["lastName"] =
             createdCustomer.getLastName();
+
+        responseObject["nationalityCode"] =
+            createdCustomer.getNationalityCode();
 
         responseObject["status"] =
             "ACTIVE";
@@ -163,7 +175,10 @@ HttpResponse CustomerController::getCustomerById(
     QJsonObject responseObject;
 
     responseObject["id"] =
-        customer.getId();
+        static_cast<qint64>(customer.getId());
+
+    responseObject["customerNumber"] =
+        customer.getCustomerNumber();
 
     responseObject["nationalId"] =
         customer.getNationalId();
@@ -173,6 +188,9 @@ HttpResponse CustomerController::getCustomerById(
 
     responseObject["lastName"] =
         customer.getLastName();
+
+    responseObject["nationalityCode"] =
+        customer.getNationalityCode();
 
     switch (customer.getStatus())
     {
@@ -186,6 +204,10 @@ HttpResponse CustomerController::getCustomerById(
 
     case Customer::Status::BLOCKED:
         responseObject["status"] = "BLOCKED";
+        break;
+
+    case Customer::Status::CLOSED:
+        responseObject["status"] = "CLOSED";
         break;
     }
 
@@ -222,7 +244,10 @@ HttpResponse CustomerController::getCustomerByNationalId(
     QJsonObject responseObject;
 
     responseObject["id"] =
-        customer.getId();
+        static_cast<qint64>(customer.getId());
+
+    responseObject["customerNumber"] =
+        customer.getCustomerNumber();
 
     responseObject["nationalId"] =
         customer.getNationalId();
@@ -232,6 +257,9 @@ HttpResponse CustomerController::getCustomerByNationalId(
 
     responseObject["lastName"] =
         customer.getLastName();
+
+    responseObject["nationalityCode"] =
+        customer.getNationalityCode();
 
     switch (customer.getStatus())
     {
@@ -245,6 +273,10 @@ HttpResponse CustomerController::getCustomerByNationalId(
 
     case Customer::Status::BLOCKED:
         responseObject["status"] = "BLOCKED";
+        break;
+
+    case Customer::Status::CLOSED:
+        responseObject["status"] = "CLOSED";
         break;
     }
 

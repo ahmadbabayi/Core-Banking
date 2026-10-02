@@ -32,6 +32,9 @@ add_executable(CoreBanking
     src/application/customerservice.h
     src/application/customerservice.cpp
 
+    src/application/customernumbergenerator.h
+    src/application/customernumbergenerator.cpp
+
     src/application/transferservice.h
     src/application/transferservice.cpp
 

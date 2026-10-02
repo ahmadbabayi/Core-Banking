@@ -30,8 +30,16 @@ public:
         Customer& createdCustomer
     );
 
+    CreateCustomerResult createCustomer(
+        const QString& nationalId,
+        const QString& firstName,
+        const QString& lastName,
+        const QString& nationalityCode,
+        Customer& createdCustomer
+    );
+
     bool findCustomerById(
-        int customerId,
+        long long customerId,
         Customer& customer
     );
 
@@ -41,14 +49,18 @@ public:
     );
 
     bool deactivateCustomer(
-        int customerId
+        long long customerId
     );
 
     bool blockCustomer(
-        int customerId
+        long long customerId
     );
 
 private:
+    bool isValidNationalityCode(
+        const QString& nationalityCode
+    ) const;
+
     ICustomerRepository& customerRepository;
     QSqlDatabase db;
 };

@@ -13,12 +13,12 @@ public:
     ) = 0;
 
     virtual bool findById(
-        int id,
+        long long id,
         Customer& customer
     ) = 0;
 
     virtual bool findByIdForUpdate(
-        int id,
+        long long id,
         Customer& customer
     ) = 0;
 
