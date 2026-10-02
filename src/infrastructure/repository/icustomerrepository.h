@@ -3,12 +3,21 @@
 
 #include "../../domain/customer.h"
 
+#include <QString>
+
 class ICustomerRepository
 {
 public:
+    enum class SaveResult
+    {
+        Success,
+        CustomerNumberConflict,
+        DatabaseError
+    };
+
     virtual ~ICustomerRepository() = default;
 
-    virtual bool save(
+    virtual SaveResult save(
         Customer& customer
     ) = 0;
 

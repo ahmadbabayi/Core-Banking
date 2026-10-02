@@ -13,7 +13,7 @@ public:
         const QSqlDatabase& database
     );
 
-    bool save(
+    SaveResult save(
         Customer& customer
     ) override;
 

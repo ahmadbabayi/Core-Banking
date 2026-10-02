@@ -129,7 +129,8 @@ bool CustomerRepository::loadCustomer(
     return true;
 }
 
-bool CustomerRepository::save(
+ICustomerRepository::SaveResult
+CustomerRepository::save(
     Customer& customer
 )
 {
@@ -140,7 +141,7 @@ bool CustomerRepository::save(
             << "CustomerRepository::save:"
             << "customer number and nationality code are required.";
 
-        return false;
+        return SaveResult::DatabaseError;
     }
 
     if (!db.transaction())
@@ -150,7 +151,7 @@ bool CustomerRepository::save(
             << "failed to start transaction:"
             << db.lastError().text();
 
-        return false;
+        return SaveResult::DatabaseError;
     }
 
     QSqlQuery customerQuery(db);
@@ -185,14 +186,29 @@ bool CustomerRepository::save(
 
     if (!customerQuery.exec())
     {
+        const QSqlError error =
+            customerQuery.lastError();
+
         qDebug()
             << "CustomerRepository::save:"
             << "customer insert failed:"
-            << customerQuery.lastError().text();
+            << error.text();
 
         db.rollback();
 
-        return false;
+        if (error.nativeErrorCode() == "23505" &&
+            error.text().contains(
+                "uq_customer_number_key"
+            ))
+        {
+            qDebug()
+                << "CustomerRepository::save:"
+                << "customer number conflict.";
+
+            return SaveResult::CustomerNumberConflict;
+        }
+
+        return SaveResult::DatabaseError;
     }
 
     if (!customerQuery.next())
@@ -203,7 +219,7 @@ bool CustomerRepository::save(
 
         db.rollback();
 
-        return false;
+        return SaveResult::DatabaseError;
     }
 
     const long long customerId =
@@ -260,7 +276,7 @@ bool CustomerRepository::save(
 
             db.rollback();
 
-            return false;
+            return SaveResult::DatabaseError;
         }
     }
 
@@ -273,7 +289,7 @@ bool CustomerRepository::save(
 
         db.rollback();
 
-        return false;
+        return SaveResult::DatabaseError;
     }
 
     qDebug()
@@ -281,7 +297,7 @@ bool CustomerRepository::save(
         << "id =" << customerId
         << "customerNumber =" << customer.getCustomerNumber();
 
-    return true;
+    return SaveResult::Success;
 }
 
 bool CustomerRepository::findById(

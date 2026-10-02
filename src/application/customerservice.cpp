@@ -72,6 +72,15 @@ CustomerService::createCustomer(
         return CreateCustomerResult::InvalidInput;
     }
 
+    const QString normalizedNationalId =
+        nationalId.trimmed();
+
+    const QString normalizedFirstName =
+        firstName.trimmed();
+
+    const QString normalizedLastName =
+        lastName.trimmed();
+
     const QString normalizedNationalityCode =
         nationalityCode.trimmed();
 
@@ -89,13 +98,13 @@ CustomerService::createCustomer(
     Customer existingCustomer;
 
     if (customerRepository.findByNationalId(
-            nationalId.trimmed(),
+            normalizedNationalId,
             existingCustomer))
     {
         qDebug()
             << "CustomerService::createCustomer:"
             << "national ID already exists:"
-            << nationalId;
+            << normalizedNationalId;
 
         return CreateCustomerResult::Conflict;
     }
@@ -127,18 +136,22 @@ CustomerService::createCustomer(
         );
 
         customer.setNationalId(
-            nationalId.trimmed()
+            normalizedNationalId
         );
 
         customer.setFirstName(
-            firstName.trimmed()
+            normalizedFirstName
         );
 
         customer.setLastName(
-            lastName.trimmed()
+            normalizedLastName
         );
 
-        if (customerRepository.save(customer))
+        const ICustomerRepository::SaveResult saveResult =
+            customerRepository.save(customer);
+
+        if (saveResult ==
+            ICustomerRepository::SaveResult::Success)
         {
             createdCustomer = customer;
 
@@ -152,11 +165,27 @@ CustomerService::createCustomer(
             return CreateCustomerResult::Success;
         }
 
+        if (saveResult ==
+            ICustomerRepository::SaveResult::CustomerNumberConflict)
+        {
+            qDebug()
+                << "CustomerService::createCustomer:"
+                << "customer number conflict."
+                << "retry attempt =" << attempt + 1;
+
+            continue;
+        }
+
         qDebug()
             << "CustomerService::createCustomer:"
-            << "repository save failed."
-            << "attempt =" << attempt + 1;
+            << "repository save failed with database error.";
+
+        return CreateCustomerResult::InternalError;
     }
+
+    qDebug()
+        << "CustomerService::createCustomer:"
+        << "customer number generation exhausted all attempts.";
 
     return CreateCustomerResult::InternalError;
 }
