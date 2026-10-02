@@ -588,6 +588,292 @@ int main(int argc, char *argv[])
 
 
     // ------------------------------------------------------------
+    // Real PostgreSQL CustomerRepository CRUD test
+    // ------------------------------------------------------------
+
+    {
+        qDebug()
+            << "Real PostgreSQL CustomerRepository CRUD test:";
+
+        CustomerRepository repository(
+            db
+        );
+
+        const QString customerNumber =
+            CustomerNumberGenerator::generate();
+
+        Customer customer(
+            0,
+            customerNumber,
+            Customer::Type::INDIVIDUAL,
+            "364",
+            Customer::Status::ACTIVE
+        );
+
+        customer.setNationalId(
+            "TEST-CRUD-001"
+        );
+
+        customer.setFirstName(
+            "CRUD"
+        );
+
+        customer.setLastName(
+            "Original"
+        );
+
+
+        // --------------------------------------------------------
+        // Save
+        // --------------------------------------------------------
+
+        const ICustomerRepository::SaveResult saveResult =
+            repository.save(
+                customer
+            );
+
+        if (saveResult !=
+            ICustomerRepository::SaveResult::Success)
+        {
+            qDebug()
+                << "CRUD test FAILED:"
+                << "save failed."
+                << "result ="
+                << static_cast<int>(saveResult);
+
+            return 1;
+        }
+
+        qDebug()
+            << "CRUD test:"
+            << "save PASSED."
+            << "id =" << customer.getId()
+            << "customerNumber =" << customer.getCustomerNumber();
+
+
+        // --------------------------------------------------------
+        // findById
+        // --------------------------------------------------------
+
+        Customer foundById;
+
+        const ICustomerRepository::FindResult findByIdResult =
+            repository.findById(
+                customer.getId(),
+                foundById
+            );
+
+        if (findByIdResult !=
+                ICustomerRepository::FindResult::Found ||
+            foundById.getId() != customer.getId() ||
+            foundById.getCustomerNumber() !=
+                customer.getCustomerNumber() ||
+            foundById.getNationalId() !=
+                customer.getNationalId() ||
+            foundById.getFirstName() !=
+                customer.getFirstName() ||
+            foundById.getLastName() !=
+                customer.getLastName())
+        {
+            qDebug()
+                << "CRUD test FAILED:"
+                << "findById failed.";
+
+            QSqlQuery cleanupQuery(db);
+
+            cleanupQuery.prepare(
+                "DELETE FROM customer "
+                "WHERE id = :id"
+            );
+
+            cleanupQuery.bindValue(
+                ":id",
+                customer.getId()
+            );
+
+            cleanupQuery.exec();
+
+            return 1;
+        }
+
+        qDebug()
+            << "CRUD test:"
+            << "findById PASSED.";
+
+
+        // --------------------------------------------------------
+        // findByNationalId
+        // --------------------------------------------------------
+
+        Customer foundByNationalId;
+
+        const ICustomerRepository::FindResult findByNationalIdResult =
+            repository.findByNationalId(
+                customer.getNationalId(),
+                foundByNationalId
+            );
+
+        if (findByNationalIdResult !=
+                ICustomerRepository::FindResult::Found ||
+            foundByNationalId.getId() != customer.getId() ||
+            foundByNationalId.getCustomerNumber() !=
+                customer.getCustomerNumber())
+        {
+            qDebug()
+                << "CRUD test FAILED:"
+                << "findByNationalId failed.";
+
+            QSqlQuery cleanupQuery(db);
+
+            cleanupQuery.prepare(
+                "DELETE FROM customer "
+                "WHERE id = :id"
+            );
+
+            cleanupQuery.bindValue(
+                ":id",
+                customer.getId()
+            );
+
+            cleanupQuery.exec();
+
+            return 1;
+        }
+
+        qDebug()
+            << "CRUD test:"
+            << "findByNationalId PASSED.";
+
+
+        // --------------------------------------------------------
+        // Update
+        // --------------------------------------------------------
+
+        customer.setFirstName(
+            "CRUD"
+        );
+
+        customer.setLastName(
+            "Updated"
+        );
+
+        customer.setStatus(
+            Customer::Status::BLOCKED
+        );
+
+        const ICustomerRepository::UpdateResult updateResult =
+            repository.update(
+                customer
+            );
+
+        if (updateResult !=
+            ICustomerRepository::UpdateResult::Success)
+        {
+            qDebug()
+                << "CRUD test FAILED:"
+                << "update failed."
+                << "result ="
+                << static_cast<int>(updateResult);
+
+            QSqlQuery cleanupQuery(db);
+
+            cleanupQuery.prepare(
+                "DELETE FROM customer "
+                "WHERE id = :id"
+            );
+
+            cleanupQuery.bindValue(
+                ":id",
+                customer.getId()
+            );
+
+            cleanupQuery.exec();
+
+            return 1;
+        }
+
+        qDebug()
+            << "CRUD test:"
+            << "update PASSED.";
+
+
+        // --------------------------------------------------------
+        // Verify updated data
+        // --------------------------------------------------------
+
+        Customer updatedCustomer;
+
+        const ICustomerRepository::FindResult verifyUpdateResult =
+            repository.findById(
+                customer.getId(),
+                updatedCustomer
+            );
+
+        if (verifyUpdateResult !=
+                ICustomerRepository::FindResult::Found ||
+            updatedCustomer.getFirstName() != "CRUD" ||
+            updatedCustomer.getLastName() != "Updated" ||
+            updatedCustomer.getStatus() !=
+                Customer::Status::BLOCKED)
+        {
+            qDebug()
+                << "CRUD test FAILED:"
+                << "updated data verification failed.";
+
+            QSqlQuery cleanupQuery(db);
+
+            cleanupQuery.prepare(
+                "DELETE FROM customer "
+                "WHERE id = :id"
+            );
+
+            cleanupQuery.bindValue(
+                ":id",
+                customer.getId()
+            );
+
+            cleanupQuery.exec();
+
+            return 1;
+        }
+
+        qDebug()
+            << "CRUD test:"
+            << "updated data verification PASSED.";
+
+
+        // --------------------------------------------------------
+        // Cleanup
+        // --------------------------------------------------------
+
+        QSqlQuery cleanupQuery(db);
+
+        cleanupQuery.prepare(
+            "DELETE FROM customer "
+            "WHERE id = :id"
+        );
+
+        cleanupQuery.bindValue(
+            ":id",
+            customer.getId()
+        );
+
+        if (!cleanupQuery.exec())
+        {
+            qDebug()
+                << "CRUD test FAILED:"
+                << "cleanup failed:"
+                << cleanupQuery.lastError().text();
+
+            return 1;
+        }
+
+        qDebug()
+            << "Real PostgreSQL CustomerRepository CRUD test PASSED.";
+    }
+
+
+    // ------------------------------------------------------------
     // Customer repository / service
     // ------------------------------------------------------------
 
