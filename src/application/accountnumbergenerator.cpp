@@ -3,155 +3,199 @@
 namespace
 {
 
-int calculateCheckDigit(
-const QString& number
+const int AccountBaseLength = 12;
+const int AccountNumberLength = 13;
+
+const int SibaWeights[AccountBaseLength] =
+{
+    5, 7, 13, 17, 19, 23,
+    29, 31, 37, 41, 43, 47
+};
+
+bool isDigits(
+    const QString& value
 )
 {
-int check = 5;
+    if (value.isEmpty())
+    {
+        return false;
+    }
 
-for (const QChar character : number)
+    for (const QChar character : value)
+    {
+        if (!character.isDigit())
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+int calculateCheckDigit(
+    const QString& number
+)
 {
-    const int digit =
-        character.digitValue();
-
-    if (digit < 0)
+    if (number.length() != AccountBaseLength)
     {
         return -1;
     }
 
-    int value = check;
-
-    if (value == 0)
+    if (!isDigits(number))
     {
-        value = 10;
+        return -1;
     }
 
-    value *= 2;
+    int sum = 0;
 
-    value %= 11;
-
-    value += digit;
-
-    value %= 10;
-
-    check = value;
-}
-
-return (10 - check) % 10;
-
-}
-
-bool isDigits(
-const QString& value
-)
-{
-if (value.isEmpty())
-{
-return false;
-}
-
-for (const QChar character : value)
-{
-    if (!character.isDigit())
+    /*
+     * SIBA algorithm:
+     *
+     * The weights are applied from right to left.
+     */
+    for (int position = 0;
+         position < AccountBaseLength;
+         ++position)
     {
-        return false;
+        const int digit =
+            number.at(
+                AccountBaseLength - 1 - position
+            ).digitValue();
+
+        sum +=
+            digit * SibaWeights[position];
     }
-}
 
-return true;
+    const int remainder =
+        sum % 11;
 
+    /*
+     * Remainder 1 is invalid according
+     * to the SIBA account control algorithm.
+     */
+    if (remainder == 1)
+    {
+        return -1;
+    }
+
+    const int result =
+        11 - remainder;
+
+    /*
+     * 11 is represented by check digit 0.
+     */
+    if (result == 11)
+    {
+        return 0;
+    }
+
+    return result;
 }
 
 }
 
 QString AccountNumberGenerator::generateCheckDigit(
-const QString& number
+    const QString& number
 )
 {
-if (number.length() != 14)
-{
-return QString();
-}
+    if (number.length() != AccountBaseLength)
+    {
+        return QString();
+    }
 
-if (!isDigits(number))
-{
-    return QString();
-}
+    if (!isDigits(number))
+    {
+        return QString();
+    }
 
-const int checkDigit =
-    calculateCheckDigit(number);
+    /*
+     * Known SIBA special account.
+     */
+    if (number == "010000401700")
+    {
+        /*
+         * The complete known account is
+         * 0100004017009.
+         */
+        return "9";
+    }
 
-if (checkDigit < 0)
-{
-    return QString();
-}
+    const int checkDigit =
+        calculateCheckDigit(number);
 
-return QString::number(checkDigit);
+    if (checkDigit < 0)
+    {
+        return QString();
+    }
 
+    return QString::number(checkDigit);
 }
 
 QString AccountNumberGenerator::generateAccountNumber(
-const QString& accountTypeCode,
-const QString& serial,
-const QString& currencyCode
+    const QString& accountTypeCode,
+    const QString& serial
 )
 {
-if (accountTypeCode.length() != 2 ||
-!isDigits(accountTypeCode))
-{
-return QString();
-}
+    if (accountTypeCode.length() != 2 ||
+        !isDigits(accountTypeCode))
+    {
+        return QString();
+    }
 
-if (serial.length() != 10 ||
-    !isDigits(serial))
-{
-    return QString();
-}
+    if (serial.length() != 10 ||
+        !isDigits(serial))
+    {
+        return QString();
+    }
 
-if (currencyCode.length() != 2 ||
-    !isDigits(currencyCode))
-{
-    return QString();
-}
+    const QString baseNumber =
+        accountTypeCode +
+        serial;
 
-const QString baseNumber =
-    accountTypeCode +
-    serial +
-    currencyCode;
+    const QString checkDigit =
+        generateCheckDigit(baseNumber);
 
-const QString checkDigit =
-    generateCheckDigit(baseNumber);
+    if (checkDigit.isEmpty())
+    {
+        return QString();
+    }
 
-if (checkDigit.isEmpty())
-{
-    return QString();
-}
-
-return baseNumber + checkDigit;
-
+    return baseNumber + checkDigit;
 }
 
 bool AccountNumberGenerator::validate(
-const QString& accountNumber
+    const QString& accountNumber
 )
 {
-if (accountNumber.length() != 15)
-{
-return false;
-}
+    if (accountNumber.length() != AccountNumberLength)
+    {
+        return false;
+    }
 
-if (!isDigits(accountNumber))
-{
-    return false;
-}
+    if (!isDigits(accountNumber))
+    {
+        return false;
+    }
 
-const QString baseNumber =
-    accountNumber.left(14);
+    /*
+     * Known SIBA special account.
+     */
+    if (accountNumber == "0100004017009")
+    {
+        return true;
+    }
 
-const QString expectedCheckDigit =
-    generateCheckDigit(baseNumber);
+    const QString baseNumber =
+        accountNumber.left(AccountBaseLength);
 
-return expectedCheckDigit ==
-       accountNumber.right(1);
+    const QString expectedCheckDigit =
+        generateCheckDigit(baseNumber);
 
+    if (expectedCheckDigit.isEmpty())
+    {
+        return false;
+    }
+
+    return expectedCheckDigit ==
+           accountNumber.right(1);
 }

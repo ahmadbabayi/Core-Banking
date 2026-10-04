@@ -7,20 +7,18 @@ class AccountNumberGenerator
 {
 public:
 
-static QString generateCheckDigit(
-    const QString& number
-);
+    static QString generateCheckDigit(
+        const QString& number
+    );
 
-static QString generateAccountNumber(
-    const QString& accountTypeCode,
-    const QString& serial,
-    const QString& currencyCode
-);
+    static QString generateAccountNumber(
+        const QString& accountTypeCode,
+        const QString& serial
+    );
 
-static bool validate(
-    const QString& accountNumber
-);
-
+    static bool validate(
+        const QString& accountNumber
+    );
 };
 
 #endif // ACCOUNTNUMBERGENERATOR_H
