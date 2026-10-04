@@ -235,8 +235,37 @@ bool CustomerService::findCustomerByNationalId(
         ICustomerRepository::FindResult::Found;
 }
 
-bool CustomerService::deactivateCustomer(
-    long long customerId
+bool CustomerService::isValidStatusTransition(
+    Customer::Status currentStatus,
+    Customer::Status newStatus
+) const
+{
+    if (currentStatus == Customer::Status::ACTIVE)
+    {
+        return newStatus == Customer::Status::INACTIVE ||
+               newStatus == Customer::Status::BLOCKED ||
+               newStatus == Customer::Status::CLOSED;
+    }
+
+    if (currentStatus == Customer::Status::INACTIVE)
+    {
+        return newStatus == Customer::Status::ACTIVE ||
+               newStatus == Customer::Status::CLOSED;
+    }
+
+    if (currentStatus == Customer::Status::BLOCKED)
+    {
+        return newStatus == Customer::Status::ACTIVE ||
+               newStatus == Customer::Status::CLOSED;
+    }
+
+    // CLOSED is a terminal state.
+    return false;
+}
+
+bool CustomerService::changeCustomerStatus(
+    long long customerId,
+    Customer::Status newStatus
 )
 {
     Customer customer;
@@ -250,41 +279,84 @@ bool CustomerService::deactivateCustomer(
     if (findResult !=
         ICustomerRepository::FindResult::Found)
     {
+        qDebug()
+            << "CustomerService::changeCustomerStatus:"
+            << "customer not found or repository error."
+            << "id =" << customerId;
+
         return false;
     }
 
-    customer.setStatus(
+    const Customer::Status currentStatus =
+        customer.getStatus();
+
+    if (!isValidStatusTransition(
+            currentStatus,
+            newStatus))
+    {
+        qDebug()
+            << "CustomerService::changeCustomerStatus:"
+            << "invalid status transition."
+            << "customer id =" << customerId;
+
+        return false;
+    }
+
+    customer.setStatus(newStatus);
+
+    const ICustomerRepository::UpdateResult updateResult =
+        customerRepository.update(customer);
+
+    if (updateResult !=
+        ICustomerRepository::UpdateResult::Success)
+    {
+        qDebug()
+            << "CustomerService::changeCustomerStatus:"
+            << "failed to update customer status."
+            << "customer id =" << customerId;
+
+        return false;
+    }
+
+    return true;
+}
+
+bool CustomerService::activateCustomer(
+    long long customerId
+)
+{
+    return changeCustomerStatus(
+        customerId,
+        Customer::Status::ACTIVE
+    );
+}
+
+bool CustomerService::deactivateCustomer(
+    long long customerId
+)
+{
+    return changeCustomerStatus(
+        customerId,
         Customer::Status::INACTIVE
     );
-
-    return customerRepository.update(
-        customer
-    ) == ICustomerRepository::UpdateResult::Success;
 }
 
 bool CustomerService::blockCustomer(
     long long customerId
 )
 {
-    Customer customer;
-
-    const ICustomerRepository::FindResult findResult =
-        customerRepository.findById(
-            customerId,
-            customer
-        );
-
-    if (findResult !=
-        ICustomerRepository::FindResult::Found)
-    {
-        return false;
-    }
-
-    customer.setStatus(
+    return changeCustomerStatus(
+        customerId,
         Customer::Status::BLOCKED
     );
+}
 
-    return customerRepository.update(
-        customer
-    ) == ICustomerRepository::UpdateResult::Success;
+bool CustomerService::closeCustomer(
+    long long customerId
+)
+{
+    return changeCustomerStatus(
+        customerId,
+        Customer::Status::CLOSED
+    );
 }

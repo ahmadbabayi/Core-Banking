@@ -916,6 +916,270 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // ------------------------------------------------------------
+    // Real PostgreSQL Customer lifecycle test
+    // ------------------------------------------------------------
+
+    qDebug() << "Real PostgreSQL Customer lifecycle test:";
+
+    Customer lifecycleCustomer(
+        0,
+        CustomerNumberGenerator::generate(),
+        Customer::Type::INDIVIDUAL,
+        "364",
+        Customer::Status::ACTIVE
+    );
+
+    lifecycleCustomer.setNationalId(
+        "TEST-LIFE-001"
+    );
+
+    lifecycleCustomer.setFirstName(
+        "Lifecycle"
+    );
+
+    lifecycleCustomer.setLastName(
+        "Test"
+    );
+
+    const ICustomerRepository::SaveResult lifecycleSaveResult =
+        customerRepository.save(
+            lifecycleCustomer
+        );
+
+    if (lifecycleSaveResult !=
+        ICustomerRepository::SaveResult::Success)
+    {
+        qDebug()
+            << "Lifecycle test: save FAILED.";
+
+        return 1;
+    }
+
+    const long long lifecycleCustomerId =
+        lifecycleCustomer.getId();
+
+    qDebug()
+        << "Lifecycle test: customer saved."
+        << "id =" << lifecycleCustomerId;
+
+    CustomerService lifecycleService(
+        customerRepository,
+        db
+    );
+
+    // ACTIVE -> INACTIVE
+    if (!lifecycleService.deactivateCustomer(
+            lifecycleCustomerId))
+    {
+        qDebug()
+            << "Lifecycle test: ACTIVE -> INACTIVE FAILED.";
+
+        return 1;
+    }
+
+    Customer lifecycleCheck;
+
+    if (!lifecycleService.findCustomerById(
+            lifecycleCustomerId,
+            lifecycleCheck) ||
+        lifecycleCheck.getStatus() !=
+            Customer::Status::INACTIVE)
+    {
+        qDebug()
+            << "Lifecycle test: ACTIVE -> INACTIVE verification FAILED.";
+
+        return 1;
+    }
+
+    qDebug()
+        << "Lifecycle test: ACTIVE -> INACTIVE PASSED.";
+
+    // INACTIVE -> ACTIVE
+    if (!lifecycleService.activateCustomer(
+            lifecycleCustomerId))
+    {
+        qDebug()
+            << "Lifecycle test: INACTIVE -> ACTIVE FAILED.";
+
+        return 1;
+    }
+
+    if (!lifecycleService.findCustomerById(
+            lifecycleCustomerId,
+            lifecycleCheck) ||
+        lifecycleCheck.getStatus() !=
+            Customer::Status::ACTIVE)
+    {
+        qDebug()
+            << "Lifecycle test: INACTIVE -> ACTIVE verification FAILED.";
+
+        return 1;
+    }
+
+    qDebug()
+        << "Lifecycle test: INACTIVE -> ACTIVE PASSED.";
+
+    // ACTIVE -> BLOCKED
+    if (!lifecycleService.blockCustomer(
+            lifecycleCustomerId))
+    {
+        qDebug()
+            << "Lifecycle test: ACTIVE -> BLOCKED FAILED.";
+
+        return 1;
+    }
+
+    if (!lifecycleService.findCustomerById(
+            lifecycleCustomerId,
+            lifecycleCheck) ||
+        lifecycleCheck.getStatus() !=
+            Customer::Status::BLOCKED)
+    {
+        qDebug()
+            << "Lifecycle test: ACTIVE -> BLOCKED verification FAILED.";
+
+        return 1;
+    }
+
+    qDebug()
+        << "Lifecycle test: ACTIVE -> BLOCKED PASSED.";
+
+    // BLOCKED -> ACTIVE
+    if (!lifecycleService.activateCustomer(
+            lifecycleCustomerId))
+    {
+        qDebug()
+            << "Lifecycle test: BLOCKED -> ACTIVE FAILED.";
+
+        return 1;
+    }
+
+    if (!lifecycleService.findCustomerById(
+            lifecycleCustomerId,
+            lifecycleCheck) ||
+        lifecycleCheck.getStatus() !=
+            Customer::Status::ACTIVE)
+    {
+        qDebug()
+            << "Lifecycle test: BLOCKED -> ACTIVE verification FAILED.";
+
+        return 1;
+    }
+
+    qDebug()
+        << "Lifecycle test: BLOCKED -> ACTIVE PASSED.";
+
+    // ACTIVE -> INACTIVE
+    if (!lifecycleService.deactivateCustomer(
+            lifecycleCustomerId))
+    {
+        qDebug()
+            << "Lifecycle test: second ACTIVE -> INACTIVE FAILED.";
+
+        return 1;
+    }
+
+    // INACTIVE -> BLOCKED must be rejected.
+    if (lifecycleService.blockCustomer(
+            lifecycleCustomerId))
+    {
+        qDebug()
+            << "Lifecycle test: INACTIVE -> BLOCKED was incorrectly accepted.";
+
+        return 1;
+    }
+
+    if (!lifecycleService.findCustomerById(
+            lifecycleCustomerId,
+            lifecycleCheck) ||
+        lifecycleCheck.getStatus() !=
+            Customer::Status::INACTIVE)
+    {
+        qDebug()
+            << "Lifecycle test: rejected transition changed status.";
+
+        return 1;
+    }
+
+    qDebug()
+        << "Lifecycle test: INACTIVE -> BLOCKED correctly rejected.";
+
+    // INACTIVE -> CLOSED
+    if (!lifecycleService.closeCustomer(
+            lifecycleCustomerId))
+    {
+        qDebug()
+            << "Lifecycle test: INACTIVE -> CLOSED FAILED.";
+
+        return 1;
+    }
+
+    if (!lifecycleService.findCustomerById(
+            lifecycleCustomerId,
+            lifecycleCheck) ||
+        lifecycleCheck.getStatus() !=
+            Customer::Status::CLOSED)
+    {
+        qDebug()
+            << "Lifecycle test: INACTIVE -> CLOSED verification FAILED.";
+
+        return 1;
+    }
+
+    qDebug()
+        << "Lifecycle test: INACTIVE -> CLOSED PASSED.";
+
+    // CLOSED -> ACTIVE must be rejected.
+    if (lifecycleService.activateCustomer(
+            lifecycleCustomerId))
+    {
+        qDebug()
+            << "Lifecycle test: CLOSED -> ACTIVE was incorrectly accepted.";
+
+        return 1;
+    }
+
+    qDebug()
+        << "Lifecycle test: CLOSED -> ACTIVE correctly rejected.";
+
+    // CLOSED -> BLOCKED must be rejected.
+    if (lifecycleService.blockCustomer(
+            lifecycleCustomerId))
+    {
+        qDebug()
+            << "Lifecycle test: CLOSED -> BLOCKED was incorrectly accepted.";
+
+        return 1;
+    }
+
+    qDebug()
+        << "Lifecycle test: CLOSED -> BLOCKED correctly rejected.";
+
+    // Cleanup.
+    QSqlQuery lifecycleCleanupQuery(db);
+
+    lifecycleCleanupQuery.prepare(
+        "DELETE FROM customer WHERE id = :id"
+    );
+
+    lifecycleCleanupQuery.bindValue(
+        ":id",
+        lifecycleCustomerId
+    );
+
+    if (!lifecycleCleanupQuery.exec())
+    {
+        qDebug()
+            << "Lifecycle test: cleanup FAILED:"
+            << lifecycleCleanupQuery.lastError();
+
+        return 1;
+    }
+
+    qDebug()
+        << "Real PostgreSQL Customer lifecycle test PASSED.";
+
     qDebug()
         << "CoreBanking HTTP server started.";
 

@@ -48,6 +48,15 @@ public:
         Customer& customer
     );
 
+    bool changeCustomerStatus(
+        long long customerId,
+        Customer::Status newStatus
+    );
+
+    bool activateCustomer(
+        long long customerId
+    );
+
     bool deactivateCustomer(
         long long customerId
     );
@@ -56,9 +65,18 @@ public:
         long long customerId
     );
 
+    bool closeCustomer(
+        long long customerId
+    );
+
 private:
     bool isValidNationalityCode(
         const QString& nationalityCode
+    ) const;
+
+    bool isValidStatusTransition(
+        Customer::Status currentStatus,
+        Customer::Status newStatus
     ) const;
 
     ICustomerRepository& customerRepository;
