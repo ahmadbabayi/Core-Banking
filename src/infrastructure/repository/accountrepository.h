@@ -8,7 +8,6 @@
 class AccountRepository : public IAccountRepository
 {
 public:
-
     explicit AccountRepository(
         const QSqlDatabase& database
     );
@@ -26,7 +25,6 @@ public:
     ) override;
 
 private:
-
     QSqlDatabase db;
 };
 

@@ -4,13 +4,11 @@
 #include <QSqlError>
 #include <QSqlQuery>
 
-
 AccountRepository::AccountRepository(
     const QSqlDatabase& database)
     : db(database)
 {
 }
-
 
 // =========================================================
 // SAVE
@@ -24,27 +22,17 @@ bool AccountRepository::save(
     query.prepare(
         "UPDATE account "
         "SET account_number = :account_number, "
-        "customer_id = :customer_id, "
-        "type = :type, "
-        "balance = :balance, "
-        "status = :status "
+        "account_type_id = :account_type_id, "
+        "product_id = :product_id, "
+        "currency_id = :currency_id, "
+        "opening_branch_id = :opening_branch_id, "
+        "ledger_account_id = :ledger_account_id, "
+        "status = :status, "
+        "opened_at = :opened_at, "
+        "closed_at = :closed_at, "
+        "updated_at = CURRENT_TIMESTAMP "
         "WHERE id = :id"
     );
-
-
-    QString type;
-
-    switch (account.getType())
-    {
-    case Account::Type::CURRENT:
-        type = "CURRENT";
-        break;
-
-    case Account::Type::SAVINGS:
-        type = "SAVINGS";
-        break;
-    }
-
 
     QString status;
 
@@ -52,6 +40,10 @@ bool AccountRepository::save(
     {
     case Account::Status::ACTIVE:
         status = "ACTIVE";
+        break;
+
+    case Account::Status::DORMANT:
+        status = "DORMANT";
         break;
 
     case Account::Status::BLOCKED:
@@ -62,7 +54,6 @@ bool AccountRepository::save(
         status = "CLOSED";
         break;
     }
-
 
     query.bindValue(
         ":id",
@@ -75,18 +66,28 @@ bool AccountRepository::save(
     );
 
     query.bindValue(
-        ":customer_id",
-        account.getCustomerId()
+        ":account_type_id",
+        account.getAccountTypeId()
     );
 
     query.bindValue(
-        ":type",
-        type
+        ":product_id",
+        account.getProductId()
     );
 
     query.bindValue(
-        ":balance",
-        account.getBalance()
+        ":currency_id",
+        account.getCurrencyId()
+    );
+
+    query.bindValue(
+        ":opening_branch_id",
+        account.getOpeningBranchId()
+    );
+
+    query.bindValue(
+        ":ledger_account_id",
+        account.getLedgerAccountId()
     );
 
     query.bindValue(
@@ -94,6 +95,25 @@ bool AccountRepository::save(
         status
     );
 
+    query.bindValue(
+        ":opened_at",
+        account.getOpenedAt()
+    );
+
+    if (account.getClosedAt().isValid())
+    {
+        query.bindValue(
+            ":closed_at",
+            account.getClosedAt()
+        );
+    }
+    else
+    {
+        query.bindValue(
+            ":closed_at",
+            QVariant()
+        );
+    }
 
     if (!query.exec())
     {
@@ -103,7 +123,6 @@ bool AccountRepository::save(
 
         return false;
     }
-
 
     if (query.numRowsAffected() != 1)
     {
@@ -115,10 +134,8 @@ bool AccountRepository::save(
         return false;
     }
 
-
     return true;
 }
-
 
 // =========================================================
 // FIND BY ID
@@ -133,20 +150,24 @@ Account* AccountRepository::findById(
         "SELECT "
         "id, "
         "account_number, "
-        "customer_id, "
-        "type, "
-        "balance, "
-        "status "
+        "account_type_id, "
+        "product_id, "
+        "currency_id, "
+        "opening_branch_id, "
+        "ledger_account_id, "
+        "status, "
+        "opened_at, "
+        "closed_at, "
+        "created_at, "
+        "updated_at "
         "FROM account "
         "WHERE id = :id"
     );
-
 
     query.bindValue(
         ":id",
         id
     );
-
 
     if (!query.exec())
     {
@@ -157,23 +178,10 @@ Account* AccountRepository::findById(
         return nullptr;
     }
 
-
     if (!query.next())
     {
         return nullptr;
     }
-
-
-    Account::Type type =
-        Account::Type::CURRENT;
-
-    if (query.value("type").toString()
-        == "SAVINGS")
-    {
-        type =
-            Account::Type::SAVINGS;
-    }
-
 
     Account::Status status =
         Account::Status::ACTIVE;
@@ -181,8 +189,12 @@ Account* AccountRepository::findById(
     const QString statusString =
         query.value("status").toString();
 
-
-    if (statusString == "BLOCKED")
+    if (statusString == "DORMANT")
+    {
+        status =
+            Account::Status::DORMANT;
+    }
+    else if (statusString == "BLOCKED")
     {
         status =
             Account::Status::BLOCKED;
@@ -193,17 +205,21 @@ Account* AccountRepository::findById(
             Account::Status::CLOSED;
     }
 
-
     return new Account(
-        query.value("id").toInt(),
+        query.value("id").toLongLong(),
         query.value("account_number").toString(),
-        query.value("customer_id").toInt(),
-        type,
-        query.value("balance").toLongLong(),
-        status
+        query.value("account_type_id").toLongLong(),
+        query.value("product_id").toLongLong(),
+        query.value("currency_id").toLongLong(),
+        query.value("opening_branch_id").toLongLong(),
+        query.value("ledger_account_id").toLongLong(),
+        status,
+        query.value("opened_at").toDateTime(),
+        query.value("closed_at").toDateTime(),
+        query.value("created_at").toDateTime(),
+        query.value("updated_at").toDateTime()
     );
 }
-
 
 // =========================================================
 // FIND BY ID FOR UPDATE
@@ -218,21 +234,25 @@ Account* AccountRepository::findByIdForUpdate(
         "SELECT "
         "id, "
         "account_number, "
-        "customer_id, "
-        "type, "
-        "balance, "
-        "status "
+        "account_type_id, "
+        "product_id, "
+        "currency_id, "
+        "opening_branch_id, "
+        "ledger_account_id, "
+        "status, "
+        "opened_at, "
+        "closed_at, "
+        "created_at, "
+        "updated_at "
         "FROM account "
         "WHERE id = :id "
         "FOR UPDATE"
     );
 
-
     query.bindValue(
         ":id",
         id
     );
-
 
     if (!query.exec())
     {
@@ -243,23 +263,10 @@ Account* AccountRepository::findByIdForUpdate(
         return nullptr;
     }
 
-
     if (!query.next())
     {
         return nullptr;
     }
-
-
-    Account::Type type =
-        Account::Type::CURRENT;
-
-    if (query.value("type").toString()
-        == "SAVINGS")
-    {
-        type =
-            Account::Type::SAVINGS;
-    }
-
 
     Account::Status status =
         Account::Status::ACTIVE;
@@ -267,8 +274,12 @@ Account* AccountRepository::findByIdForUpdate(
     const QString statusString =
         query.value("status").toString();
 
-
-    if (statusString == "BLOCKED")
+    if (statusString == "DORMANT")
+    {
+        status =
+            Account::Status::DORMANT;
+    }
+    else if (statusString == "BLOCKED")
     {
         status =
             Account::Status::BLOCKED;
@@ -279,13 +290,18 @@ Account* AccountRepository::findByIdForUpdate(
             Account::Status::CLOSED;
     }
 
-
     return new Account(
-        query.value("id").toInt(),
+        query.value("id").toLongLong(),
         query.value("account_number").toString(),
-        query.value("customer_id").toInt(),
-        type,
-        query.value("balance").toLongLong(),
-        status
+        query.value("account_type_id").toLongLong(),
+        query.value("product_id").toLongLong(),
+        query.value("currency_id").toLongLong(),
+        query.value("opening_branch_id").toLongLong(),
+        query.value("ledger_account_id").toLongLong(),
+        status,
+        query.value("opened_at").toDateTime(),
+        query.value("closed_at").toDateTime(),
+        query.value("created_at").toDateTime(),
+        query.value("updated_at").toDateTime()
     );
 }

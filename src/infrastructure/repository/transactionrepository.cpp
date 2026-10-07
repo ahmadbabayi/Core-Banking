@@ -1,285 +1,377 @@
 #include "transactionrepository.h"
 
-#include <QDebug>
-#include <QSqlError>
 #include <QSqlQuery>
 #include <QVariant>
 
+namespace
+{
 
-// =========================================================
-// TYPE CONVERSION
-// =========================================================
-
-static QString typeToString(
-    Transaction::Type type)
+QString typeToString(Transaction::Type type)
 {
     switch (type)
     {
-    case Transaction::Type::Deposit:
+    case Transaction::Type::DEPOSIT:
         return "DEPOSIT";
 
-    case Transaction::Type::Withdrawal:
+    case Transaction::Type::WITHDRAWAL:
         return "WITHDRAWAL";
+
+    case Transaction::Type::TRANSFER:
+        return "TRANSFER";
+
+    case Transaction::Type::PAYMENT:
+        return "PAYMENT";
+
+    case Transaction::Type::FEE:
+        return "FEE";
+
+    case Transaction::Type::REVERSAL:
+        return "REVERSAL";
     }
 
-    return "DEPOSIT";
+    return "TRANSFER";
 }
 
-
-static Transaction::Type stringToType(
-    const QString& type)
+QString statusToString(Transaction::Status status)
 {
-    if (type == "WITHDRAWAL")
+    switch (status)
     {
-        return Transaction::Type::Withdrawal;
+    case Transaction::Status::INITIATED:
+        return "INITIATED";
+
+    case Transaction::Status::PROCESSING:
+        return "PROCESSING";
+
+    case Transaction::Status::COMPLETED:
+        return "COMPLETED";
+
+    case Transaction::Status::FAILED:
+        return "FAILED";
+
+    case Transaction::Status::CANCELLED:
+        return "CANCELLED";
+
+    case Transaction::Status::REVERSED:
+        return "REVERSED";
     }
 
-    return Transaction::Type::Deposit;
+    return "FAILED";
 }
 
+QString channelToString(Transaction::Channel channel)
+{
+    switch (channel)
+    {
+    case Transaction::Channel::BRANCH:
+        return "BRANCH";
 
-// =========================================================
-// CONSTRUCTOR
-// =========================================================
+    case Transaction::Channel::ATM:
+        return "ATM";
+
+    case Transaction::Channel::MOBILE:
+        return "MOBILE";
+
+    case Transaction::Channel::INTERNET:
+        return "INTERNET";
+
+    case Transaction::Channel::API:
+        return "API";
+
+    case Transaction::Channel::SYSTEM:
+        return "SYSTEM";
+    }
+
+    return "SYSTEM";
+}
+
+Transaction::Type typeFromString(const QString& value)
+{
+    if (value == "DEPOSIT")
+        return Transaction::Type::DEPOSIT;
+
+    if (value == "WITHDRAWAL")
+        return Transaction::Type::WITHDRAWAL;
+
+    if (value == "PAYMENT")
+        return Transaction::Type::PAYMENT;
+
+    if (value == "FEE")
+        return Transaction::Type::FEE;
+
+    if (value == "REVERSAL")
+        return Transaction::Type::REVERSAL;
+
+    return Transaction::Type::TRANSFER;
+}
+
+Transaction::Status statusFromString(const QString& value)
+{
+    if (value == "PROCESSING")
+        return Transaction::Status::PROCESSING;
+
+    if (value == "COMPLETED")
+        return Transaction::Status::COMPLETED;
+
+    if (value == "FAILED")
+        return Transaction::Status::FAILED;
+
+    if (value == "CANCELLED")
+        return Transaction::Status::CANCELLED;
+
+    if (value == "REVERSED")
+        return Transaction::Status::REVERSED;
+
+    return Transaction::Status::INITIATED;
+}
+
+Transaction::Channel channelFromString(const QString& value)
+{
+    if (value == "BRANCH")
+        return Transaction::Channel::BRANCH;
+
+    if (value == "ATM")
+        return Transaction::Channel::ATM;
+
+    if (value == "MOBILE")
+        return Transaction::Channel::MOBILE;
+
+    if (value == "INTERNET")
+        return Transaction::Channel::INTERNET;
+
+    if (value == "API")
+        return Transaction::Channel::API;
+
+    return Transaction::Channel::SYSTEM;
+}
+
+}
 
 TransactionRepository::TransactionRepository(
-    const QSqlDatabase& database)
+    const QSqlDatabase& database
+)
     : db(database)
 {
 }
 
-
-// =========================================================
-// SAVE
-// =========================================================
-
-bool TransactionRepository::save(
-    Transaction& transaction)
+qint64 TransactionRepository::create(
+    const Transaction& transaction
+)
 {
     QSqlQuery query(db);
 
-
     query.prepare(
-        "INSERT INTO transaction "
-        "(account_id, type, amount, description) "
-        "VALUES "
-        "(:account_id, :type, :amount, :description) "
+        "INSERT INTO transaction ("
+        "    transaction_number, "
+        "    transaction_type, "
+        "    status, "
+        "    channel, "
+        "    amount, "
+        "    currency_id, "
+        "    reverses_transaction_id, "
+        "    initiated_at, "
+        "    completed_at, "
+        "    description, "
+        "    reference_number "
+        ") VALUES ("
+        "    :transaction_number, "
+        "    :transaction_type, "
+        "    :status, "
+        "    :channel, "
+        "    :amount, "
+        "    :currency_id, "
+        "    :reverses_transaction_id, "
+        "    :initiated_at, "
+        "    :completed_at, "
+        "    :description, "
+        "    :reference_number"
+        ") "
         "RETURNING id"
     );
 
-
     query.bindValue(
-        ":account_id",
-        transaction.getAccountId()
+        ":transaction_number",
+        transaction.getTransactionNumber()
     );
 
-
     query.bindValue(
-        ":type",
-        typeToString(
-            transaction.getType()
-        )
+        ":transaction_type",
+        typeToString(transaction.getType())
     );
 
+    query.bindValue(
+        ":status",
+        statusToString(transaction.getStatus())
+    );
+
+    query.bindValue(
+        ":channel",
+        channelToString(transaction.getChannel())
+    );
 
     query.bindValue(
         ":amount",
         transaction.getAmount()
     );
 
+    query.bindValue(
+        ":currency_id",
+        transaction.getCurrencyId()
+    );
+
+    if (transaction.getReversesTransactionId() > 0)
+    {
+        query.bindValue(
+            ":reverses_transaction_id",
+            transaction.getReversesTransactionId()
+        );
+    }
+    else
+    {
+        query.bindValue(
+            ":reverses_transaction_id",
+            QVariant(QVariant::LongLong)
+        );
+    }
+
+    query.bindValue(
+        ":initiated_at",
+        transaction.getInitiatedAt()
+    );
+
+    if (transaction.getCompletedAt().isValid())
+    {
+        query.bindValue(
+            ":completed_at",
+            transaction.getCompletedAt()
+        );
+    }
+    else
+    {
+        query.bindValue(
+            ":completed_at",
+            QVariant(QVariant::DateTime)
+        );
+    }
 
     query.bindValue(
         ":description",
         transaction.getDescription()
     );
 
+    query.bindValue(
+        ":reference_number",
+        transaction.getReferenceNumber()
+    );
 
     if (!query.exec())
     {
-        qDebug()
-            << "Failed to save transaction!";
-
-        qDebug()
-            << "Database error:"
-            << query.lastError().text();
-
-        return false;
+        return 0;
     }
-
 
     if (!query.next())
     {
-        qDebug()
-            << "Transaction inserted but ID "
-               "could not be retrieved.";
-
-        return false;
+        return 0;
     }
 
-
-    qint64 generatedId =
-        query.value(0).toLongLong();
-
-
-    transaction.setId(generatedId);
-
-
-    qDebug()
-        << "Transaction saved successfully!";
-
-
-    qDebug()
-        << "Transaction ID:"
-        << transaction.getId();
-
-
-    return true;
+    return query.value(0).toLongLong();
 }
 
-
-// =========================================================
-// FIND BY ID
-// =========================================================
-
-bool TransactionRepository::findById(
-    qint64 id,
-    Transaction& transaction) const
+Transaction* TransactionRepository::findById(
+    qint64 transactionId
+)
 {
     QSqlQuery query(db);
 
-
     query.prepare(
         "SELECT "
-        "id, "
-        "account_id, "
-        "type, "
-        "amount, "
-        "description "
+        "    id, "
+        "    transaction_number, "
+        "    transaction_type, "
+        "    status, "
+        "    channel, "
+        "    amount, "
+        "    currency_id, "
+        "    reverses_transaction_id, "
+        "    initiated_at, "
+        "    completed_at, "
+        "    description, "
+        "    reference_number, "
+        "    created_at, "
+        "    updated_at "
         "FROM transaction "
         "WHERE id = :id"
     );
 
+    query.bindValue(":id", transactionId);
 
-    query.bindValue(
-        ":id",
-        id
-    );
-
-
-    if (!query.exec())
+    if (!query.exec() || !query.next())
     {
-        qDebug()
-            << "Failed to find transaction!";
-
-        qDebug()
-            << "Database error:"
-            << query.lastError().text();
-
-        return false;
+        return nullptr;
     }
 
-
-    if (!query.next())
-    {
-        return false;
-    }
-
-
-    transaction = Transaction(
+    return new Transaction(
         query.value("id").toLongLong(),
-
-        query.value("account_id")
-            .toLongLong(),
-
-        stringToType(
-            query.value("type")
-                .toString()
+        query.value("transaction_number").toString(),
+        typeFromString(
+            query.value("transaction_type").toString()
         ),
-
-        query.value("amount")
-            .toLongLong(),
-
-        query.value("description")
-            .toString()
+        statusFromString(
+            query.value("status").toString()
+        ),
+        channelFromString(
+            query.value("channel").toString()
+        ),
+        query.value("amount").toString(),
+        query.value("currency_id").toLongLong(),
+        query.value("reverses_transaction_id").toLongLong(),
+        query.value("initiated_at").toDateTime(),
+        query.value("completed_at").toDateTime(),
+        query.value("description").toString(),
+        query.value("reference_number").toString(),
+        query.value("created_at").toDateTime(),
+        query.value("updated_at").toDateTime()
     );
-
-
-    return true;
 }
 
-
-// =========================================================
-// FIND BY ACCOUNT ID
-// =========================================================
-
-QList<Transaction>
-TransactionRepository::findByAccountId(
-    qint64 accountId) const
+bool TransactionRepository::updateStatus(
+    qint64 transactionId,
+    Transaction::Status status,
+    const QDateTime& completedAt
+)
 {
-    QList<Transaction> result;
-
-
     QSqlQuery query(db);
 
-
     query.prepare(
-        "SELECT "
-        "id, "
-        "account_id, "
-        "type, "
-        "amount, "
-        "description "
-        "FROM transaction "
-        "WHERE account_id = :account_id "
-        "ORDER BY id ASC"
+        "UPDATE transaction "
+        "SET status = :status, "
+        "    completed_at = :completed_at, "
+        "    updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = :id"
     );
-
 
     query.bindValue(
-        ":account_id",
-        accountId
+        ":status",
+        statusToString(status)
     );
 
+    if (completedAt.isValid())
+    {
+        query.bindValue(":completed_at", completedAt);
+    }
+    else
+    {
+        query.bindValue(
+            ":completed_at",
+            QVariant(QVariant::DateTime)
+        );
+    }
+
+    query.bindValue(":id", transactionId);
 
     if (!query.exec())
     {
-        qDebug()
-            << "Failed to find transactions "
-               "for account!";
-
-        qDebug()
-            << "Database error:"
-            << query.lastError().text();
-
-        return result;
+        return false;
     }
 
-
-    while (query.next())
-    {
-        Transaction transaction(
-            query.value("id")
-                .toLongLong(),
-
-            query.value("account_id")
-                .toLongLong(),
-
-            stringToType(
-                query.value("type")
-                    .toString()
-            ),
-
-            query.value("amount")
-                .toLongLong(),
-
-            query.value("description")
-                .toString()
-        );
-
-
-        result.append(transaction);
-    }
-
-
-    return result;
+    return query.numRowsAffected() == 1;
 }

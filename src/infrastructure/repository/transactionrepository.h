@@ -5,35 +5,22 @@
 
 #include <QSqlDatabase>
 
-class TransactionRepository
-    : public ITransactionRepository
+class TransactionRepository : public ITransactionRepository
 {
 public:
+    explicit TransactionRepository(const QSqlDatabase& database);
 
-    explicit TransactionRepository(
-        const QSqlDatabase& database
-    );
+    qint64 create(const Transaction& transaction) override;
 
+    Transaction* findById(qint64 transactionId) override;
 
-    bool save(
-        Transaction& transaction
+    bool updateStatus(
+        qint64 transactionId,
+        Transaction::Status status,
+        const QDateTime& completedAt
     ) override;
 
-
-    bool findById(
-        qint64 id,
-        Transaction& transaction
-    ) const override;
-
-
-    QList<Transaction>
-    findByAccountId(
-        qint64 accountId
-    ) const override;
-
-
 private:
-
     QSqlDatabase db;
 };
 

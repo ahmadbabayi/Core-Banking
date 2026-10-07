@@ -1,139 +1,135 @@
 #include "account.h"
 
-#include <limits>
-
-
 Account::Account()
     : id(0),
-      customerId(0),
-      type(Type::CURRENT),
-      balance(0),
+      accountTypeId(0),
+      productId(0),
+      currencyId(0),
+      openingBranchId(0),
+      ledgerAccountId(0),
       status(Status::ACTIVE)
 {
 }
 
-
 Account::Account(
-    int id,
+    qint64 id,
     const QString& accountNumber,
-    int customerId,
-    Type type,
-    qint64 balance,
-    Status status
+    qint64 accountTypeId,
+    qint64 productId,
+    qint64 currencyId,
+    qint64 openingBranchId,
+    qint64 ledgerAccountId,
+    Status status,
+    const QDateTime& openedAt,
+    const QDateTime& closedAt,
+    const QDateTime& createdAt,
+    const QDateTime& updatedAt
 )
     : id(id),
       accountNumber(accountNumber),
-      customerId(customerId),
-      type(type),
-      balance(balance),
-      status(status)
+      accountTypeId(accountTypeId),
+      productId(productId),
+      currencyId(currencyId),
+      openingBranchId(openingBranchId),
+      ledgerAccountId(ledgerAccountId),
+      status(status),
+      openedAt(openedAt),
+      closedAt(closedAt),
+      createdAt(createdAt),
+      updatedAt(updatedAt)
 {
 }
 
-
-// =========================================================
-// GETTERS
-// =========================================================
-
-int Account::getId() const
+qint64 Account::getId() const
 {
     return id;
 }
-
 
 QString Account::getAccountNumber() const
 {
     return accountNumber;
 }
 
-
-int Account::getCustomerId() const
+qint64 Account::getAccountTypeId() const
 {
-    return customerId;
+    return accountTypeId;
 }
 
-
-Account::Type Account::getType() const
+qint64 Account::getProductId() const
 {
-    return type;
+    return productId;
 }
 
-
-qint64 Account::getBalance() const
+qint64 Account::getCurrencyId() const
 {
-    return balance;
+    return currencyId;
 }
 
+qint64 Account::getOpeningBranchId() const
+{
+    return openingBranchId;
+}
+
+qint64 Account::getLedgerAccountId() const
+{
+    return ledgerAccountId;
+}
 
 Account::Status Account::getStatus() const
 {
     return status;
 }
 
-
-// =========================================================
-// DEPOSIT
-// =========================================================
-
-bool Account::deposit(qint64 amount)
+QDateTime Account::getOpenedAt() const
 {
-    if (amount <= 0)
+    return openedAt;
+}
+
+QDateTime Account::getClosedAt() const
+{
+    return closedAt;
+}
+
+QDateTime Account::getCreatedAt() const
+{
+    return createdAt;
+}
+
+QDateTime Account::getUpdatedAt() const
+{
+    return updatedAt;
+}
+
+bool Account::activate()
+{
+    if (status != Status::DORMANT &&
+        status != Status::BLOCKED)
     {
         return false;
     }
 
+    status = Status::ACTIVE;
+    closedAt = QDateTime();
+
+    return true;
+}
+
+bool Account::makeDormant()
+{
     if (status != Status::ACTIVE)
     {
         return false;
     }
 
-    // Prevent signed integer overflow.
-    if (amount >
-        std::numeric_limits<qint64>::max() - balance)
-    {
-        return false;
-    }
-
-    balance += amount;
+    status = Status::DORMANT;
 
     return true;
 }
-
-
-// =========================================================
-// WITHDRAW
-// =========================================================
-
-bool Account::withdraw(qint64 amount)
-{
-    if (amount <= 0)
-    {
-        return false;
-    }
-
-    if (status != Status::ACTIVE)
-    {
-        return false;
-    }
-
-    if (amount > balance)
-    {
-        return false;
-    }
-
-    balance -= amount;
-
-    return true;
-}
-
-
-// =========================================================
-// BLOCK
-// =========================================================
 
 bool Account::block()
 {
-    if (status != Status::ACTIVE)
+    if (status != Status::ACTIVE &&
+        status != Status::DORMANT)
     {
         return false;
     }
@@ -143,26 +139,23 @@ bool Account::block()
     return true;
 }
 
-
-// =========================================================
-// CLOSE
-// =========================================================
-
-bool Account::close()
+bool Account::close(const QDateTime& closeTime)
 {
     if (status == Status::CLOSED)
     {
         return false;
     }
 
-    // A bank account must not be closed
-    // while money remains in it.
-    if (balance != 0)
-    {
-        return false;
-    }
-
     status = Status::CLOSED;
+
+    if (closeTime.isValid())
+    {
+        closedAt = closeTime;
+    }
+    else
+    {
+        closedAt = QDateTime::currentDateTime();
+    }
 
     return true;
 }

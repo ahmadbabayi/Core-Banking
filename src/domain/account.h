@@ -1,22 +1,17 @@
 #ifndef ACCOUNT_H
 #define ACCOUNT_H
 
+#include <QDateTime>
 #include <QString>
 #include <QtGlobal>
 
 class Account
 {
 public:
-
-    enum class Type
-    {
-        CURRENT,
-        SAVINGS
-    };
-
     enum class Status
     {
         ACTIVE,
+        DORMANT,
         BLOCKED,
         CLOSED
     };
@@ -24,47 +19,68 @@ public:
     Account();
 
     Account(
-        int id,
+        qint64 id,
         const QString& accountNumber,
-        int customerId,
-        Type type,
-        qint64 balance,
-        Status status
+        qint64 accountTypeId,
+        qint64 productId,
+        qint64 currencyId,
+        qint64 openingBranchId,
+        qint64 ledgerAccountId,
+        Status status,
+        const QDateTime& openedAt,
+        const QDateTime& closedAt,
+        const QDateTime& createdAt,
+        const QDateTime& updatedAt
     );
 
-    int getId() const;
+    qint64 getId() const;
 
     QString getAccountNumber() const;
 
-    int getCustomerId() const;
+    qint64 getAccountTypeId() const;
 
-    Type getType() const;
+    qint64 getProductId() const;
 
-    qint64 getBalance() const;
+    qint64 getCurrencyId() const;
+
+    qint64 getOpeningBranchId() const;
+
+    qint64 getLedgerAccountId() const;
 
     Status getStatus() const;
 
-    bool deposit(qint64 amount);
+    QDateTime getOpenedAt() const;
 
-    bool withdraw(qint64 amount);
+    QDateTime getClosedAt() const;
+
+    QDateTime getCreatedAt() const;
+
+    QDateTime getUpdatedAt() const;
+
+    bool activate();
+
+    bool makeDormant();
 
     bool block();
 
-    bool close();
+    bool close(const QDateTime& closedAt = QDateTime());
 
 private:
-
-    int id;
-
+    qint64 id;
     QString accountNumber;
 
-    int customerId;
-
-    Type type;
-
-    qint64 balance;
+    qint64 accountTypeId;
+    qint64 productId;
+    qint64 currencyId;
+    qint64 openingBranchId;
+    qint64 ledgerAccountId;
 
     Status status;
+
+    QDateTime openedAt;
+    QDateTime closedAt;
+    QDateTime createdAt;
+    QDateTime updatedAt;
 };
 
 #endif // ACCOUNT_H
