@@ -37,6 +37,66 @@ QByteArray createHttpResponse(
     return response;
 }
 
+void sendHttpResponse(
+    QTcpSocket* socket,
+    const QByteArray& response
+)
+{
+    if (!socket)
+    {
+        return;
+    }
+
+    const qint64 bytesToWrite =
+        socket->write(response);
+
+    if (bytesToWrite == -1)
+    {
+        qDebug()
+            << "Failed to write HTTP response:"
+            << socket->errorString();
+
+        socket->disconnectFromHost();
+
+        return;
+    }
+
+    qDebug()
+        << "HTTP response bytes written:"
+        << bytesToWrite;
+
+    /*
+     * Do not disconnect immediately after write().
+     *
+     * QTcpSocket::write() only places the data in the
+     * socket's outgoing buffer. The actual transmission
+     * happens asynchronously.
+     *
+     * We therefore wait for bytesWritten() before closing
+     * the connection.
+     */
+
+    if (socket->bytesToWrite() == 0)
+    {
+        socket->disconnectFromHost();
+
+        return;
+    }
+
+    QObject::connect(
+        socket,
+        &QTcpSocket::bytesWritten,
+        socket,
+        [socket]()
+        {
+            if (socket->bytesToWrite() == 0)
+            {
+                socket->disconnectFromHost();
+            }
+        }
+    );
+}
+
 }
 
 HttpServer::HttpServer(
@@ -56,13 +116,14 @@ void HttpServer::incomingConnection(
         new QTcpSocket(this);
 
     if (!socket->setSocketDescriptor(
-            socketDescriptor))
+        socketDescriptor))
     {
         qDebug()
             << "Failed to set socket descriptor:"
             << socket->errorString();
 
         socket->deleteLater();
+
         return;
     }
 
@@ -125,7 +186,7 @@ void HttpServer::incomingConnection(
                     line.toLower();
 
                 if (lowerLine.startsWith(
-                        "content-length:"))
+                    "content-length:"))
                 {
                     const QByteArray value =
                         line.mid(
@@ -168,15 +229,13 @@ void HttpServer::incomingConnection(
                 const QByteArray body =
                     "{\"error\":\"Bad Request\"}";
 
-                socket->write(
+                sendHttpResponse(
+                    socket,
                     createHttpResponse(
                         "400 Bad Request",
                         body
                     )
                 );
-
-                socket->flush();
-                socket->disconnectFromHost();
 
                 return;
             }
@@ -198,15 +257,13 @@ void HttpServer::incomingConnection(
                 const QByteArray body =
                     "{\"error\":\"Bad Request\"}";
 
-                socket->write(
+                sendHttpResponse(
+                    socket,
                     createHttpResponse(
                         "400 Bad Request",
                         body
                     )
                 );
-
-                socket->flush();
-                socket->disconnectFromHost();
 
                 return;
             }
@@ -241,9 +298,10 @@ void HttpServer::incomingConnection(
              *
              * becomes:
              *
-             * path  = /api/v1/customers
+             * path = /api/v1/customers
              * query = nationalId=0012345683
              */
+
             const int querySeparator =
                 target.indexOf('?');
 
@@ -278,6 +336,7 @@ void HttpServer::incomingConnection(
             /*
              * Extract request body.
              */
+
             const QByteArray body =
                 requestBuffer->mid(
                     bodyStart,
@@ -291,6 +350,7 @@ void HttpServer::incomingConnection(
             /*
              * Delegate routing to HttpRouter.
              */
+
             const HttpResponse response =
                 router.route(
                     method,
@@ -299,15 +359,24 @@ void HttpServer::incomingConnection(
                     body
                 );
 
-            socket->write(
+            const QByteArray httpResponse =
                 createHttpResponse(
                     response.status,
                     response.body
-                )
-            );
+                );
 
-            socket->flush();
-            socket->disconnectFromHost();
+            qDebug()
+                << "HTTP response status:"
+                << response.status;
+
+            qDebug()
+                << "HTTP response body:"
+                << response.body;
+
+            sendHttpResponse(
+                socket,
+                httpResponse
+            );
         }
     );
 
@@ -318,6 +387,7 @@ void HttpServer::incomingConnection(
         [socket, requestBuffer]()
         {
             delete requestBuffer;
+
             socket->deleteLater();
         }
     );
