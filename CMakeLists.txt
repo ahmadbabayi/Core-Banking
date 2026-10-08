@@ -14,15 +14,6 @@ add_executable(CoreBanking
 
     src/main.cpp
 
-    src/web/httpserver.h
-    src/web/httpserver.cpp
-
-    src/web/httprouter.h
-    src/web/httprouter.cpp
-
-    src/web/customercontroller.h
-    src/web/customercontroller.cpp
-
     src/application/accountservice.h
     src/application/accountservice.cpp
 
@@ -87,6 +78,15 @@ add_executable(CoreBanking
 
     src/infrastructure/database.h
     src/infrastructure/database.cpp
+
+    src/web/httpserver.h
+    src/web/httpserver.cpp
+    src/web/httprouter.h
+    src/web/httprouter.cpp
+    src/web/customercontroller.h
+    src/web/customercontroller.cpp
+    src/web/apiresponse.h
+    src/web/apiresponse.cpp
 )
 
 target_link_libraries(CoreBanking

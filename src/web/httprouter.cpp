@@ -1,5 +1,7 @@
 #include "httprouter.h"
 
+#include "apiresponse.h"
+
 #include <QDebug>
 #include <QUrlQuery>
 
@@ -26,20 +28,24 @@ HttpResponse HttpRouter::route(
     /*
      * GET /api/v1/health
      */
-    if (method == "GET"
-        && path == "/api/v1/health")
+    if (method == "GET" &&
+        path == "/api/v1/health")
     {
+        QJsonObject data;
+
+        data["status"] = "UP";
+
         return {
             "200 OK",
-            "{\"status\":\"UP\"}"
+            ApiResponse::success(data)
         };
     }
 
     /*
      * POST /api/v1/customers
      */
-    if (method == "POST"
-        && path == "/api/v1/customers")
+    if (method == "POST" &&
+        path == "/api/v1/customers")
     {
         return customerController.createCustomer(
             body
@@ -53,8 +59,8 @@ HttpResponse HttpRouter::route(
      *
      * GET /api/v1/customers?nationalId=0012345684
      */
-    if (method == "GET"
-        && path == "/api/v1/customers")
+    if (method == "GET" &&
+        path == "/api/v1/customers")
     {
         QUrlQuery urlQuery(
             QString::fromUtf8(query)
@@ -69,7 +75,10 @@ HttpResponse HttpRouter::route(
         {
             return {
                 "400 Bad Request",
-                "{\"error\":\"Missing nationalId query parameter\"}"
+                ApiResponse::error(
+                    "MISSING_NATIONAL_ID",
+                    "Missing nationalId query parameter"
+                )
             };
         }
 
@@ -88,8 +97,8 @@ HttpResponse HttpRouter::route(
     const QByteArray customerPrefix =
         "/api/v1/customers/";
 
-    if (method == "GET"
-        && path.startsWith(customerPrefix))
+    if (method == "GET" &&
+        path.startsWith(customerPrefix))
     {
         const QByteArray idText =
             path.mid(
@@ -103,7 +112,10 @@ HttpResponse HttpRouter::route(
         {
             return {
                 "400 Bad Request",
-                "{\"error\":\"Invalid customer ID\"}"
+                ApiResponse::error(
+                    "INVALID_CUSTOMER_ID",
+                    "Invalid customer ID"
+                )
             };
         }
 
@@ -122,7 +134,10 @@ HttpResponse HttpRouter::route(
         {
             return {
                 "400 Bad Request",
-                "{\"error\":\"Invalid customer ID\"}"
+                ApiResponse::error(
+                    "INVALID_CUSTOMER_ID",
+                    "Invalid customer ID"
+                )
             };
         }
 
@@ -136,6 +151,9 @@ HttpResponse HttpRouter::route(
      */
     return {
         "404 Not Found",
-        "{\"error\":\"Not Found\"}"
+        ApiResponse::error(
+            "ROUTE_NOT_FOUND",
+            "Not Found"
+        )
     };
 }
