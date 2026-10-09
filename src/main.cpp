@@ -4,9 +4,15 @@
 #include <QSqlDatabase>
 
 #include "infrastructure/database.h"
+
 #include "infrastructure/repository/customerrepository.h"
+#include "infrastructure/repository/currencyrepository.h"
+
 #include "application/customerservice.h"
+#include "application/currencyservice.h"
+
 #include "web/customercontroller.h"
+#include "web/currencycontroller.h"
 #include "web/httprouter.h"
 #include "web/httpserver.h"
 
@@ -38,13 +44,22 @@ int main(int argc, char *argv[])
         customerService
     );
 
-    HttpRouter router(
-        customerController
+    CurrencyRepository currencyRepository(db);
+
+    CurrencyService currencyService(
+        currencyRepository
     );
 
-    HttpServer server(
-        router
+    CurrencyController currencyController(
+        currencyService
     );
+
+    HttpRouter router(
+        customerController,
+        currencyController
+    );
+
+    HttpServer server(router);
 
     const quint16 port = 8080;
 
@@ -73,6 +88,10 @@ int main(int argc, char *argv[])
     qDebug()
         << "Customer endpoint:"
         << "POST http://localhost:8080/api/v1/customers";
+
+    qDebug()
+        << "Currency endpoint:"
+        << "POST http://localhost:8080/api/v1/currencies";
 
     return app.exec();
 }

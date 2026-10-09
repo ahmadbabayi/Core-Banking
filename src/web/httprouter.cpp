@@ -3,12 +3,15 @@
 #include "apiresponse.h"
 
 #include <QDebug>
+#include <QJsonObject>
 #include <QUrlQuery>
 
 HttpRouter::HttpRouter(
-    CustomerController& customerController
+    CustomerController& customerController,
+    CurrencyController& currencyController
 )
-    : customerController(customerController)
+    : customerController(customerController),
+      currencyController(currencyController)
 {
 }
 
@@ -25,14 +28,11 @@ HttpResponse HttpRouter::route(
         << "path =" << path
         << "query =" << query;
 
-    /*
-     * GET /api/v1/health
-     */
+    // GET /api/v1/health
     if (method == "GET" &&
         path == "/api/v1/health")
     {
         QJsonObject data;
-
         data["status"] = "UP";
 
         return {
@@ -41,24 +41,14 @@ HttpResponse HttpRouter::route(
         };
     }
 
-    /*
-     * POST /api/v1/customers
-     */
+    // POST /api/v1/customers
     if (method == "POST" &&
         path == "/api/v1/customers")
     {
-        return customerController.createCustomer(
-            body
-        );
+        return customerController.createCustomer(body);
     }
 
-    /*
-     * GET /api/v1/customers?nationalId=...
-     *
-     * Example:
-     *
-     * GET /api/v1/customers?nationalId=0012345684
-     */
+    // GET /api/v1/customers?nationalId=...
     if (method == "GET" &&
         path == "/api/v1/customers")
     {
@@ -67,9 +57,7 @@ HttpResponse HttpRouter::route(
         );
 
         const QString nationalId =
-            urlQuery.queryItemValue(
-                "nationalId"
-            );
+            urlQuery.queryItemValue("nationalId");
 
         if (nationalId.isEmpty())
         {
@@ -87,13 +75,7 @@ HttpResponse HttpRouter::route(
         );
     }
 
-    /*
-     * GET /api/v1/customers/{id}
-     *
-     * Example:
-     *
-     * GET /api/v1/customers/1011
-     */
+    // GET /api/v1/customers/{id}
     const QByteArray customerPrefix =
         "/api/v1/customers/";
 
@@ -101,14 +83,14 @@ HttpResponse HttpRouter::route(
         path.startsWith(customerPrefix))
     {
         const QByteArray idText =
-            path.mid(
-                customerPrefix.size()
-            );
+            path.mid(customerPrefix.size());
 
-        /*
-         * Empty ID is invalid.
-         */
-        if (idText.isEmpty())
+        bool conversionOk = false;
+
+        const long long customerId =
+            idText.toLongLong(&conversionOk);
+
+        if (!conversionOk || customerId <= 0)
         {
             return {
                 "400 Bad Request",
@@ -119,18 +101,7 @@ HttpResponse HttpRouter::route(
             };
         }
 
-        bool conversionOk = false;
-
-        const int customerId =
-            idText.toInt(
-                &conversionOk
-            );
-
-        /*
-         * The complete path segment must
-         * represent a valid integer.
-         */
-        if (!conversionOk)
+        if (customerId > 2147483647LL)
         {
             return {
                 "400 Bad Request",
@@ -142,13 +113,55 @@ HttpResponse HttpRouter::route(
         }
 
         return customerController.getCustomerById(
-            customerId
+            static_cast<int>(customerId)
         );
     }
 
-    /*
-     * Route not found.
-     */
+    // POST /api/v1/currencies
+    if (method == "POST" &&
+        path == "/api/v1/currencies")
+    {
+        return currencyController.createCurrency(body);
+    }
+
+    // GET /api/v1/currencies
+    if (method == "GET" &&
+        path == "/api/v1/currencies")
+    {
+        return currencyController.getAllCurrencies();
+    }
+
+    // GET /api/v1/currencies/{id}
+    const QByteArray currencyPrefix =
+        "/api/v1/currencies/";
+
+    if (method == "GET" &&
+        path.startsWith(currencyPrefix))
+    {
+        const QByteArray idText =
+            path.mid(currencyPrefix.size());
+
+        bool conversionOk = false;
+
+        const long long currencyId =
+            idText.toLongLong(&conversionOk);
+
+        if (!conversionOk || currencyId <= 0)
+        {
+            return {
+                "400 Bad Request",
+                ApiResponse::error(
+                    "INVALID_CURRENCY_ID",
+                    "Invalid currency ID"
+                )
+            };
+        }
+
+        return currencyController.getCurrencyById(
+            currencyId
+        );
+    }
+
     return {
         "404 Not Found",
         ApiResponse::error(

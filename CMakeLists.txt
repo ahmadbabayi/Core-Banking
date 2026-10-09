@@ -26,6 +26,9 @@ add_executable(CoreBanking
     src/application/customernumbergenerator.h
     src/application/customernumbergenerator.cpp
 
+    src/application/currencyservice.h
+    src/application/currencyservice.cpp
+
     src/application/transferservice.h
     src/application/transferservice.cpp
 
@@ -35,6 +38,8 @@ add_executable(CoreBanking
     src/domain/accountbalance.cpp
     src/domain/customer.cpp
     src/domain/customer.h
+    src/domain/currency.h
+    src/domain/currency.cpp
     src/domain/transaction.cpp
     src/domain/transaction.h
     src/domain/transactionentry.h
@@ -54,6 +59,7 @@ add_executable(CoreBanking
     src/infrastructure/repository/iaccountbalancerepository.h
     src/infrastructure/repository/iaccountrepository.h
     src/infrastructure/repository/icustomerrepository.h
+    src/infrastructure/repository/icurrencyrepository.h
     src/infrastructure/repository/itransferrepository.h
     src/infrastructure/repository/itransactionrepository.h
     src/infrastructure/repository/itransactionentryrepository.h
@@ -62,6 +68,9 @@ add_executable(CoreBanking
 
     src/infrastructure/repository/customerrepository.h
     src/infrastructure/repository/customerrepository.cpp
+
+    src/infrastructure/repository/currencyrepository.h
+    src/infrastructure/repository/currencyrepository.cpp
 
     src/infrastructure/repository/transactionrepository.h
     src/infrastructure/repository/transactionrepository.cpp
@@ -83,8 +92,14 @@ add_executable(CoreBanking
     src/web/httpserver.cpp
     src/web/httprouter.h
     src/web/httprouter.cpp
+    src/web/httpresponse.h
+
     src/web/customercontroller.h
     src/web/customercontroller.cpp
+
+    src/web/currencycontroller.h
+    src/web/currencycontroller.cpp
+
     src/web/apiresponse.h
     src/web/apiresponse.cpp
 )

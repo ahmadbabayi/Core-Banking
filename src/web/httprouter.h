@@ -2,12 +2,14 @@
 #define HTTPROUTER_H
 
 #include "customercontroller.h"
+#include "currencycontroller.h"
 
 class HttpRouter
 {
 public:
-    explicit HttpRouter(
-        CustomerController& customerController
+    HttpRouter(
+        CustomerController& customerController,
+        CurrencyController& currencyController
     );
 
     HttpResponse route(
@@ -19,6 +21,7 @@ public:
 
 private:
     CustomerController& customerController;
+    CurrencyController& currencyController;
 };
 
 #endif // HTTPROUTER_H
