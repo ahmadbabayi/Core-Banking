@@ -9,11 +9,13 @@
 HttpRouter::HttpRouter(
     CustomerController& customerController,
     CurrencyController& currencyController,
-    CountryController& countryController
+    CountryController& countryController,
+    ProvinceController& provinceController
 )
     : customerController(customerController),
       currencyController(currencyController),
-      countryController(countryController)
+      countryController(countryController),
+      provinceController(provinceController)
 {
 }
 
@@ -197,6 +199,51 @@ HttpResponse HttpRouter::route(
 
         return countryController.getCountryById(
             countryId
+        );
+    }
+
+    // POST /api/v1/provinces
+    if (method == "POST" &&
+        path == "/api/v1/provinces")
+    {
+        return provinceController.createProvince(body);
+    }
+
+    // GET /api/v1/provinces
+    if (method == "GET" &&
+        path == "/api/v1/provinces")
+    {
+        return provinceController.getAllProvinces();
+    }
+
+    // GET /api/v1/provinces/{id}
+    const QByteArray provincePrefix =
+        "/api/v1/provinces/";
+
+    if (method == "GET" &&
+        path.startsWith(provincePrefix))
+    {
+        const QByteArray idText =
+            path.mid(provincePrefix.size());
+
+        bool conversionOk = false;
+
+        const long long provinceId =
+            idText.toLongLong(&conversionOk);
+
+        if (!conversionOk || provinceId <= 0)
+        {
+            return {
+                "400 Bad Request",
+                ApiResponse::error(
+                    "INVALID_PROVINCE_ID",
+                    "Invalid province ID"
+                )
+            };
+        }
+
+        return provinceController.getProvinceById(
+            provinceId
         );
     }
 

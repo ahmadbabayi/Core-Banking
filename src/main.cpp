@@ -8,14 +8,17 @@
 #include "infrastructure/repository/customerrepository.h"
 #include "infrastructure/repository/currencyrepository.h"
 #include "infrastructure/repository/countryrepository.h"
+#include "infrastructure/repository/provincerepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
 #include "application/countryservice.h"
+#include "application/provinceservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
 #include "web/countrycontroller.h"
+#include "web/provincecontroller.h"
 
 #include "web/httprouter.h"
 #include "web/httpserver.h"
@@ -24,7 +27,6 @@ int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
 
-    // Database connection
     Database& database = Database::instance();
 
     if (!database.connect())
@@ -72,11 +74,23 @@ int main(int argc, char *argv[])
         countryService
     );
 
+    // Province
+    ProvinceRepository provinceRepository(db);
+
+    ProvinceService provinceService(
+        provinceRepository
+    );
+
+    ProvinceController provinceController(
+        provinceService
+    );
+
     // HTTP Router
     HttpRouter router(
         customerController,
         currencyController,
-        countryController
+        countryController,
+        provinceController
     );
 
     // HTTP Server
@@ -117,6 +131,10 @@ int main(int argc, char *argv[])
     qDebug()
         << "Country endpoints:"
         << "GET/POST http://localhost:8080/api/v1/countries";
+
+    qDebug()
+        << "Province endpoints:"
+        << "GET/POST http://localhost:8080/api/v1/provinces";
 
     return app.exec();
 }

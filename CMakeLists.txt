@@ -28,6 +28,8 @@ add_executable(CoreBanking
     src/application/countryservice.cpp
     src/application/transferservice.h
     src/application/transferservice.cpp
+    src/application/provinceservice.h
+    src/application/provinceservice.cpp
 
     src/domain/account.cpp
     src/domain/account.h
@@ -49,6 +51,8 @@ add_executable(CoreBanking
     src/domain/journal.cpp
     src/domain/journalentry.h
     src/domain/journalentry.cpp
+    src/domain/province.h
+    src/domain/province.cpp
 
     src/infrastructure/repository/accountbalancerepository.h
     src/infrastructure/repository/accountbalancerepository.cpp
@@ -65,6 +69,7 @@ add_executable(CoreBanking
     src/infrastructure/repository/itransactionentryrepository.h
     src/infrastructure/repository/ijournalrepository.h
     src/infrastructure/repository/ijournalentryrepository.h
+    src/infrastructure/repository/iprovincerepository.h
 
     src/infrastructure/repository/customerrepository.h
     src/infrastructure/repository/customerrepository.cpp
@@ -84,6 +89,8 @@ add_executable(CoreBanking
     src/infrastructure/repository/journalrepository.cpp
     src/infrastructure/repository/journalentryrepository.h
     src/infrastructure/repository/journalentryrepository.cpp
+    src/infrastructure/repository/provincerepository.h
+    src/infrastructure/repository/provincerepository.cpp
 
     src/infrastructure/database.h
     src/infrastructure/database.cpp
@@ -101,6 +108,8 @@ add_executable(CoreBanking
     src/web/countrycontroller.cpp
     src/web/apiresponse.h
     src/web/apiresponse.cpp
+    src/web/provincecontroller.h
+    src/web/provincecontroller.cpp
 )
 
 target_link_libraries(CoreBanking
