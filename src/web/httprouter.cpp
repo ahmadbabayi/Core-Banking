@@ -8,10 +8,12 @@
 
 HttpRouter::HttpRouter(
     CustomerController& customerController,
-    CurrencyController& currencyController
+    CurrencyController& currencyController,
+    CountryController& countryController
 )
     : customerController(customerController),
-      currencyController(currencyController)
+      currencyController(currencyController),
+      countryController(countryController)
 {
 }
 
@@ -52,7 +54,7 @@ HttpResponse HttpRouter::route(
     if (method == "GET" &&
         path == "/api/v1/customers")
     {
-        QUrlQuery urlQuery(
+        const QUrlQuery urlQuery(
             QString::fromUtf8(query)
         );
 
@@ -90,18 +92,9 @@ HttpResponse HttpRouter::route(
         const long long customerId =
             idText.toLongLong(&conversionOk);
 
-        if (!conversionOk || customerId <= 0)
-        {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_CUSTOMER_ID",
-                    "Invalid customer ID"
-                )
-            };
-        }
-
-        if (customerId > 2147483647LL)
+        if (!conversionOk ||
+            customerId <= 0 ||
+            customerId > 2147483647LL)
         {
             return {
                 "400 Bad Request",
@@ -162,6 +155,52 @@ HttpResponse HttpRouter::route(
         );
     }
 
+    // POST /api/v1/countries
+    if (method == "POST" &&
+        path == "/api/v1/countries")
+    {
+        return countryController.createCountry(body);
+    }
+
+    // GET /api/v1/countries
+    if (method == "GET" &&
+        path == "/api/v1/countries")
+    {
+        return countryController.getAllCountries();
+    }
+
+    // GET /api/v1/countries/{id}
+    const QByteArray countryPrefix =
+        "/api/v1/countries/";
+
+    if (method == "GET" &&
+        path.startsWith(countryPrefix))
+    {
+        const QByteArray idText =
+            path.mid(countryPrefix.size());
+
+        bool conversionOk = false;
+
+        const long long countryId =
+            idText.toLongLong(&conversionOk);
+
+        if (!conversionOk || countryId <= 0)
+        {
+            return {
+                "400 Bad Request",
+                ApiResponse::error(
+                    "INVALID_COUNTRY_ID",
+                    "Invalid country ID"
+                )
+            };
+        }
+
+        return countryController.getCountryById(
+            countryId
+        );
+    }
+
+    // Route not found
     return {
         "404 Not Found",
         ApiResponse::error(

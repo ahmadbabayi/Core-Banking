@@ -7,12 +7,16 @@
 
 #include "infrastructure/repository/customerrepository.h"
 #include "infrastructure/repository/currencyrepository.h"
+#include "infrastructure/repository/countryrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
+#include "application/countryservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
+#include "web/countrycontroller.h"
+
 #include "web/httprouter.h"
 #include "web/httpserver.h"
 
@@ -20,6 +24,7 @@ int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
 
+    // Database connection
     Database& database = Database::instance();
 
     if (!database.connect())
@@ -33,6 +38,7 @@ int main(int argc, char *argv[])
 
     QSqlDatabase db = database.connection();
 
+    // Customer
     CustomerRepository customerRepository(db);
 
     CustomerService customerService(
@@ -44,6 +50,7 @@ int main(int argc, char *argv[])
         customerService
     );
 
+    // Currency
     CurrencyRepository currencyRepository(db);
 
     CurrencyService currencyService(
@@ -54,11 +61,25 @@ int main(int argc, char *argv[])
         currencyService
     );
 
-    HttpRouter router(
-        customerController,
-        currencyController
+    // Country
+    CountryRepository countryRepository(db);
+
+    CountryService countryService(
+        countryRepository
     );
 
+    CountryController countryController(
+        countryService
+    );
+
+    // HTTP Router
+    HttpRouter router(
+        customerController,
+        currencyController,
+        countryController
+    );
+
+    // HTTP Server
     HttpServer server(router);
 
     const quint16 port = 8080;
@@ -92,6 +113,10 @@ int main(int argc, char *argv[])
     qDebug()
         << "Currency endpoint:"
         << "POST http://localhost:8080/api/v1/currencies";
+
+    qDebug()
+        << "Country endpoints:"
+        << "GET/POST http://localhost:8080/api/v1/countries";
 
     return app.exec();
 }

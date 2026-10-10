@@ -3,13 +3,15 @@
 
 #include "customercontroller.h"
 #include "currencycontroller.h"
+#include "countrycontroller.h"
 
 class HttpRouter
 {
 public:
     HttpRouter(
         CustomerController& customerController,
-        CurrencyController& currencyController
+        CurrencyController& currencyController,
+        CountryController& countryController
     );
 
     HttpResponse route(
@@ -22,6 +24,7 @@ public:
 private:
     CustomerController& customerController;
     CurrencyController& currencyController;
+    CountryController& countryController;
 };
 
 #endif // HTTPROUTER_H

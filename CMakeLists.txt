@@ -16,19 +16,16 @@ add_executable(CoreBanking
 
     src/application/accountservice.h
     src/application/accountservice.cpp
-
     src/application/accountnumbergenerator.h
     src/application/accountnumbergenerator.cpp
-
     src/application/customerservice.h
     src/application/customerservice.cpp
-
     src/application/customernumbergenerator.h
     src/application/customernumbergenerator.cpp
-
     src/application/currencyservice.h
     src/application/currencyservice.cpp
-
+    src/application/countryservice.h
+    src/application/countryservice.cpp
     src/application/transferservice.h
     src/application/transferservice.cpp
 
@@ -40,6 +37,8 @@ add_executable(CoreBanking
     src/domain/customer.h
     src/domain/currency.h
     src/domain/currency.cpp
+    src/domain/country.h
+    src/domain/country.cpp
     src/domain/transaction.cpp
     src/domain/transaction.h
     src/domain/transactionentry.h
@@ -60,6 +59,7 @@ add_executable(CoreBanking
     src/infrastructure/repository/iaccountrepository.h
     src/infrastructure/repository/icustomerrepository.h
     src/infrastructure/repository/icurrencyrepository.h
+    src/infrastructure/repository/icountryrepository.h
     src/infrastructure/repository/itransferrepository.h
     src/infrastructure/repository/itransactionrepository.h
     src/infrastructure/repository/itransactionentryrepository.h
@@ -72,14 +72,14 @@ add_executable(CoreBanking
     src/infrastructure/repository/currencyrepository.h
     src/infrastructure/repository/currencyrepository.cpp
 
+    src/infrastructure/repository/countryrepository.h
+    src/infrastructure/repository/countryrepository.cpp
     src/infrastructure/repository/transactionrepository.h
     src/infrastructure/repository/transactionrepository.cpp
     src/infrastructure/repository/transactionentryrepository.h
     src/infrastructure/repository/transactionentryrepository.cpp
-
     src/infrastructure/repository/transferrepository.h
     src/infrastructure/repository/transferrepository.cpp
-
     src/infrastructure/repository/journalrepository.h
     src/infrastructure/repository/journalrepository.cpp
     src/infrastructure/repository/journalentryrepository.h
@@ -93,13 +93,12 @@ add_executable(CoreBanking
     src/web/httprouter.h
     src/web/httprouter.cpp
     src/web/httpresponse.h
-
     src/web/customercontroller.h
     src/web/customercontroller.cpp
-
     src/web/currencycontroller.h
     src/web/currencycontroller.cpp
-
+    src/web/countrycontroller.h
+    src/web/countrycontroller.cpp
     src/web/apiresponse.h
     src/web/apiresponse.cpp
 )
