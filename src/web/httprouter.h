@@ -5,6 +5,7 @@
 #include "currencycontroller.h"
 #include "countrycontroller.h"
 #include "provincecontroller.h"
+#include "citycontroller.h"
 
 class HttpRouter
 {
@@ -13,7 +14,8 @@ public:
         CustomerController& customerController,
         CurrencyController& currencyController,
         CountryController& countryController,
-        ProvinceController& provinceController
+        ProvinceController& provinceController,
+        CityController& cityController
     );
 
     HttpResponse route(
@@ -28,6 +30,7 @@ private:
     CurrencyController& currencyController;
     CountryController& countryController;
     ProvinceController& provinceController;
+    CityController& cityController;
 };
 
 #endif // HTTPROUTER_H

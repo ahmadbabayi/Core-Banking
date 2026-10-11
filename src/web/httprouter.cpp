@@ -10,12 +10,14 @@ HttpRouter::HttpRouter(
     CustomerController& customerController,
     CurrencyController& currencyController,
     CountryController& countryController,
-    ProvinceController& provinceController
+    ProvinceController& provinceController,
+    CityController& cityController
 )
     : customerController(customerController),
       currencyController(currencyController),
       countryController(countryController),
-      provinceController(provinceController)
+      provinceController(provinceController),
+      cityController(cityController)
 {
 }
 
@@ -245,6 +247,49 @@ HttpResponse HttpRouter::route(
         return provinceController.getProvinceById(
             provinceId
         );
+    }
+
+    // POST /api/v1/cities
+    if (method == "POST" &&
+        path == "/api/v1/cities")
+    {
+        return cityController.createCity(body);
+    }
+
+    // GET /api/v1/cities
+    if (method == "GET" &&
+        path == "/api/v1/cities")
+    {
+        return cityController.getAllCities();
+    }
+
+    // GET /api/v1/cities/{id}
+    const QByteArray cityPrefix =
+        "/api/v1/cities/";
+
+    if (method == "GET" &&
+        path.startsWith(cityPrefix))
+    {
+        const QByteArray idText =
+            path.mid(cityPrefix.size());
+
+        bool conversionOk = false;
+
+        const long long cityId =
+            idText.toLongLong(&conversionOk);
+
+        if (!conversionOk || cityId <= 0)
+        {
+            return {
+                "400 Bad Request",
+                ApiResponse::error(
+                    "INVALID_CITY_ID",
+                    "Invalid city ID"
+                )
+            };
+        }
+
+        return cityController.getCityById(cityId);
     }
 
     // Route not found

@@ -9,16 +9,19 @@
 #include "infrastructure/repository/currencyrepository.h"
 #include "infrastructure/repository/countryrepository.h"
 #include "infrastructure/repository/provincerepository.h"
+#include "infrastructure/repository/cityrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
 #include "application/countryservice.h"
 #include "application/provinceservice.h"
+#include "application/cityservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
 #include "web/countrycontroller.h"
 #include "web/provincecontroller.h"
+#include "web/citycontroller.h"
 
 #include "web/httprouter.h"
 #include "web/httpserver.h"
@@ -85,12 +88,24 @@ int main(int argc, char *argv[])
         provinceService
     );
 
+    // City
+    CityRepository cityRepository(db);
+
+    CityService cityService(
+        cityRepository
+    );
+
+    CityController cityController(
+        cityService
+    );
+
     // HTTP Router
     HttpRouter router(
         customerController,
         currencyController,
         countryController,
-        provinceController
+        provinceController,
+        cityController
     );
 
     // HTTP Server
@@ -135,6 +150,10 @@ int main(int argc, char *argv[])
     qDebug()
         << "Province endpoints:"
         << "GET/POST http://localhost:8080/api/v1/provinces";
+
+    qDebug()
+        << "City endpoints:"
+        << "GET/POST http://localhost:8080/api/v1/cities";
 
     return app.exec();
 }
