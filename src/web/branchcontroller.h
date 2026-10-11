@@ -18,6 +18,16 @@ public:
         const QByteArray& body
     );
 
+    HttpResponse updateBranch(
+        long long branchId,
+        const QByteArray& body
+    );
+
+    HttpResponse changeBranchStatus(
+        long long branchId,
+        const QByteArray& body
+    );
+
     HttpResponse getBranchById(
         long long branchId
     );

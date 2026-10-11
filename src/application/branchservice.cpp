@@ -9,6 +9,15 @@ BranchService::BranchService(
 {
 }
 
+bool BranchService::isValidStatus(
+    const QString& status
+) const
+{
+    return status == "ACTIVE" ||
+           status == "INACTIVE" ||
+           status == "CLOSED";
+}
+
 bool BranchService::isValidBranch(
     const QString& branchCode,
     const QString& name,
@@ -35,9 +44,7 @@ bool BranchService::isValidBranch(
         return false;
     }
 
-    if (status != "ACTIVE" &&
-        status != "INACTIVE" &&
-        status != "CLOSED")
+    if (!isValidStatus(status))
     {
         return false;
     }
@@ -144,4 +151,120 @@ BranchService::findAllBranches(
     }
 
     return ListResult::InternalError;
+}
+
+BranchService::UpdateResult
+BranchService::updateBranch(
+    long long id,
+    const QString& branchCode,
+    const QString& name,
+    long long cityId,
+    Branch& updatedBranch
+)
+{
+    if (id <= 0)
+    {
+        return UpdateResult::NotFound;
+    }
+
+    const QString normalizedCode = branchCode.trimmed();
+    const QString normalizedName = name.trimmed();
+
+    static const QRegularExpression codePattern(
+        "^[0-9]{7}$"
+    );
+
+    if (!codePattern.match(normalizedCode).hasMatch() ||
+        normalizedName.isEmpty() ||
+        normalizedName.size() > 150 ||
+        cityId <= 0)
+    {
+        return UpdateResult::InvalidInput;
+    }
+
+    Branch existingBranch;
+
+    const IBranchRepository::FindResult findResult =
+        branchRepository.findById(id, existingBranch);
+
+    switch (findResult)
+    {
+    case IBranchRepository::FindResult::NotFound:
+        return UpdateResult::NotFound;
+
+    case IBranchRepository::FindResult::DatabaseError:
+        return UpdateResult::InternalError;
+
+    case IBranchRepository::FindResult::Found:
+        break;
+    }
+
+    existingBranch.setBranchCode(normalizedCode);
+    existingBranch.setName(normalizedName);
+    existingBranch.setCityId(cityId);
+
+    const IBranchRepository::UpdateResult updateResult =
+        branchRepository.update(existingBranch);
+
+    switch (updateResult)
+    {
+    case IBranchRepository::UpdateResult::Success:
+        updatedBranch = existingBranch;
+        return UpdateResult::Success;
+
+    case IBranchRepository::UpdateResult::NotFound:
+        return UpdateResult::NotFound;
+
+    case IBranchRepository::UpdateResult::BranchCodeConflict:
+        return UpdateResult::Conflict;
+
+    case IBranchRepository::UpdateResult::CityNotFound:
+        return UpdateResult::CityNotFound;
+
+    case IBranchRepository::UpdateResult::DatabaseError:
+        return UpdateResult::InternalError;
+    }
+
+    return UpdateResult::InternalError;
+}
+
+BranchService::ChangeStatusResult
+BranchService::changeBranchStatus(
+    long long id,
+    const QString& status,
+    Branch& updatedBranch
+)
+{
+    if (id <= 0)
+    {
+        return ChangeStatusResult::NotFound;
+    }
+
+    const QString normalizedStatus = status.trimmed();
+
+    if (!isValidStatus(normalizedStatus))
+    {
+        return ChangeStatusResult::InvalidStatus;
+    }
+
+    const IBranchRepository::StatusResult result =
+        branchRepository.updateStatus(
+            id,
+            normalizedStatus,
+            updatedBranch
+        );
+
+    switch (result)
+    {
+    case IBranchRepository::StatusResult::Success:
+        return ChangeStatusResult::Success;
+
+    case IBranchRepository::StatusResult::NotFound:
+        return ChangeStatusResult::NotFound;
+
+    case IBranchRepository::StatusResult::DatabaseError:
+        return ChangeStatusResult::InternalError;
+    }
+
+    return ChangeStatusResult::InternalError;
 }

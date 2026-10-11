@@ -308,33 +308,97 @@ HttpResponse HttpRouter::route(
         return branchController.getAllBranches();
     }
 
-    // GET /api/v1/branches/{id}
+    // Branch-specific routes:
+    // GET    /api/v1/branches/{id}
+    // PUT    /api/v1/branches/{id}
+    // PATCH  /api/v1/branches/{id}/status
+
     const QByteArray branchPrefix =
         "/api/v1/branches/";
 
-    if (method == "GET" &&
-        path.startsWith(branchPrefix))
+    if (path.startsWith(branchPrefix))
     {
-        const QByteArray idText =
+        const QByteArray suffix =
             path.mid(branchPrefix.size());
 
-        bool conversionOk = false;
+        // PATCH /api/v1/branches/{id}/status
+        const QByteArray statusSuffix = "/status";
 
-        const long long branchId =
-            idText.toLongLong(&conversionOk);
-
-        if (!conversionOk || branchId <= 0)
+        if (method == "PATCH" &&
+            suffix.endsWith(statusSuffix))
         {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_BRANCH_ID",
-                    "Invalid branch ID"
-                )
-            };
+            const QByteArray idText =
+                suffix.left(
+                    suffix.size() - statusSuffix.size()
+                );
+
+            bool conversionOk = false;
+
+            const long long branchId =
+                idText.toLongLong(&conversionOk);
+
+            if (!conversionOk || branchId <= 0)
+            {
+                return {
+                    "400 Bad Request",
+                    ApiResponse::error(
+                        "INVALID_BRANCH_ID",
+                        "Invalid branch ID"
+                    )
+                };
+            }
+
+            return branchController.changeBranchStatus(
+                branchId,
+                body
+            );
         }
 
-        return branchController.getBranchById(branchId);
+        // GET or PUT /api/v1/branches/{id}
+        if (method == "GET" || method == "PUT")
+        {
+            const QByteArray idText = suffix;
+
+            // Reject nested paths such as /branches/1/status
+            if (idText.contains('/'))
+            {
+                return {
+                    "404 Not Found",
+                    ApiResponse::error(
+                        "ROUTE_NOT_FOUND",
+                        "Not Found"
+                    )
+                };
+            }
+
+            bool conversionOk = false;
+
+            const long long branchId =
+                idText.toLongLong(&conversionOk);
+
+            if (!conversionOk || branchId <= 0)
+            {
+                return {
+                    "400 Bad Request",
+                    ApiResponse::error(
+                        "INVALID_BRANCH_ID",
+                        "Invalid branch ID"
+                    )
+                };
+            }
+
+            if (method == "GET")
+            {
+                return branchController.getBranchById(
+                    branchId
+                );
+            }
+
+            return branchController.updateBranch(
+                branchId,
+                body
+            );
+        }
     }
 
     // Route not found

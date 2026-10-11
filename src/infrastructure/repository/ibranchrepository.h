@@ -2,6 +2,8 @@
 #define IBRANCHREPOSITORY_H
 
 #include "../../domain/branch.h"
+
+#include <QString>
 #include <QVector>
 
 class IBranchRepository
@@ -28,6 +30,22 @@ public:
         DatabaseError
     };
 
+    enum class UpdateResult
+    {
+        Success,
+        NotFound,
+        BranchCodeConflict,
+        CityNotFound,
+        DatabaseError
+    };
+
+    enum class StatusResult
+    {
+        Success,
+        NotFound,
+        DatabaseError
+    };
+
     virtual ~IBranchRepository() = default;
 
     virtual SaveResult save(Branch& branch) = 0;
@@ -39,6 +57,16 @@ public:
 
     virtual ListResult findAll(
         QVector<Branch>& branches
+    ) = 0;
+
+    virtual UpdateResult update(
+        Branch& branch
+    ) = 0;
+
+    virtual StatusResult updateStatus(
+        long long id,
+        const QString& status,
+        Branch& branch
     ) = 0;
 };
 

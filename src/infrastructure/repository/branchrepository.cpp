@@ -155,3 +155,111 @@ BranchRepository::findAll(
 
     return ListResult::Success;
 }
+
+IBranchRepository::UpdateResult
+BranchRepository::update(Branch& branch)
+{
+    QSqlQuery query(db);
+
+    query.prepare(
+        "UPDATE branch "
+        "SET branch_code = :branch_code, "
+        "name = :name, "
+        "city_id = :city_id, "
+        "updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = :id "
+        "RETURNING id, RTRIM(branch_code) AS branch_code, "
+        "name, city_id, status"
+    );
+
+    query.bindValue(
+        ":branch_code",
+        branch.getBranchCode()
+    );
+    query.bindValue(":name", branch.getName());
+    query.bindValue(":city_id", branch.getCityId());
+    query.bindValue(":id", branch.getId());
+
+    if (!query.exec())
+    {
+        const QSqlError error = query.lastError();
+        const QString errorCode = error.nativeErrorCode();
+
+        qDebug()
+            << "BranchRepository::update failed:"
+            << error.text();
+
+        if (errorCode == "23505")
+        {
+            return UpdateResult::BranchCodeConflict;
+        }
+
+        if (errorCode == "23503")
+        {
+            return UpdateResult::CityNotFound;
+        }
+
+        return UpdateResult::DatabaseError;
+    }
+
+    if (!query.next())
+    {
+        return UpdateResult::NotFound;
+    }
+
+    branch = Branch(
+        query.value("id").toLongLong(),
+        query.value("branch_code").toString(),
+        query.value("name").toString(),
+        query.value("city_id").toLongLong(),
+        query.value("status").toString()
+    );
+
+    return UpdateResult::Success;
+}
+
+IBranchRepository::StatusResult
+BranchRepository::updateStatus(
+    long long id,
+    const QString& status,
+    Branch& branch
+)
+{
+    QSqlQuery query(db);
+
+    query.prepare(
+        "UPDATE branch "
+        "SET status = :status, "
+        "updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = :id "
+        "RETURNING id, RTRIM(branch_code) AS branch_code, "
+        "name, city_id, status"
+    );
+
+    query.bindValue(":status", status);
+    query.bindValue(":id", id);
+
+    if (!query.exec())
+    {
+        qDebug()
+            << "BranchRepository::updateStatus failed:"
+            << query.lastError().text();
+
+        return StatusResult::DatabaseError;
+    }
+
+    if (!query.next())
+    {
+        return StatusResult::NotFound;
+    }
+
+    branch = Branch(
+        query.value("id").toLongLong(),
+        query.value("branch_code").toString(),
+        query.value("name").toString(),
+        query.value("city_id").toLongLong(),
+        query.value("status").toString()
+    );
+
+    return StatusResult::Success;
+}

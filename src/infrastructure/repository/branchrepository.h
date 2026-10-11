@@ -2,6 +2,7 @@
 #define BRANCHREPOSITORY_H
 
 #include "ibranchrepository.h"
+
 #include <QSqlDatabase>
 
 class BranchRepository : public IBranchRepository
@@ -20,6 +21,16 @@ public:
 
     ListResult findAll(
         QVector<Branch>& branches
+    ) override;
+
+    UpdateResult update(
+        Branch& branch
+    ) override;
+
+    StatusResult updateStatus(
+        long long id,
+        const QString& status,
+        Branch& branch
     ) override;
 
 private:

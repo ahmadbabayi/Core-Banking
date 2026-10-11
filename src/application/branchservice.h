@@ -3,6 +3,7 @@
 
 #include "../domain/branch.h"
 #include "../infrastructure/repository/ibranchrepository.h"
+
 #include <QVector>
 
 class BranchService
@@ -30,6 +31,24 @@ public:
         InternalError
     };
 
+    enum class UpdateResult
+    {
+        Success,
+        InvalidInput,
+        Conflict,
+        NotFound,
+        CityNotFound,
+        InternalError
+    };
+
+    enum class ChangeStatusResult
+    {
+        Success,
+        InvalidStatus,
+        NotFound,
+        InternalError
+    };
+
     explicit BranchService(
         IBranchRepository& branchRepository
     );
@@ -51,11 +70,29 @@ public:
         QVector<Branch>& branches
     );
 
+    UpdateResult updateBranch(
+        long long id,
+        const QString& branchCode,
+        const QString& name,
+        long long cityId,
+        Branch& updatedBranch
+    );
+
+    ChangeStatusResult changeBranchStatus(
+        long long id,
+        const QString& status,
+        Branch& updatedBranch
+    );
+
 private:
     bool isValidBranch(
         const QString& branchCode,
         const QString& name,
         long long cityId,
+        const QString& status
+    ) const;
+
+    bool isValidStatus(
         const QString& status
     ) const;
 
