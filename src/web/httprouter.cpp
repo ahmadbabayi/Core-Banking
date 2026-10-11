@@ -11,13 +11,15 @@ HttpRouter::HttpRouter(
     CurrencyController& currencyController,
     CountryController& countryController,
     ProvinceController& provinceController,
-    CityController& cityController
+    CityController& cityController,
+    BranchController& branchController
 )
     : customerController(customerController),
       currencyController(currencyController),
       countryController(countryController),
       provinceController(provinceController),
-      cityController(cityController)
+      cityController(cityController),
+      branchController(branchController)
 {
 }
 
@@ -290,6 +292,49 @@ HttpResponse HttpRouter::route(
         }
 
         return cityController.getCityById(cityId);
+    }
+
+    // POST /api/v1/branches
+    if (method == "POST" &&
+        path == "/api/v1/branches")
+    {
+        return branchController.createBranch(body);
+    }
+
+    // GET /api/v1/branches
+    if (method == "GET" &&
+        path == "/api/v1/branches")
+    {
+        return branchController.getAllBranches();
+    }
+
+    // GET /api/v1/branches/{id}
+    const QByteArray branchPrefix =
+        "/api/v1/branches/";
+
+    if (method == "GET" &&
+        path.startsWith(branchPrefix))
+    {
+        const QByteArray idText =
+            path.mid(branchPrefix.size());
+
+        bool conversionOk = false;
+
+        const long long branchId =
+            idText.toLongLong(&conversionOk);
+
+        if (!conversionOk || branchId <= 0)
+        {
+            return {
+                "400 Bad Request",
+                ApiResponse::error(
+                    "INVALID_BRANCH_ID",
+                    "Invalid branch ID"
+                )
+            };
+        }
+
+        return branchController.getBranchById(branchId);
     }
 
     // Route not found

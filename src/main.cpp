@@ -10,18 +10,21 @@
 #include "infrastructure/repository/countryrepository.h"
 #include "infrastructure/repository/provincerepository.h"
 #include "infrastructure/repository/cityrepository.h"
+#include "infrastructure/repository/branchrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
 #include "application/countryservice.h"
 #include "application/provinceservice.h"
 #include "application/cityservice.h"
+#include "application/branchservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
 #include "web/countrycontroller.h"
 #include "web/provincecontroller.h"
 #include "web/citycontroller.h"
+#include "web/branchcontroller.h"
 
 #include "web/httprouter.h"
 #include "web/httpserver.h"
@@ -99,13 +102,25 @@ int main(int argc, char *argv[])
         cityService
     );
 
+    // Branch
+    BranchRepository branchRepository(db);
+
+    BranchService branchService(
+        branchRepository
+    );
+
+    BranchController branchController(
+        branchService
+    );
+
     // HTTP Router
     HttpRouter router(
         customerController,
         currencyController,
         countryController,
         provinceController,
-        cityController
+        cityController,
+        branchController
     );
 
     // HTTP Server
@@ -136,12 +151,12 @@ int main(int argc, char *argv[])
         << "http://localhost:8080/api/v1/health";
 
     qDebug()
-        << "Customer endpoint:"
-        << "POST http://localhost:8080/api/v1/customers";
+        << "Customer endpoints:"
+        << "POST/GET http://localhost:8080/api/v1/customers";
 
     qDebug()
-        << "Currency endpoint:"
-        << "POST http://localhost:8080/api/v1/currencies";
+        << "Currency endpoints:"
+        << "GET/POST http://localhost:8080/api/v1/currencies";
 
     qDebug()
         << "Country endpoints:"
@@ -154,6 +169,10 @@ int main(int argc, char *argv[])
     qDebug()
         << "City endpoints:"
         << "GET/POST http://localhost:8080/api/v1/cities";
+
+    qDebug()
+        << "Branch endpoints:"
+        << "GET/POST http://localhost:8080/api/v1/branches";
 
     return app.exec();
 }

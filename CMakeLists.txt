@@ -18,6 +18,8 @@ add_executable(CoreBanking
     src/application/accountservice.cpp
     src/application/accountnumbergenerator.h
     src/application/accountnumbergenerator.cpp
+    src/application/branchservice.h
+    src/application/branchservice.cpp
     src/application/cityservice.h
     src/application/cityservice.cpp
     src/application/customerservice.h
@@ -37,6 +39,8 @@ add_executable(CoreBanking
     src/domain/account.h
     src/domain/accountbalance.h
     src/domain/accountbalance.cpp
+    src/domain/branch.h
+    src/domain/branch.cpp
     src/domain/city.h
     src/domain/city.cpp
     src/domain/customer.cpp
@@ -65,6 +69,7 @@ add_executable(CoreBanking
 
     src/infrastructure/repository/iaccountbalancerepository.h
     src/infrastructure/repository/iaccountrepository.h
+    src/infrastructure/repository/ibranchrepository.h
     src/infrastructure/repository/icityrepository.h
     src/infrastructure/repository/icustomerrepository.h
     src/infrastructure/repository/icurrencyrepository.h
@@ -76,6 +81,8 @@ add_executable(CoreBanking
     src/infrastructure/repository/ijournalentryrepository.h
     src/infrastructure/repository/iprovincerepository.h
 
+    src/infrastructure/repository/branchrepository.h
+    src/infrastructure/repository/branchrepository.cpp
     src/infrastructure/repository/cityrepository.h
     src/infrastructure/repository/cityrepository.cpp
     src/infrastructure/repository/customerrepository.h
@@ -107,6 +114,8 @@ add_executable(CoreBanking
     src/web/httprouter.h
     src/web/httprouter.cpp
     src/web/httpresponse.h
+    src/web/branchcontroller.h
+    src/web/branchcontroller.cpp
     src/web/citycontroller.h
     src/web/citycontroller.cpp
     src/web/customercontroller.h
