@@ -7,6 +7,32 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QRegularExpression>
+
+namespace
+{
+bool isValidBranchCode(const QString& branchCode)
+{
+    static const QRegularExpression pattern(
+        QStringLiteral("^[0-9]{7}$")
+    );
+
+    return pattern.match(branchCode).hasMatch();
+}
+
+bool isValidCityId(double cityIdNumber)
+{
+    // JSON numbers are represented as doubles.
+    // Restrict the value to the exact integer range of IEEE-754.
+    constexpr double maxSafeInteger = 9007199254740991.0;
+
+    return cityIdNumber > 0 &&
+           cityIdNumber <= maxSafeInteger &&
+           cityIdNumber == static_cast<double>(
+               static_cast<qint64>(cityIdNumber)
+           );
+}
+}
 
 QJsonObject BranchController::branchToJson(
     const Branch& branch
@@ -102,12 +128,7 @@ HttpResponse BranchController::createBranch(
 
     const double cityIdNumber = cityIdValue.toDouble();
 
-    if (cityIdNumber <= 0 ||
-        cityIdNumber > 9007199254740991.0 ||
-        cityIdNumber !=
-            static_cast<double>(
-                static_cast<qint64>(cityIdNumber)
-            ))
+    if (!isValidCityId(cityIdNumber))
     {
         return {
             "400 Bad Request",
@@ -140,7 +161,7 @@ HttpResponse BranchController::createBranch(
         };
     }
 
-    if (branchCode.size() != 7 ||
+    if (!isValidBranchCode(branchCode) ||
         name.size() > 150)
     {
         return {
@@ -278,12 +299,7 @@ HttpResponse BranchController::updateBranch(
 
     const double cityIdNumber = cityIdValue.toDouble();
 
-    if (cityIdNumber <= 0 ||
-        cityIdNumber > 9007199254740991.0 ||
-        cityIdNumber !=
-            static_cast<double>(
-                static_cast<qint64>(cityIdNumber)
-            ))
+    if (!isValidCityId(cityIdNumber))
     {
         return {
             "400 Bad Request",
@@ -311,7 +327,7 @@ HttpResponse BranchController::updateBranch(
         };
     }
 
-    if (branchCode.size() != 7 ||
+    if (!isValidBranchCode(branchCode) ||
         name.size() > 150)
     {
         return {
@@ -446,7 +462,8 @@ HttpResponse BranchController::changeBranchStatus(
         };
     }
 
-    const QString status = statusValue.toString().trimmed();
+    const QString status =
+        statusValue.toString().trimmed();
 
     if (status != "ACTIVE" &&
         status != "INACTIVE" &&
