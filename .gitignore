@@ -4,3 +4,6 @@ build/
 *.o
 *.so
 *.a
+
+# Database backup files
+/database/backups/*.dump
