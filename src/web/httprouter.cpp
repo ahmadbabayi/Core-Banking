@@ -1,412 +1,199 @@
 #include "httprouter.h"
-
 #include "apiresponse.h"
 
 #include <QDebug>
 #include <QJsonObject>
 #include <QUrlQuery>
 
-HttpRouter::HttpRouter(
-    CustomerController& customerController,
-    CurrencyController& currencyController,
-    CountryController& countryController,
-    ProvinceController& provinceController,
-    CityController& cityController,
-    BranchController& branchController
-)
+HttpRouter::HttpRouter(CustomerController& customerController,
+                       CurrencyController& currencyController,
+                       CountryController& countryController,
+                       ProvinceController& provinceController,
+                       CityController& cityController,
+                       BranchController& branchController,
+                       AccountTypeController& accountTypeController)
     : customerController(customerController),
       currencyController(currencyController),
       countryController(countryController),
       provinceController(provinceController),
       cityController(cityController),
-      branchController(branchController)
+      branchController(branchController),
+      accountTypeController(accountTypeController)
 {
 }
 
-HttpResponse HttpRouter::route(
-    const QByteArray& method,
-    const QByteArray& path,
-    const QByteArray& query,
-    const QByteArray& body
-)
+HttpResponse HttpRouter::route(const QByteArray& method,
+                               const QByteArray& path,
+                               const QByteArray& query,
+                               const QByteArray& body)
 {
-    qDebug()
-        << "HttpRouter::route:"
-        << "method =" << method
-        << "path =" << path
-        << "query =" << query;
+    qDebug() << "HttpRouter::route:" << "method =" << method
+             << "path =" << path << "query =" << query;
 
-    // GET /api/v1/health
-    if (method == "GET" &&
-        path == "/api/v1/health")
-    {
+    if (method == "GET" && path == "/api/v1/health") {
         QJsonObject data;
         data["status"] = "UP";
-
-        return {
-            "200 OK",
-            ApiResponse::success(data)
-        };
+        return {"200 OK", ApiResponse::success(data)};
     }
 
-    // POST /api/v1/customers
-    if (method == "POST" &&
-        path == "/api/v1/customers")
-    {
+    if (method == "POST" && path == "/api/v1/customers")
         return customerController.createCustomer(body);
-    }
 
-    // GET /api/v1/customers?nationalId=...
-    if (method == "GET" &&
-        path == "/api/v1/customers")
-    {
-        const QUrlQuery urlQuery(
-            QString::fromUtf8(query)
-        );
-
-        const QString nationalId =
-            urlQuery.queryItemValue("nationalId");
-
-        if (nationalId.isEmpty())
-        {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "MISSING_NATIONAL_ID",
-                    "Missing nationalId query parameter"
-                )
-            };
+    if (method == "GET" && path == "/api/v1/customers") {
+        const QUrlQuery urlQuery(QString::fromUtf8(query));
+        const QString nationalId = urlQuery.queryItemValue("nationalId");
+        if (nationalId.isEmpty()) {
+            return {"400 Bad Request",
+                    ApiResponse::error("MISSING_NATIONAL_ID",
+                                       "Missing nationalId query parameter")};
         }
-
-        return customerController.getCustomerByNationalId(
-            nationalId
-        );
+        return customerController.getCustomerByNationalId(nationalId);
     }
 
-    // GET /api/v1/customers/{id}
-    const QByteArray customerPrefix =
-        "/api/v1/customers/";
-
-    if (method == "GET" &&
-        path.startsWith(customerPrefix))
-    {
-        const QByteArray idText =
-            path.mid(customerPrefix.size());
-
-        bool conversionOk = false;
-
-        const long long customerId =
-            idText.toLongLong(&conversionOk);
-
-        if (!conversionOk ||
-            customerId <= 0 ||
-            customerId > 2147483647LL)
-        {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_CUSTOMER_ID",
-                    "Invalid customer ID"
-                )
-            };
+    const QByteArray customerPrefix = "/api/v1/customers/";
+    if (method == "GET" && path.startsWith(customerPrefix)) {
+        const QByteArray idText = path.mid(customerPrefix.size());
+        bool ok = false;
+        const long long id = idText.toLongLong(&ok);
+        if (!ok || id <= 0 || id > 2147483647LL) {
+            return {"400 Bad Request",
+                    ApiResponse::error("INVALID_CUSTOMER_ID", "Invalid customer ID")};
         }
-
-        return customerController.getCustomerById(
-            static_cast<int>(customerId)
-        );
+        return customerController.getCustomerById(static_cast<int>(id));
     }
 
-    // POST /api/v1/currencies
-    if (method == "POST" &&
-        path == "/api/v1/currencies")
-    {
+    if (method == "POST" && path == "/api/v1/currencies")
         return currencyController.createCurrency(body);
-    }
-
-    // GET /api/v1/currencies
-    if (method == "GET" &&
-        path == "/api/v1/currencies")
-    {
+    if (method == "GET" && path == "/api/v1/currencies")
         return currencyController.getAllCurrencies();
+
+    const QByteArray currencyPrefix = "/api/v1/currencies/";
+    if (method == "GET" && path.startsWith(currencyPrefix)) {
+        bool ok = false;
+        const long long id = path.mid(currencyPrefix.size()).toLongLong(&ok);
+        if (!ok || id <= 0)
+            return {"400 Bad Request", ApiResponse::error("INVALID_CURRENCY_ID", "Invalid currency ID")};
+        return currencyController.getCurrencyById(id);
     }
 
-    // GET /api/v1/currencies/{id}
-    const QByteArray currencyPrefix =
-        "/api/v1/currencies/";
+    if (method == "POST" && path == "/api/v1/account-types")
+        return accountTypeController.createAccountType(body);
 
-    if (method == "GET" &&
-        path.startsWith(currencyPrefix))
-    {
-        const QByteArray idText =
-            path.mid(currencyPrefix.size());
-
-        bool conversionOk = false;
-
-        const long long currencyId =
-            idText.toLongLong(&conversionOk);
-
-        if (!conversionOk || currencyId <= 0)
-        {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_CURRENCY_ID",
-                    "Invalid currency ID"
-                )
-            };
+    if (method == "GET" && path == "/api/v1/account-types") {
+        const QUrlQuery urlQuery(QString::fromUtf8(query));
+        const QString status = urlQuery.queryItemValue("status").trimmed();
+        const QString currencyIdText = urlQuery.queryItemValue("currencyId");
+        long long currencyId = 0;
+        if (!currencyIdText.isEmpty()) {
+            bool ok = false;
+            currencyId = currencyIdText.toLongLong(&ok);
+            if (!ok || currencyId <= 0) {
+                return {"400 Bad Request",
+                        ApiResponse::error("ACCOUNTTYPE_INVALID_CURRENCY_ID",
+                                           "currencyId must be a positive integer")};
+            }
         }
-
-        return currencyController.getCurrencyById(
-            currencyId
-        );
+        return accountTypeController.getAllAccountTypes(status, currencyId);
     }
 
-    // POST /api/v1/countries
-    if (method == "POST" &&
-        path == "/api/v1/countries")
-    {
-        return countryController.createCountry(body);
-    }
-
-    // GET /api/v1/countries
-    if (method == "GET" &&
-        path == "/api/v1/countries")
-    {
-        return countryController.getAllCountries();
-    }
-
-    // GET /api/v1/countries/{id}
-    const QByteArray countryPrefix =
-        "/api/v1/countries/";
-
-    if (method == "GET" &&
-        path.startsWith(countryPrefix))
-    {
-        const QByteArray idText =
-            path.mid(countryPrefix.size());
-
-        bool conversionOk = false;
-
-        const long long countryId =
-            idText.toLongLong(&conversionOk);
-
-        if (!conversionOk || countryId <= 0)
-        {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_COUNTRY_ID",
-                    "Invalid country ID"
-                )
-            };
-        }
-
-        return countryController.getCountryById(
-            countryId
-        );
-    }
-
-    // POST /api/v1/provinces
-    if (method == "POST" &&
-        path == "/api/v1/provinces")
-    {
-        return provinceController.createProvince(body);
-    }
-
-    // GET /api/v1/provinces
-    if (method == "GET" &&
-        path == "/api/v1/provinces")
-    {
-        return provinceController.getAllProvinces();
-    }
-
-    // GET /api/v1/provinces/{id}
-    const QByteArray provincePrefix =
-        "/api/v1/provinces/";
-
-    if (method == "GET" &&
-        path.startsWith(provincePrefix))
-    {
-        const QByteArray idText =
-            path.mid(provincePrefix.size());
-
-        bool conversionOk = false;
-
-        const long long provinceId =
-            idText.toLongLong(&conversionOk);
-
-        if (!conversionOk || provinceId <= 0)
-        {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_PROVINCE_ID",
-                    "Invalid province ID"
-                )
-            };
-        }
-
-        return provinceController.getProvinceById(
-            provinceId
-        );
-    }
-
-    // POST /api/v1/cities
-    if (method == "POST" &&
-        path == "/api/v1/cities")
-    {
-        return cityController.createCity(body);
-    }
-
-    // GET /api/v1/cities
-    if (method == "GET" &&
-        path == "/api/v1/cities")
-    {
-        return cityController.getAllCities();
-    }
-
-    // GET /api/v1/cities/{id}
-    const QByteArray cityPrefix =
-        "/api/v1/cities/";
-
-    if (method == "GET" &&
-        path.startsWith(cityPrefix))
-    {
-        const QByteArray idText =
-            path.mid(cityPrefix.size());
-
-        bool conversionOk = false;
-
-        const long long cityId =
-            idText.toLongLong(&conversionOk);
-
-        if (!conversionOk || cityId <= 0)
-        {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_CITY_ID",
-                    "Invalid city ID"
-                )
-            };
-        }
-
-        return cityController.getCityById(cityId);
-    }
-
-    // POST /api/v1/branches
-    if (method == "POST" &&
-        path == "/api/v1/branches")
-    {
-        return branchController.createBranch(body);
-    }
-
-    // GET /api/v1/branches
-    if (method == "GET" &&
-        path == "/api/v1/branches")
-    {
-        return branchController.getAllBranches();
-    }
-
-    // Branch-specific routes:
-    // GET    /api/v1/branches/{id}
-    // PUT    /api/v1/branches/{id}
-    // PATCH  /api/v1/branches/{id}/status
-
-    const QByteArray branchPrefix =
-        "/api/v1/branches/";
-
-    if (path.startsWith(branchPrefix))
-    {
-        const QByteArray suffix =
-            path.mid(branchPrefix.size());
-
-        // PATCH /api/v1/branches/{id}/status
+    const QByteArray accountTypePrefix = "/api/v1/account-types/";
+    if (path.startsWith(accountTypePrefix)) {
+        const QByteArray suffix = path.mid(accountTypePrefix.size());
         const QByteArray statusSuffix = "/status";
 
-        if (method == "PATCH" &&
-            suffix.endsWith(statusSuffix))
-        {
-            const QByteArray idText =
-                suffix.left(
-                    suffix.size() - statusSuffix.size()
-                );
-
-            bool conversionOk = false;
-
-            const long long branchId =
-                idText.toLongLong(&conversionOk);
-
-            if (!conversionOk || branchId <= 0)
-            {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_BRANCH_ID",
-                        "Invalid branch ID"
-                    )
-                };
+        if (method == "PATCH" && suffix.endsWith(statusSuffix)) {
+            const QByteArray idText = suffix.left(suffix.size() - statusSuffix.size());
+            bool ok = false;
+            const long long id = idText.toLongLong(&ok);
+            if (!ok || id <= 0) {
+                return {"400 Bad Request",
+                        ApiResponse::error("INVALID_ACCOUNTTYPE_ID", "Invalid account type ID")};
             }
-
-            return branchController.changeBranchStatus(
-                branchId,
-                body
-            );
+            return accountTypeController.changeAccountTypeStatus(id, body);
         }
 
-        // GET or PUT /api/v1/branches/{id}
-        if (method == "GET" || method == "PUT")
-        {
-            const QByteArray idText = suffix;
-
-            // Reject nested paths such as /branches/1/status
-            if (idText.contains('/'))
-            {
-                return {
-                    "404 Not Found",
-                    ApiResponse::error(
-                        "ROUTE_NOT_FOUND",
-                        "Not Found"
-                    )
-                };
+        if (method == "GET" && !suffix.contains('/')) {
+            bool ok = false;
+            const long long id = suffix.toLongLong(&ok);
+            if (!ok || id <= 0) {
+                return {"400 Bad Request",
+                        ApiResponse::error("INVALID_ACCOUNTTYPE_ID", "Invalid account type ID")};
             }
-
-            bool conversionOk = false;
-
-            const long long branchId =
-                idText.toLongLong(&conversionOk);
-
-            if (!conversionOk || branchId <= 0)
-            {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_BRANCH_ID",
-                        "Invalid branch ID"
-                    )
-                };
-            }
-
-            if (method == "GET")
-            {
-                return branchController.getBranchById(
-                    branchId
-                );
-            }
-
-            return branchController.updateBranch(
-                branchId,
-                body
-            );
+            return accountTypeController.getAccountTypeById(id);
         }
     }
 
-    // Route not found
-    return {
-        "404 Not Found",
-        ApiResponse::error(
-            "ROUTE_NOT_FOUND",
-            "Not Found"
-        )
-    };
+    if (method == "POST" && path == "/api/v1/countries")
+        return countryController.createCountry(body);
+    if (method == "GET" && path == "/api/v1/countries")
+        return countryController.getAllCountries();
+
+    const QByteArray countryPrefix = "/api/v1/countries/";
+    if (method == "GET" && path.startsWith(countryPrefix)) {
+        bool ok = false;
+        const long long id = path.mid(countryPrefix.size()).toLongLong(&ok);
+        if (!ok || id <= 0)
+            return {"400 Bad Request", ApiResponse::error("INVALID_COUNTRY_ID", "Invalid country ID")};
+        return countryController.getCountryById(id);
+    }
+
+    if (method == "POST" && path == "/api/v1/provinces")
+        return provinceController.createProvince(body);
+    if (method == "GET" && path == "/api/v1/provinces")
+        return provinceController.getAllProvinces();
+
+    const QByteArray provincePrefix = "/api/v1/provinces/";
+    if (method == "GET" && path.startsWith(provincePrefix)) {
+        bool ok = false;
+        const long long id = path.mid(provincePrefix.size()).toLongLong(&ok);
+        if (!ok || id <= 0)
+            return {"400 Bad Request", ApiResponse::error("INVALID_PROVINCE_ID", "Invalid province ID")};
+        return provinceController.getProvinceById(id);
+    }
+
+    if (method == "POST" && path == "/api/v1/cities")
+        return cityController.createCity(body);
+    if (method == "GET" && path == "/api/v1/cities")
+        return cityController.getAllCities();
+
+    const QByteArray cityPrefix = "/api/v1/cities/";
+    if (method == "GET" && path.startsWith(cityPrefix)) {
+        bool ok = false;
+        const long long id = path.mid(cityPrefix.size()).toLongLong(&ok);
+        if (!ok || id <= 0)
+            return {"400 Bad Request", ApiResponse::error("INVALID_CITY_ID", "Invalid city ID")};
+        return cityController.getCityById(id);
+    }
+
+    if (method == "POST" && path == "/api/v1/branches")
+        return branchController.createBranch(body);
+    if (method == "GET" && path == "/api/v1/branches")
+        return branchController.getAllBranches();
+
+    const QByteArray branchPrefix = "/api/v1/branches/";
+    if (path.startsWith(branchPrefix)) {
+        const QByteArray suffix = path.mid(branchPrefix.size());
+        const QByteArray statusSuffix = "/status";
+
+        if (method == "PATCH" && suffix.endsWith(statusSuffix)) {
+            const QByteArray idText = suffix.left(suffix.size() - statusSuffix.size());
+            bool ok = false;
+            const long long id = idText.toLongLong(&ok);
+            if (!ok || id <= 0)
+                return {"400 Bad Request", ApiResponse::error("INVALID_BRANCH_ID", "Invalid branch ID")};
+            return branchController.changeBranchStatus(id, body);
+        }
+
+        if ((method == "GET" || method == "PUT") && !suffix.contains('/')) {
+            bool ok = false;
+            const long long id = suffix.toLongLong(&ok);
+            if (!ok || id <= 0)
+                return {"400 Bad Request", ApiResponse::error("INVALID_BRANCH_ID", "Invalid branch ID")};
+            if (method == "GET")
+                return branchController.getBranchById(id);
+            return branchController.updateBranch(id, body);
+        }
+    }
+
+    return {"404 Not Found", ApiResponse::error("ROUTE_NOT_FOUND", "Not Found")};
 }

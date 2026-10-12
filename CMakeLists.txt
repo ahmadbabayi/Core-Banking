@@ -11,7 +11,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt5 REQUIRED COMPONENTS Core Sql Network)
 
 add_executable(CoreBanking
-
     src/main.cpp
 
     src/application/accountservice.h
@@ -34,6 +33,8 @@ add_executable(CoreBanking
     src/application/transferservice.cpp
     src/application/provinceservice.h
     src/application/provinceservice.cpp
+    src/application/accounttypeservice.h
+    src/application/accounttypeservice.cpp
 
     src/domain/account.cpp
     src/domain/account.h
@@ -61,12 +62,13 @@ add_executable(CoreBanking
     src/domain/journalentry.cpp
     src/domain/province.h
     src/domain/province.cpp
+    src/domain/accounttype.h
+    src/domain/accounttype.cpp
 
     src/infrastructure/repository/accountbalancerepository.h
     src/infrastructure/repository/accountbalancerepository.cpp
     src/infrastructure/repository/accountrepository.h
     src/infrastructure/repository/accountrepository.cpp
-
     src/infrastructure/repository/iaccountbalancerepository.h
     src/infrastructure/repository/iaccountrepository.h
     src/infrastructure/repository/ibranchrepository.h
@@ -80,6 +82,7 @@ add_executable(CoreBanking
     src/infrastructure/repository/ijournalrepository.h
     src/infrastructure/repository/ijournalentryrepository.h
     src/infrastructure/repository/iprovincerepository.h
+    src/infrastructure/repository/iaccounttyperepository.h
 
     src/infrastructure/repository/branchrepository.h
     src/infrastructure/repository/branchrepository.cpp
@@ -87,10 +90,8 @@ add_executable(CoreBanking
     src/infrastructure/repository/cityrepository.cpp
     src/infrastructure/repository/customerrepository.h
     src/infrastructure/repository/customerrepository.cpp
-
     src/infrastructure/repository/currencyrepository.h
     src/infrastructure/repository/currencyrepository.cpp
-
     src/infrastructure/repository/countryrepository.h
     src/infrastructure/repository/countryrepository.cpp
     src/infrastructure/repository/transactionrepository.h
@@ -105,6 +106,8 @@ add_executable(CoreBanking
     src/infrastructure/repository/journalentryrepository.cpp
     src/infrastructure/repository/provincerepository.h
     src/infrastructure/repository/provincerepository.cpp
+    src/infrastructure/repository/accounttyperepository.h
+    src/infrastructure/repository/accounttyperepository.cpp
 
     src/infrastructure/database.h
     src/infrastructure/database.cpp
@@ -128,6 +131,8 @@ add_executable(CoreBanking
     src/web/apiresponse.cpp
     src/web/provincecontroller.h
     src/web/provincecontroller.cpp
+    src/web/accounttypecontroller.h
+    src/web/accounttypecontroller.cpp
 )
 
 target_link_libraries(CoreBanking
