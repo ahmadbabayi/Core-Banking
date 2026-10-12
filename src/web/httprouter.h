@@ -8,6 +8,7 @@
 #include "citycontroller.h"
 #include "branchcontroller.h"
 #include "accounttypecontroller.h"
+#include "productcontroller.h"
 
 class HttpRouter
 {
@@ -18,7 +19,8 @@ public:
                ProvinceController& provinceController,
                CityController& cityController,
                BranchController& branchController,
-               AccountTypeController& accountTypeController);
+               AccountTypeController& accountTypeController,
+               ProductController& productController);
 
     HttpResponse route(const QByteArray& method,
                        const QByteArray& path,
@@ -33,6 +35,7 @@ private:
     CityController& cityController;
     BranchController& branchController;
     AccountTypeController& accountTypeController;
+    ProductController& productController;
 };
 
 #endif // HTTPROUTER_H

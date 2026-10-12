@@ -35,6 +35,8 @@ add_executable(CoreBanking
     src/application/provinceservice.cpp
     src/application/accounttypeservice.h
     src/application/accounttypeservice.cpp
+    src/application/productservice.h
+    src/application/productservice.cpp
 
     src/domain/account.cpp
     src/domain/account.h
@@ -64,6 +66,8 @@ add_executable(CoreBanking
     src/domain/province.cpp
     src/domain/accounttype.h
     src/domain/accounttype.cpp
+    src/domain/product.h
+    src/domain/product.cpp
 
     src/infrastructure/repository/accountbalancerepository.h
     src/infrastructure/repository/accountbalancerepository.cpp
@@ -83,6 +87,7 @@ add_executable(CoreBanking
     src/infrastructure/repository/ijournalentryrepository.h
     src/infrastructure/repository/iprovincerepository.h
     src/infrastructure/repository/iaccounttyperepository.h
+    src/infrastructure/repository/iproductrepository.h
 
     src/infrastructure/repository/branchrepository.h
     src/infrastructure/repository/branchrepository.cpp
@@ -108,6 +113,8 @@ add_executable(CoreBanking
     src/infrastructure/repository/provincerepository.cpp
     src/infrastructure/repository/accounttyperepository.h
     src/infrastructure/repository/accounttyperepository.cpp
+    src/infrastructure/repository/productrepository.h
+    src/infrastructure/repository/productrepository.cpp
 
     src/infrastructure/database.h
     src/infrastructure/database.cpp
@@ -133,6 +140,8 @@ add_executable(CoreBanking
     src/web/provincecontroller.cpp
     src/web/accounttypecontroller.h
     src/web/accounttypecontroller.cpp
+    src/web/productcontroller.h
+    src/web/productcontroller.cpp
 )
 
 target_link_libraries(CoreBanking

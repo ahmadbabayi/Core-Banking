@@ -12,6 +12,7 @@
 #include "infrastructure/repository/cityrepository.h"
 #include "infrastructure/repository/branchrepository.h"
 #include "infrastructure/repository/accounttyperepository.h"
+#include "infrastructure/repository/productrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
@@ -20,6 +21,7 @@
 #include "application/cityservice.h"
 #include "application/branchservice.h"
 #include "application/accounttypeservice.h"
+#include "application/productservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
@@ -28,6 +30,7 @@
 #include "web/citycontroller.h"
 #include "web/branchcontroller.h"
 #include "web/accounttypecontroller.h"
+#include "web/productcontroller.h"
 #include "web/httprouter.h"
 #include "web/httpserver.h"
 
@@ -36,6 +39,7 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
 
     Database& database = Database::instance();
+
     if (!database.connect()) {
         qDebug() << "Application startup failed: database connection failed.";
         return 1;
@@ -43,46 +47,64 @@ int main(int argc, char *argv[])
 
     QSqlDatabase db = database.connection();
 
+    // Customer
     CustomerRepository customerRepository(db);
     CustomerService customerService(customerRepository, db);
     CustomerController customerController(customerService);
 
+    // Currency
     CurrencyRepository currencyRepository(db);
     CurrencyService currencyService(currencyRepository);
     CurrencyController currencyController(currencyService);
 
+    // Country
     CountryRepository countryRepository(db);
     CountryService countryService(countryRepository);
     CountryController countryController(countryService);
 
+    // Province
     ProvinceRepository provinceRepository(db);
     ProvinceService provinceService(provinceRepository);
     ProvinceController provinceController(provinceService);
 
+    // City
     CityRepository cityRepository(db);
     CityService cityService(cityRepository);
     CityController cityController(cityService);
 
+    // Branch
     BranchRepository branchRepository(db);
     BranchService branchService(branchRepository);
     BranchController branchController(branchService);
 
+    // Account type
     AccountTypeRepository accountTypeRepository(db);
     AccountTypeService accountTypeService(accountTypeRepository);
     AccountTypeController accountTypeController(accountTypeService);
 
+    // Product
+    ProductRepository productRepository(db);
+    ProductService productService(productRepository);
+    ProductController productController(productService);
+
+    // HTTP router
     HttpRouter router(customerController,
                       currencyController,
                       countryController,
                       provinceController,
                       cityController,
                       branchController,
-                      accountTypeController);
+                      accountTypeController,
+                      productController);
 
+    // HTTP server
     HttpServer server(router);
+
     const quint16 port = 8080;
+
     if (!server.listen(QHostAddress::Any, port)) {
-        qDebug() << "HTTP server failed to start:" << server.errorString();
+        qDebug() << "HTTP server failed to start:"
+                 << server.errorString();
         return 1;
     }
 
@@ -92,6 +114,7 @@ int main(int argc, char *argv[])
     qDebug() << "Customer endpoints: POST/GET http://localhost:8080/api/v1/customers";
     qDebug() << "Currency endpoints: GET/POST http://localhost:8080/api/v1/currencies";
     qDebug() << "Account type endpoints: GET/POST http://localhost:8080/api/v1/account-types";
+    qDebug() << "Product endpoints: GET/POST http://localhost:8080/api/v1/products";
     qDebug() << "Country endpoints: GET/POST http://localhost:8080/api/v1/countries";
     qDebug() << "Province endpoints: GET/POST http://localhost:8080/api/v1/provinces";
     qDebug() << "City endpoints: GET/POST http://localhost:8080/api/v1/cities";
