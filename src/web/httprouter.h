@@ -9,23 +9,27 @@
 #include "branchcontroller.h"
 #include "accounttypecontroller.h"
 #include "productcontroller.h"
+#include "productledgermappingcontroller.h"
 
 class HttpRouter
 {
 public:
-    HttpRouter(CustomerController& customerController,
-               CurrencyController& currencyController,
-               CountryController& countryController,
-               ProvinceController& provinceController,
-               CityController& cityController,
-               BranchController& branchController,
-               AccountTypeController& accountTypeController,
-               ProductController& productController);
+    HttpRouter(
+        CustomerController& customerController,
+        CurrencyController& currencyController,
+        CountryController& countryController,
+        ProvinceController& provinceController,
+        CityController& cityController,
+        BranchController& branchController,
+        AccountTypeController& accountTypeController,
+        ProductController& productController,
+        ProductLedgerMappingController& productLedgerMappingController);
 
-    HttpResponse route(const QByteArray& method,
-                       const QByteArray& path,
-                       const QByteArray& query,
-                       const QByteArray& body);
+    HttpResponse route(
+        const QByteArray& method,
+        const QByteArray& path,
+        const QByteArray& query,
+        const QByteArray& body);
 
 private:
     CustomerController& customerController;
@@ -36,6 +40,7 @@ private:
     BranchController& branchController;
     AccountTypeController& accountTypeController;
     ProductController& productController;
+    ProductLedgerMappingController& productLedgerMappingController;
 };
 
 #endif // HTTPROUTER_H

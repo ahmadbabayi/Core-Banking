@@ -13,6 +13,7 @@
 #include "infrastructure/repository/branchrepository.h"
 #include "infrastructure/repository/accounttyperepository.h"
 #include "infrastructure/repository/productrepository.h"
+#include "infrastructure/repository/productledgermappingrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
@@ -22,6 +23,7 @@
 #include "application/branchservice.h"
 #include "application/accounttypeservice.h"
 #include "application/productservice.h"
+#include "application/productledgermappingservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
@@ -31,6 +33,8 @@
 #include "web/branchcontroller.h"
 #include "web/accounttypecontroller.h"
 #include "web/productcontroller.h"
+#include "web/productledgermappingcontroller.h"
+
 #include "web/httprouter.h"
 #include "web/httpserver.h"
 
@@ -41,7 +45,8 @@ int main(int argc, char *argv[])
     Database& database = Database::instance();
 
     if (!database.connect()) {
-        qDebug() << "Application startup failed: database connection failed.";
+        qDebug()
+            << "Application startup failed: database connection failed.";
         return 1;
     }
 
@@ -87,15 +92,26 @@ int main(int argc, char *argv[])
     ProductService productService(productRepository);
     ProductController productController(productService);
 
+    // Product-ledger mapping
+    ProductLedgerMappingRepository productLedgerMappingRepository(db);
+
+    ProductLedgerMappingService productLedgerMappingService(
+        productLedgerMappingRepository);
+
+    ProductLedgerMappingController productLedgerMappingController(
+        productLedgerMappingService);
+
     // HTTP router
-    HttpRouter router(customerController,
-                      currencyController,
-                      countryController,
-                      provinceController,
-                      cityController,
-                      branchController,
-                      accountTypeController,
-                      productController);
+    HttpRouter router(
+        customerController,
+        currencyController,
+        countryController,
+        provinceController,
+        cityController,
+        branchController,
+        accountTypeController,
+        productController,
+        productLedgerMappingController);
 
     // HTTP server
     HttpServer server(router);
@@ -115,6 +131,7 @@ int main(int argc, char *argv[])
     qDebug() << "Currency endpoints: GET/POST http://localhost:8080/api/v1/currencies";
     qDebug() << "Account type endpoints: GET/POST http://localhost:8080/api/v1/account-types";
     qDebug() << "Product endpoints: GET/POST http://localhost:8080/api/v1/products";
+    qDebug() << "Product-ledger mapping endpoints: http://localhost:8080/api/v1/product-ledger-mappings";
     qDebug() << "Country endpoints: GET/POST http://localhost:8080/api/v1/countries";
     qDebug() << "Province endpoints: GET/POST http://localhost:8080/api/v1/provinces";
     qDebug() << "City endpoints: GET/POST http://localhost:8080/api/v1/cities";
