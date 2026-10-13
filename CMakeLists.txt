@@ -39,6 +39,8 @@ add_executable(CoreBanking
     src/application/productservice.cpp
     src/application/productledgermappingservice.h
     src/application/productledgermappingservice.cpp
+    src/application/ledgeraccountservice.h
+    src/application/ledgeraccountservice.cpp
 
     src/domain/account.cpp
     src/domain/account.h
@@ -71,6 +73,7 @@ add_executable(CoreBanking
     src/domain/product.h
     src/domain/product.cpp
     src/domain/productledgermapping.h
+    src/domain/ledgeraccount.h
 
     src/infrastructure/repository/accountbalancerepository.h
     src/infrastructure/repository/accountbalancerepository.cpp
@@ -92,6 +95,7 @@ add_executable(CoreBanking
     src/infrastructure/repository/iaccounttyperepository.h
     src/infrastructure/repository/iproductrepository.h
     src/infrastructure/repository/iproductledgermappingrepository.h
+    src/infrastructure/repository/iledgeraccountrepository.h
 
     src/infrastructure/repository/branchrepository.h
     src/infrastructure/repository/branchrepository.cpp
@@ -121,6 +125,9 @@ add_executable(CoreBanking
     src/infrastructure/repository/productrepository.cpp
     src/infrastructure/repository/productledgermappingrepository.h
     src/infrastructure/repository/productledgermappingrepository.cpp
+    src/infrastructure/repository/ledgeraccountrepository.h
+    src/infrastructure/repository/ledgeraccountrepository.cpp
+
 
     src/infrastructure/database.h
     src/infrastructure/database.cpp
@@ -150,6 +157,8 @@ add_executable(CoreBanking
     src/web/productcontroller.cpp
     src/web/productledgermappingcontroller.h
     src/web/productledgermappingcontroller.cpp
+    src/web/ledgeraccountcontroller.h
+    src/web/ledgeraccountcontroller.cpp
 )
 
 target_link_libraries(CoreBanking

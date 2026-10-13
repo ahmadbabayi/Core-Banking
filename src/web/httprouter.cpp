@@ -14,7 +14,8 @@ HttpRouter::HttpRouter(
     BranchController& branchController,
     AccountTypeController& accountTypeController,
     ProductController& productController,
-    ProductLedgerMappingController& productLedgerMappingController)
+    ProductLedgerMappingController& productLedgerMappingController,
+    LedgerAccountController& ledgerAccountController)
     : customerController(customerController),
       currencyController(currencyController),
       countryController(countryController),
@@ -23,7 +24,8 @@ HttpRouter::HttpRouter(
       branchController(branchController),
       accountTypeController(accountTypeController),
       productController(productController),
-      productLedgerMappingController(productLedgerMappingController)
+      productLedgerMappingController(productLedgerMappingController),
+      ledgerAccountController(ledgerAccountController)
 {
 }
 
@@ -55,6 +57,7 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path == "/api/v1/customers") {
         const QUrlQuery urlQuery(QString::fromUtf8(query));
+
         const QString nationalId =
             urlQuery.queryItemValue("nationalId");
 
@@ -106,6 +109,7 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path.startsWith(currencyPrefix)) {
         bool ok = false;
+
         const long long id =
             path.mid(currencyPrefix.size()).toLongLong(&ok);
 
@@ -429,6 +433,94 @@ HttpResponse HttpRouter::route(
         }
     }
 
+    // Ledger accounts
+    const QByteArray ledgerAccountPath =
+        "/api/v1/ledger-accounts";
+
+    if (method == "POST" && path == ledgerAccountPath) {
+        return ledgerAccountController.createLedgerAccount(body);
+    }
+
+    if (method == "GET" && path == ledgerAccountPath) {
+        const QUrlQuery urlQuery(QString::fromUtf8(query));
+
+        const QString status =
+            urlQuery.queryItemValue("status").trimmed();
+
+        const QString category =
+            urlQuery.queryItemValue("category").trimmed();
+
+        const QString currencyIdText =
+            urlQuery.queryItemValue("currencyId");
+
+        long long currencyId = 0;
+
+        if (!currencyIdText.isEmpty()) {
+            bool ok = false;
+            currencyId = currencyIdText.toLongLong(&ok);
+
+            if (!ok || currencyId <= 0) {
+                return {
+                    "400 Bad Request",
+                    ApiResponse::error(
+                        "LEDGER_ACCOUNT_INVALID_CURRENCY_ID",
+                        "currencyId must be a positive integer")
+                };
+            }
+        }
+
+        return ledgerAccountController.getAllLedgerAccounts(
+            status, category, currencyId);
+    }
+
+    const QByteArray ledgerAccountPrefix =
+        "/api/v1/ledger-accounts/";
+
+    if (path.startsWith(ledgerAccountPrefix)) {
+        const QByteArray suffix =
+            path.mid(ledgerAccountPrefix.size());
+
+        const QByteArray statusSuffix = "/status";
+
+        if (method == "PATCH" &&
+            suffix.endsWith(statusSuffix)) {
+            const QByteArray idText =
+                suffix.left(
+                    suffix.size() - statusSuffix.size());
+
+            bool ok = false;
+            const long long id = idText.toLongLong(&ok);
+
+            if (!ok || id <= 0) {
+                return {
+                    "400 Bad Request",
+                    ApiResponse::error(
+                        "LEDGER_ACCOUNT_INVALID_ID",
+                        "Invalid ledger account ID")
+                };
+            }
+
+            return ledgerAccountController
+                .changeLedgerAccountStatus(id, body);
+        }
+
+        if (method == "GET" && !suffix.contains('/')) {
+            bool ok = false;
+            const long long id = suffix.toLongLong(&ok);
+
+            if (!ok || id <= 0) {
+                return {
+                    "400 Bad Request",
+                    ApiResponse::error(
+                        "LEDGER_ACCOUNT_INVALID_ID",
+                        "Invalid ledger account ID")
+                };
+            }
+
+            return ledgerAccountController.getLedgerAccountById(id);
+        }
+    }
+
     // Countries
     if (method == "POST" && path == "/api/v1/countries") {
         return countryController.createCountry(body);
@@ -442,6 +534,7 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path.startsWith(countryPrefix)) {
         bool ok = false;
+
         const long long id =
             path.mid(countryPrefix.size()).toLongLong(&ok);
 
@@ -470,6 +563,7 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path.startsWith(provincePrefix)) {
         bool ok = false;
+
         const long long id =
             path.mid(provincePrefix.size()).toLongLong(&ok);
 
@@ -498,6 +592,7 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path.startsWith(cityPrefix)) {
         bool ok = false;
+
         const long long id =
             path.mid(cityPrefix.size()).toLongLong(&ok);
 

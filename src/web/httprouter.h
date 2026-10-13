@@ -10,6 +10,7 @@
 #include "accounttypecontroller.h"
 #include "productcontroller.h"
 #include "productledgermappingcontroller.h"
+#include "ledgeraccountcontroller.h"
 
 class HttpRouter
 {
@@ -23,7 +24,8 @@ public:
         BranchController& branchController,
         AccountTypeController& accountTypeController,
         ProductController& productController,
-        ProductLedgerMappingController& productLedgerMappingController);
+        ProductLedgerMappingController& productLedgerMappingController,
+        LedgerAccountController& ledgerAccountController);
 
     HttpResponse route(
         const QByteArray& method,
@@ -41,6 +43,7 @@ private:
     AccountTypeController& accountTypeController;
     ProductController& productController;
     ProductLedgerMappingController& productLedgerMappingController;
+    LedgerAccountController& ledgerAccountController;
 };
 
 #endif // HTTPROUTER_H

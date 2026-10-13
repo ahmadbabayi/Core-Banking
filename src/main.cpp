@@ -14,6 +14,7 @@
 #include "infrastructure/repository/accounttyperepository.h"
 #include "infrastructure/repository/productrepository.h"
 #include "infrastructure/repository/productledgermappingrepository.h"
+#include "infrastructure/repository/ledgeraccountrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
@@ -24,6 +25,7 @@
 #include "application/accounttypeservice.h"
 #include "application/productservice.h"
 #include "application/productledgermappingservice.h"
+#include "application/ledgeraccountservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
@@ -34,6 +36,7 @@
 #include "web/accounttypecontroller.h"
 #include "web/productcontroller.h"
 #include "web/productledgermappingcontroller.h"
+#include "web/ledgeraccountcontroller.h"
 
 #include "web/httprouter.h"
 #include "web/httpserver.h"
@@ -92,6 +95,13 @@ int main(int argc, char *argv[])
     ProductService productService(productRepository);
     ProductController productController(productService);
 
+    // Ledger account
+    LedgerAccountRepository ledgerAccountRepository(db);
+    LedgerAccountService ledgerAccountService(
+        ledgerAccountRepository);
+    LedgerAccountController ledgerAccountController(
+        ledgerAccountService);
+
     // Product-ledger mapping
     ProductLedgerMappingRepository productLedgerMappingRepository(db);
 
@@ -111,7 +121,8 @@ int main(int argc, char *argv[])
         branchController,
         accountTypeController,
         productController,
-        productLedgerMappingController);
+        productLedgerMappingController,
+        ledgerAccountController);
 
     // HTTP server
     HttpServer server(router);
@@ -126,16 +137,39 @@ int main(int argc, char *argv[])
 
     qDebug() << "CoreBanking HTTP server started.";
     qDebug() << "Listening on port:" << port;
-    qDebug() << "Health endpoint: http://localhost:8080/api/v1/health";
-    qDebug() << "Customer endpoints: POST/GET http://localhost:8080/api/v1/customers";
-    qDebug() << "Currency endpoints: GET/POST http://localhost:8080/api/v1/currencies";
-    qDebug() << "Account type endpoints: GET/POST http://localhost:8080/api/v1/account-types";
-    qDebug() << "Product endpoints: GET/POST http://localhost:8080/api/v1/products";
-    qDebug() << "Product-ledger mapping endpoints: http://localhost:8080/api/v1/product-ledger-mappings";
-    qDebug() << "Country endpoints: GET/POST http://localhost:8080/api/v1/countries";
-    qDebug() << "Province endpoints: GET/POST http://localhost:8080/api/v1/provinces";
-    qDebug() << "City endpoints: GET/POST http://localhost:8080/api/v1/cities";
-    qDebug() << "Branch endpoints: GET/POST http://localhost:8080/api/v1/branches";
+
+    qDebug() << "Health endpoint:"
+             << "http://localhost:8080/api/v1/health";
+
+    qDebug() << "Customer endpoints:"
+             << "http://localhost:8080/api/v1/customers";
+
+    qDebug() << "Currency endpoints:"
+             << "http://localhost:8080/api/v1/currencies";
+
+    qDebug() << "Account type endpoints:"
+             << "http://localhost:8080/api/v1/account-types";
+
+    qDebug() << "Product endpoints:"
+             << "http://localhost:8080/api/v1/products";
+
+    qDebug() << "Ledger account endpoints:"
+             << "http://localhost:8080/api/v1/ledger-accounts";
+
+    qDebug() << "Product-ledger mapping endpoints:"
+             << "http://localhost:8080/api/v1/product-ledger-mappings";
+
+    qDebug() << "Country endpoints:"
+             << "http://localhost:8080/api/v1/countries";
+
+    qDebug() << "Province endpoints:"
+             << "http://localhost:8080/api/v1/provinces";
+
+    qDebug() << "City endpoints:"
+             << "http://localhost:8080/api/v1/cities";
+
+    qDebug() << "Branch endpoints:"
+             << "http://localhost:8080/api/v1/branches";
 
     return app.exec();
 }
