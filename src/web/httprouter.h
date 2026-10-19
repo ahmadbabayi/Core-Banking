@@ -1,3 +1,4 @@
+
 #ifndef HTTPROUTER_H
 #define HTTPROUTER_H
 
@@ -11,6 +12,8 @@
 #include "productcontroller.h"
 #include "productledgermappingcontroller.h"
 #include "ledgeraccountcontroller.h"
+#include "accountcontroller.h"
+#include "accountopeningcontroller.h"
 
 class HttpRouter
 {
@@ -25,7 +28,9 @@ public:
         AccountTypeController& accountTypeController,
         ProductController& productController,
         ProductLedgerMappingController& productLedgerMappingController,
-        LedgerAccountController& ledgerAccountController);
+        LedgerAccountController& ledgerAccountController,
+        AccountController& accountController,
+        AccountOpeningController& accountOpeningController);
 
     HttpResponse route(
         const QByteArray& method,
@@ -44,6 +49,8 @@ private:
     ProductController& productController;
     ProductLedgerMappingController& productLedgerMappingController;
     LedgerAccountController& ledgerAccountController;
+    AccountController& accountController;
+    AccountOpeningController& accountOpeningController;
 };
 
 #endif // HTTPROUTER_H

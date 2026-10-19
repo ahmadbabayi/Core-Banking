@@ -1,3 +1,4 @@
+
 #include "httprouter.h"
 #include "apiresponse.h"
 
@@ -15,7 +16,9 @@ HttpRouter::HttpRouter(
     AccountTypeController& accountTypeController,
     ProductController& productController,
     ProductLedgerMappingController& productLedgerMappingController,
-    LedgerAccountController& ledgerAccountController)
+    LedgerAccountController& ledgerAccountController,
+    AccountController& accountController,
+    AccountOpeningController& accountOpeningController)
     : customerController(customerController),
       currencyController(currencyController),
       countryController(countryController),
@@ -25,7 +28,9 @@ HttpRouter::HttpRouter(
       accountTypeController(accountTypeController),
       productController(productController),
       productLedgerMappingController(productLedgerMappingController),
-      ledgerAccountController(ledgerAccountController)
+      ledgerAccountController(ledgerAccountController),
+      accountController(accountController),
+      accountOpeningController(accountOpeningController)
 {
 }
 
@@ -48,6 +53,59 @@ HttpResponse HttpRouter::route(
             "200 OK",
             ApiResponse::success(data)
         };
+    }
+
+    // Accounts
+    if (method == "POST" && path == "/api/v1/accounts") {
+        return accountOpeningController.openAccount(body);
+    }
+
+    const QByteArray accountPrefix = "/api/v1/accounts/";
+
+    if (path.startsWith(accountPrefix)) {
+        const QByteArray suffix =
+            path.mid(accountPrefix.size());
+
+        const QByteArray statusSuffix = "/status";
+
+        if (method == "PATCH" &&
+            suffix.endsWith(statusSuffix)) {
+            const QByteArray idText =
+                suffix.left(
+                    suffix.size() - statusSuffix.size());
+
+            bool ok = false;
+            const qint64 id = idText.toLongLong(&ok);
+
+            if (!ok || id <= 0) {
+                return {
+                    "400 Bad Request",
+                    ApiResponse::error(
+                        "INVALID_ACCOUNT_ID",
+                        "Invalid account ID")
+                };
+            }
+
+            return accountController.changeAccountStatus(
+                id,
+                body);
+        }
+
+        if (method == "GET" && !suffix.contains('/')) {
+            bool ok = false;
+            const qint64 id = suffix.toLongLong(&ok);
+
+            if (!ok || id <= 0) {
+                return {
+                    "400 Bad Request",
+                    ApiResponse::error(
+                        "INVALID_ACCOUNT_ID",
+                        "Invalid account ID")
+                };
+            }
+
+            return accountController.getAccountById(id);
+        }
     }
 
     // Customers

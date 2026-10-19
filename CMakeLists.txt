@@ -41,6 +41,8 @@ add_executable(CoreBanking
     src/application/productledgermappingservice.cpp
     src/application/ledgeraccountservice.h
     src/application/ledgeraccountservice.cpp
+    src/application/accountopeningservice.h
+    src/application/accountopeningservice.cpp
 
     src/domain/account.cpp
     src/domain/account.h
@@ -159,6 +161,10 @@ add_executable(CoreBanking
     src/web/productledgermappingcontroller.cpp
     src/web/ledgeraccountcontroller.h
     src/web/ledgeraccountcontroller.cpp
+    src/web/accountopeningcontroller.h
+    src/web/accountopeningcontroller.cpp
+    src/web/accountcontroller.h
+    src/web/accountcontroller.cpp
 )
 
 target_link_libraries(CoreBanking

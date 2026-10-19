@@ -1,3 +1,4 @@
+
 #include <QCoreApplication>
 #include <QHostAddress>
 #include <QDebug>
@@ -15,6 +16,7 @@
 #include "infrastructure/repository/productrepository.h"
 #include "infrastructure/repository/productledgermappingrepository.h"
 #include "infrastructure/repository/ledgeraccountrepository.h"
+#include "infrastructure/repository/accountrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
@@ -26,6 +28,8 @@
 #include "application/productservice.h"
 #include "application/productledgermappingservice.h"
 #include "application/ledgeraccountservice.h"
+#include "application/accountopeningservice.h"
+#include "application/accountservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
@@ -37,6 +41,8 @@
 #include "web/productcontroller.h"
 #include "web/productledgermappingcontroller.h"
 #include "web/ledgeraccountcontroller.h"
+#include "web/accountcontroller.h"
+#include "web/accountopeningcontroller.h"
 
 #include "web/httprouter.h"
 #include "web/httpserver.h"
@@ -99,6 +105,7 @@ int main(int argc, char *argv[])
     LedgerAccountRepository ledgerAccountRepository(db);
     LedgerAccountService ledgerAccountService(
         ledgerAccountRepository);
+
     LedgerAccountController ledgerAccountController(
         ledgerAccountService);
 
@@ -111,6 +118,23 @@ int main(int argc, char *argv[])
     ProductLedgerMappingController productLedgerMappingController(
         productLedgerMappingService);
 
+    // Account repository and lifecycle service
+    AccountRepository accountRepository(db);
+
+    AccountService accountService(
+        accountRepository,
+        db);
+
+    AccountController accountController(
+        accountService,
+        accountRepository);
+
+    // Account opening
+    AccountOpeningService accountOpeningService(db);
+
+    AccountOpeningController accountOpeningController(
+        accountOpeningService);
+
     // HTTP router
     HttpRouter router(
         customerController,
@@ -122,7 +146,9 @@ int main(int argc, char *argv[])
         accountTypeController,
         productController,
         productLedgerMappingController,
-        ledgerAccountController);
+        ledgerAccountController,
+        accountController,
+        accountOpeningController);
 
     // HTTP server
     HttpServer server(router);
@@ -158,6 +184,12 @@ int main(int argc, char *argv[])
 
     qDebug() << "Product-ledger mapping endpoints:"
              << "http://localhost:8080/api/v1/product-ledger-mappings";
+
+    qDebug() << "Account endpoints:"
+             << "http://localhost:8080/api/v1/accounts";
+
+    qDebug() << "Account opening endpoint:"
+             << "POST http://localhost:8080/api/v1/accounts";
 
     qDebug() << "Country endpoints:"
              << "http://localhost:8080/api/v1/countries";
