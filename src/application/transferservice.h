@@ -1,46 +1,41 @@
 #ifndef TRANSFERSERVICE_H
 #define TRANSFERSERVICE_H
 
-#include "../infrastructure/repository/iaccountrepository.h"
-#include "../infrastructure/repository/iaccountbalancerepository.h"
-#include "../infrastructure/repository/itransactionrepository.h"
-#include "../infrastructure/repository/itransactionentryrepository.h"
-#include "../infrastructure/repository/ijournalrepository.h"
-#include "../infrastructure/repository/ijournalentryrepository.h"
-
 #include <QSqlDatabase>
 #include <QString>
 #include <QtGlobal>
 
+struct TransferResult
+{
+    enum class Status {
+        Completed,
+        Rejected,
+        Failed
+    };
+
+    Status status = Status::Failed;
+    qint64 transactionId = 0;
+    QString transactionNumber;
+    QString code;
+    QString message;
+};
+
+// Implements internal transfers directly against the redesigned schema.
+// All financial writes are performed in one PostgreSQL transaction.
 class TransferService
 {
 public:
-    TransferService(
-        IAccountRepository& accountRepository,
-        IAccountBalanceRepository& accountBalanceRepository,
-        ITransactionRepository& transactionRepository,
-        ITransactionEntryRepository& transactionEntryRepository,
-        IJournalRepository& journalRepository,
-        IJournalEntryRepository& journalEntryRepository,
-        const QSqlDatabase& database
-    );
+    explicit TransferService(const QSqlDatabase& database);
 
-    bool transfer(
+    TransferResult transfer(
         qint64 sourceAccountId,
         qint64 destinationAccountId,
         const QString& amount,
-        const QString& description
-    );
+        const QString& description,
+        const QString& idempotencyKey);
 
 private:
-    IAccountRepository& accountRepository;
-    IAccountBalanceRepository& accountBalanceRepository;
-    ITransactionRepository& transactionRepository;
-    ITransactionEntryRepository& transactionEntryRepository;
-    IJournalRepository& journalRepository;
-    IJournalEntryRepository& journalEntryRepository;
-
-    QSqlDatabase db;
+    QSqlDatabase m_database;
 };
 
 #endif // TRANSFERSERVICE_H

@@ -1,4 +1,3 @@
-
 #ifndef HTTPROUTER_H
 #define HTTPROUTER_H
 
@@ -14,6 +13,8 @@
 #include "ledgeraccountcontroller.h"
 #include "accountcontroller.h"
 #include "accountopeningcontroller.h"
+#include "transfercontroller.h"
+#include "depositcontroller.h"
 
 class HttpRouter
 {
@@ -31,6 +32,9 @@ public:
         LedgerAccountController& ledgerAccountController,
         AccountController& accountController,
         AccountOpeningController& accountOpeningController);
+
+    void setTransferController(TransferController* controller);
+    void setDepositController(DepositController* controller);
 
     HttpResponse route(
         const QByteArray& method,
@@ -51,6 +55,9 @@ private:
     LedgerAccountController& ledgerAccountController;
     AccountController& accountController;
     AccountOpeningController& accountOpeningController;
+
+    TransferController* transferController = nullptr;
+    DepositController* depositController = nullptr;
 };
 
 #endif // HTTPROUTER_H

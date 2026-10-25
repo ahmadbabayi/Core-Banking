@@ -1,5 +1,5 @@
-
 #include "httprouter.h"
+
 #include "apiresponse.h"
 
 #include <QDebug>
@@ -34,6 +34,16 @@ HttpRouter::HttpRouter(
 {
 }
 
+void HttpRouter::setTransferController(TransferController* controller)
+{
+    transferController = controller;
+}
+
+void HttpRouter::setDepositController(DepositController* controller)
+{
+    depositController = controller;
+}
+
 HttpResponse HttpRouter::route(
     const QByteArray& method,
     const QByteArray& path,
@@ -45,6 +55,28 @@ HttpResponse HttpRouter::route(
              << "path =" << path
              << "query =" << query;
 
+    const auto badRequest = [](const QString& code,
+                               const QString& message) -> HttpResponse {
+        return {
+            "400 Bad Request",
+            ApiResponse::error(code, message)
+        };
+    };
+
+    const auto parsePositiveId = [](const QByteArray& text,
+                                    qint64* id) -> bool {
+        bool ok = false;
+        const qint64 parsed = text.toLongLong(&ok);
+
+        if (!ok || parsed <= 0) {
+            return false;
+        }
+
+        *id = parsed;
+        return true;
+    };
+
+    // Health
     if (method == "GET" && path == "/api/v1/health") {
         QJsonObject data;
         data["status"] = "UP";
@@ -55,53 +87,68 @@ HttpResponse HttpRouter::route(
         };
     }
 
-    // Accounts
+    // Transfers
+    if (method == "POST" && path == "/api/v1/transfers") {
+        if (transferController == nullptr) {
+            return {
+                "503 Service Unavailable",
+                ApiResponse::error(
+                    "TRANSFER_SERVICE_UNAVAILABLE",
+                    "Transfer service is not configured")
+            };
+        }
+
+        return transferController->transfer(body);
+    }
+
+    // Deposits
+    if (method == "POST" && path == "/api/v1/deposits") {
+        if (depositController == nullptr) {
+            return {
+                "503 Service Unavailable",
+                ApiResponse::error(
+                    "DEPOSIT_SERVICE_UNAVAILABLE",
+                    "Deposit service is not configured")
+            };
+        }
+
+        return depositController->deposit(body);
+    }
+
+    // Account opening
     if (method == "POST" && path == "/api/v1/accounts") {
         return accountOpeningController.openAccount(body);
     }
 
+    // Account details and status
     const QByteArray accountPrefix = "/api/v1/accounts/";
 
     if (path.startsWith(accountPrefix)) {
-        const QByteArray suffix =
-            path.mid(accountPrefix.size());
-
+        const QByteArray suffix = path.mid(accountPrefix.size());
         const QByteArray statusSuffix = "/status";
 
-        if (method == "PATCH" &&
-            suffix.endsWith(statusSuffix)) {
-            const QByteArray idText =
-                suffix.left(
-                    suffix.size() - statusSuffix.size());
+        if (method == "PATCH" && suffix.endsWith(statusSuffix)) {
+            const QByteArray idText = suffix.left(
+                suffix.size() - statusSuffix.size());
 
-            bool ok = false;
-            const qint64 id = idText.toLongLong(&ok);
+            qint64 id = 0;
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_ACCOUNT_ID",
-                        "Invalid account ID")
-                };
+            if (!parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "INVALID_ACCOUNT_ID",
+                    "Invalid account ID");
             }
 
-            return accountController.changeAccountStatus(
-                id,
-                body);
+            return accountController.changeAccountStatus(id, body);
         }
 
         if (method == "GET" && !suffix.contains('/')) {
-            bool ok = false;
-            const qint64 id = suffix.toLongLong(&ok);
+            qint64 id = 0;
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_ACCOUNT_ID",
-                        "Invalid account ID")
-                };
+            if (!parsePositiveId(suffix, &id)) {
+                return badRequest(
+                    "INVALID_ACCOUNT_ID",
+                    "Invalid account ID");
             }
 
             return accountController.getAccountById(id);
@@ -115,43 +162,31 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path == "/api/v1/customers") {
         const QUrlQuery urlQuery(QString::fromUtf8(query));
-
         const QString nationalId =
             urlQuery.queryItemValue("nationalId");
 
         if (nationalId.isEmpty()) {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "MISSING_NATIONAL_ID",
-                    "Missing nationalId query parameter")
-            };
+            return badRequest(
+                "MISSING_NATIONAL_ID",
+                "Missing nationalId query parameter");
         }
 
-        return customerController.getCustomerByNationalId(
-            nationalId);
+        return customerController.getCustomerByNationalId(nationalId);
     }
 
     const QByteArray customerPrefix = "/api/v1/customers/";
 
     if (method == "GET" && path.startsWith(customerPrefix)) {
-        const QByteArray idText =
-            path.mid(customerPrefix.size());
+        qint64 id = 0;
 
-        bool ok = false;
-        const long long id = idText.toLongLong(&ok);
-
-        if (!ok || id <= 0 || id > 2147483647LL) {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_CUSTOMER_ID",
-                    "Invalid customer ID")
-            };
+        if (!parsePositiveId(path.mid(customerPrefix.size()), &id) ||
+            id > 2147483647LL) {
+            return badRequest(
+                "INVALID_CUSTOMER_ID",
+                "Invalid customer ID");
         }
 
-        return customerController.getCustomerById(
-            static_cast<int>(id));
+        return customerController.getCustomerById(static_cast<int>(id));
     }
 
     // Currencies
@@ -166,18 +201,12 @@ HttpResponse HttpRouter::route(
     const QByteArray currencyPrefix = "/api/v1/currencies/";
 
     if (method == "GET" && path.startsWith(currencyPrefix)) {
-        bool ok = false;
+        qint64 id = 0;
 
-        const long long id =
-            path.mid(currencyPrefix.size()).toLongLong(&ok);
-
-        if (!ok || id <= 0) {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_CURRENCY_ID",
-                    "Invalid currency ID")
-            };
+        if (!parsePositiveId(path.mid(currencyPrefix.size()), &id)) {
+            return badRequest(
+                "INVALID_CURRENCY_ID",
+                "Invalid currency ID");
         }
 
         return currencyController.getCurrencyById(id);
@@ -190,58 +219,40 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path == "/api/v1/account-types") {
         const QUrlQuery urlQuery(QString::fromUtf8(query));
-
         const QString status =
             urlQuery.queryItemValue("status").trimmed();
-
         const QString currencyIdText =
             urlQuery.queryItemValue("currencyId");
 
-        long long currencyId = 0;
+        qint64 currencyId = 0;
 
-        if (!currencyIdText.isEmpty()) {
-            bool ok = false;
-            currencyId = currencyIdText.toLongLong(&ok);
-
-            if (!ok || currencyId <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "ACCOUNTTYPE_INVALID_CURRENCY_ID",
-                        "currencyId must be a positive integer")
-                };
-            }
+        if (!currencyIdText.isEmpty() &&
+            !parsePositiveId(currencyIdText.toUtf8(), &currencyId)) {
+            return badRequest(
+                "ACCOUNTTYPE_INVALID_CURRENCY_ID",
+                "currencyId must be a positive integer");
         }
 
         return accountTypeController.getAllAccountTypes(
             status, currencyId);
     }
 
-    const QByteArray accountTypePrefix =
-        "/api/v1/account-types/";
+    const QByteArray accountTypePrefix = "/api/v1/account-types/";
 
     if (path.startsWith(accountTypePrefix)) {
-        const QByteArray suffix =
-            path.mid(accountTypePrefix.size());
-
+        const QByteArray suffix = path.mid(accountTypePrefix.size());
         const QByteArray statusSuffix = "/status";
 
-        if (method == "PATCH" &&
-            suffix.endsWith(statusSuffix)) {
-            const QByteArray idText =
-                suffix.left(
-                    suffix.size() - statusSuffix.size());
+        if (method == "PATCH" && suffix.endsWith(statusSuffix)) {
+            qint64 id = 0;
 
-            bool ok = false;
-            const long long id = idText.toLongLong(&ok);
+            const QByteArray idText = suffix.left(
+                suffix.size() - statusSuffix.size());
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_ACCOUNTTYPE_ID",
-                        "Invalid account type ID")
-                };
+            if (!parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "INVALID_ACCOUNTTYPE_ID",
+                    "Invalid account type ID");
             }
 
             return accountTypeController.changeAccountTypeStatus(
@@ -249,16 +260,12 @@ HttpResponse HttpRouter::route(
         }
 
         if (method == "GET" && !suffix.contains('/')) {
-            bool ok = false;
-            const long long id = suffix.toLongLong(&ok);
+            qint64 id = 0;
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_ACCOUNTTYPE_ID",
-                        "Invalid account type ID")
-                };
+            if (!parsePositiveId(suffix, &id)) {
+                return badRequest(
+                    "INVALID_ACCOUNTTYPE_ID",
+                    "Invalid account type ID");
             }
 
             return accountTypeController.getAccountTypeById(id);
@@ -272,45 +279,28 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path == "/api/v1/products") {
         const QUrlQuery urlQuery(QString::fromUtf8(query));
-
         const QString status =
             urlQuery.queryItemValue("status").trimmed();
-
         const QString accountTypeIdText =
             urlQuery.queryItemValue("accountTypeId");
-
         const QString currencyIdText =
             urlQuery.queryItemValue("currencyId");
 
-        long long accountTypeId = 0;
-        long long currencyId = 0;
+        qint64 accountTypeId = 0;
+        qint64 currencyId = 0;
 
-        if (!accountTypeIdText.isEmpty()) {
-            bool ok = false;
-            accountTypeId = accountTypeIdText.toLongLong(&ok);
-
-            if (!ok || accountTypeId <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "PRODUCT_INVALID_ACCOUNT_TYPE_ID",
-                        "accountTypeId must be a positive integer")
-                };
-            }
+        if (!accountTypeIdText.isEmpty() &&
+            !parsePositiveId(accountTypeIdText.toUtf8(), &accountTypeId)) {
+            return badRequest(
+                "PRODUCT_INVALID_ACCOUNT_TYPE_ID",
+                "accountTypeId must be a positive integer");
         }
 
-        if (!currencyIdText.isEmpty()) {
-            bool ok = false;
-            currencyId = currencyIdText.toLongLong(&ok);
-
-            if (!ok || currencyId <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "PRODUCT_INVALID_CURRENCY_ID",
-                        "currencyId must be a positive integer")
-                };
-            }
+        if (!currencyIdText.isEmpty() &&
+            !parsePositiveId(currencyIdText.toUtf8(), &currencyId)) {
+            return badRequest(
+                "PRODUCT_INVALID_CURRENCY_ID",
+                "currencyId must be a positive integer");
         }
 
         return productController.getAllProducts(
@@ -320,44 +310,31 @@ HttpResponse HttpRouter::route(
     const QByteArray productPrefix = "/api/v1/products/";
 
     if (path.startsWith(productPrefix)) {
-        const QByteArray suffix =
-            path.mid(productPrefix.size());
-
+        const QByteArray suffix = path.mid(productPrefix.size());
         const QByteArray statusSuffix = "/status";
 
-        if (method == "PATCH" &&
-            suffix.endsWith(statusSuffix)) {
-            const QByteArray idText =
-                suffix.left(
-                    suffix.size() - statusSuffix.size());
+        if (method == "PATCH" && suffix.endsWith(statusSuffix)) {
+            qint64 id = 0;
 
-            bool ok = false;
-            const long long id = idText.toLongLong(&ok);
+            const QByteArray idText = suffix.left(
+                suffix.size() - statusSuffix.size());
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_PRODUCT_ID",
-                        "Invalid product ID")
-                };
+            if (!parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "INVALID_PRODUCT_ID",
+                    "Invalid product ID");
             }
 
-            return productController.changeProductStatus(
-                id, body);
+            return productController.changeProductStatus(id, body);
         }
 
         if (method == "GET" && !suffix.contains('/')) {
-            bool ok = false;
-            const long long id = suffix.toLongLong(&ok);
+            qint64 id = 0;
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_PRODUCT_ID",
-                        "Invalid product ID")
-                };
+            if (!parsePositiveId(suffix, &id)) {
+                return badRequest(
+                    "INVALID_PRODUCT_ID",
+                    "Invalid product ID");
             }
 
             return productController.getProductById(id);
@@ -374,46 +351,29 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path == mappingPath) {
         const QUrlQuery urlQuery(QString::fromUtf8(query));
-
         const QString status =
             urlQuery.queryItemValue("status").trimmed();
-
         const QString productIdText =
             urlQuery.queryItemValue("productId");
-
         const QString ledgerAccountIdText =
             urlQuery.queryItemValue("ledgerAccountId");
 
-        long long productId = 0;
-        long long ledgerAccountId = 0;
+        qint64 productId = 0;
+        qint64 ledgerAccountId = 0;
 
-        if (!productIdText.isEmpty()) {
-            bool ok = false;
-            productId = productIdText.toLongLong(&ok);
-
-            if (!ok || productId <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "MAPPING_INVALID_PRODUCT_ID",
-                        "productId must be a positive integer")
-                };
-            }
+        if (!productIdText.isEmpty() &&
+            !parsePositiveId(productIdText.toUtf8(), &productId)) {
+            return badRequest(
+                "MAPPING_INVALID_PRODUCT_ID",
+                "productId must be a positive integer");
         }
 
-        if (!ledgerAccountIdText.isEmpty()) {
-            bool ok = false;
-            ledgerAccountId =
-                ledgerAccountIdText.toLongLong(&ok);
-
-            if (!ok || ledgerAccountId <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "MAPPING_INVALID_LEDGER_ACCOUNT_ID",
-                        "ledgerAccountId must be a positive integer")
-                };
-            }
+        if (!ledgerAccountIdText.isEmpty() &&
+            !parsePositiveId(
+                ledgerAccountIdText.toUtf8(), &ledgerAccountId)) {
+            return badRequest(
+                "MAPPING_INVALID_LEDGER_ACCOUNT_ID",
+                "ledgerAccountId must be a positive integer");
         }
 
         return productLedgerMappingController.getAllMappings(
@@ -424,67 +384,50 @@ HttpResponse HttpRouter::route(
         "/api/v1/product-ledger-mappings/";
 
     if (path.startsWith(mappingPrefix)) {
-        const QByteArray suffix =
-            path.mid(mappingPrefix.size());
-
+        const QByteArray suffix = path.mid(mappingPrefix.size());
         const QByteArray statusSuffix = "/status";
         const QByteArray effectiveToSuffix = "/effective-to";
 
-        if (method == "PATCH" &&
-            suffix.endsWith(statusSuffix)) {
-            const QByteArray idText =
-                suffix.left(
-                    suffix.size() - statusSuffix.size());
+        if (method == "PATCH" && suffix.endsWith(statusSuffix)) {
+            qint64 id = 0;
 
-            bool ok = false;
-            const long long id = idText.toLongLong(&ok);
+            const QByteArray idText = suffix.left(
+                suffix.size() - statusSuffix.size());
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "MAPPING_INVALID_ID",
-                        "Mapping ID must be a positive integer")
-                };
+            if (!parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "MAPPING_INVALID_ID",
+                    "Mapping ID must be a positive integer");
             }
 
-            return productLedgerMappingController
-                .changeMappingStatus(id, body);
+            return productLedgerMappingController.changeMappingStatus(
+                id, body);
         }
 
         if (method == "PATCH" &&
             suffix.endsWith(effectiveToSuffix)) {
-            const QByteArray idText =
-                suffix.left(
-                    suffix.size() - effectiveToSuffix.size());
+            qint64 id = 0;
 
-            bool ok = false;
-            const long long id = idText.toLongLong(&ok);
+            const QByteArray idText = suffix.left(
+                suffix.size() - effectiveToSuffix.size());
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "MAPPING_INVALID_ID",
-                        "Mapping ID must be a positive integer")
-                };
+            if (!parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "MAPPING_INVALID_ID",
+                    "Mapping ID must be a positive integer");
             }
 
-            return productLedgerMappingController
-                .closeMappingPeriod(id, body);
+            return productLedgerMappingController.closeMappingPeriod(
+                id, body);
         }
 
         if (method == "GET" && !suffix.contains('/')) {
-            bool ok = false;
-            const long long id = suffix.toLongLong(&ok);
+            qint64 id = 0;
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "MAPPING_INVALID_ID",
-                        "Mapping ID must be a positive integer")
-                };
+            if (!parsePositiveId(suffix, &id)) {
+                return badRequest(
+                    "MAPPING_INVALID_ID",
+                    "Mapping ID must be a positive integer");
             }
 
             return productLedgerMappingController.getMappingById(id);
@@ -501,30 +444,20 @@ HttpResponse HttpRouter::route(
 
     if (method == "GET" && path == ledgerAccountPath) {
         const QUrlQuery urlQuery(QString::fromUtf8(query));
-
         const QString status =
             urlQuery.queryItemValue("status").trimmed();
-
         const QString category =
             urlQuery.queryItemValue("category").trimmed();
-
         const QString currencyIdText =
             urlQuery.queryItemValue("currencyId");
 
-        long long currencyId = 0;
+        qint64 currencyId = 0;
 
-        if (!currencyIdText.isEmpty()) {
-            bool ok = false;
-            currencyId = currencyIdText.toLongLong(&ok);
-
-            if (!ok || currencyId <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "LEDGER_ACCOUNT_INVALID_CURRENCY_ID",
-                        "currencyId must be a positive integer")
-                };
-            }
+        if (!currencyIdText.isEmpty() &&
+            !parsePositiveId(currencyIdText.toUtf8(), &currencyId)) {
+            return badRequest(
+                "LEDGER_ACCOUNT_INVALID_CURRENCY_ID",
+                "currencyId must be a positive integer");
         }
 
         return ledgerAccountController.getAllLedgerAccounts(
@@ -535,44 +468,32 @@ HttpResponse HttpRouter::route(
         "/api/v1/ledger-accounts/";
 
     if (path.startsWith(ledgerAccountPrefix)) {
-        const QByteArray suffix =
-            path.mid(ledgerAccountPrefix.size());
-
+        const QByteArray suffix = path.mid(ledgerAccountPrefix.size());
         const QByteArray statusSuffix = "/status";
 
-        if (method == "PATCH" &&
-            suffix.endsWith(statusSuffix)) {
-            const QByteArray idText =
-                suffix.left(
-                    suffix.size() - statusSuffix.size());
+        if (method == "PATCH" && suffix.endsWith(statusSuffix)) {
+            qint64 id = 0;
 
-            bool ok = false;
-            const long long id = idText.toLongLong(&ok);
+            const QByteArray idText = suffix.left(
+                suffix.size() - statusSuffix.size());
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "LEDGER_ACCOUNT_INVALID_ID",
-                        "Invalid ledger account ID")
-                };
+            if (!parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "LEDGER_ACCOUNT_INVALID_ID",
+                    "Invalid ledger account ID");
             }
 
-            return ledgerAccountController
-                .changeLedgerAccountStatus(id, body);
+            return ledgerAccountController.changeLedgerAccountStatus(
+                id, body);
         }
 
         if (method == "GET" && !suffix.contains('/')) {
-            bool ok = false;
-            const long long id = suffix.toLongLong(&ok);
+            qint64 id = 0;
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "LEDGER_ACCOUNT_INVALID_ID",
-                        "Invalid ledger account ID")
-                };
+            if (!parsePositiveId(suffix, &id)) {
+                return badRequest(
+                    "LEDGER_ACCOUNT_INVALID_ID",
+                    "Invalid ledger account ID");
             }
 
             return ledgerAccountController.getLedgerAccountById(id);
@@ -591,18 +512,12 @@ HttpResponse HttpRouter::route(
     const QByteArray countryPrefix = "/api/v1/countries/";
 
     if (method == "GET" && path.startsWith(countryPrefix)) {
-        bool ok = false;
+        qint64 id = 0;
 
-        const long long id =
-            path.mid(countryPrefix.size()).toLongLong(&ok);
-
-        if (!ok || id <= 0) {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_COUNTRY_ID",
-                    "Invalid country ID")
-            };
+        if (!parsePositiveId(path.mid(countryPrefix.size()), &id)) {
+            return badRequest(
+                "INVALID_COUNTRY_ID",
+                "Invalid country ID");
         }
 
         return countryController.getCountryById(id);
@@ -620,18 +535,12 @@ HttpResponse HttpRouter::route(
     const QByteArray provincePrefix = "/api/v1/provinces/";
 
     if (method == "GET" && path.startsWith(provincePrefix)) {
-        bool ok = false;
+        qint64 id = 0;
 
-        const long long id =
-            path.mid(provincePrefix.size()).toLongLong(&ok);
-
-        if (!ok || id <= 0) {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_PROVINCE_ID",
-                    "Invalid province ID")
-            };
+        if (!parsePositiveId(path.mid(provincePrefix.size()), &id)) {
+            return badRequest(
+                "INVALID_PROVINCE_ID",
+                "Invalid province ID");
         }
 
         return provinceController.getProvinceById(id);
@@ -649,18 +558,12 @@ HttpResponse HttpRouter::route(
     const QByteArray cityPrefix = "/api/v1/cities/";
 
     if (method == "GET" && path.startsWith(cityPrefix)) {
-        bool ok = false;
+        qint64 id = 0;
 
-        const long long id =
-            path.mid(cityPrefix.size()).toLongLong(&ok);
-
-        if (!ok || id <= 0) {
-            return {
-                "400 Bad Request",
-                ApiResponse::error(
-                    "INVALID_CITY_ID",
-                    "Invalid city ID")
-            };
+        if (!parsePositiveId(path.mid(cityPrefix.size()), &id)) {
+            return badRequest(
+                "INVALID_CITY_ID",
+                "Invalid city ID");
         }
 
         return cityController.getCityById(id);
@@ -678,27 +581,19 @@ HttpResponse HttpRouter::route(
     const QByteArray branchPrefix = "/api/v1/branches/";
 
     if (path.startsWith(branchPrefix)) {
-        const QByteArray suffix =
-            path.mid(branchPrefix.size());
-
+        const QByteArray suffix = path.mid(branchPrefix.size());
         const QByteArray statusSuffix = "/status";
 
-        if (method == "PATCH" &&
-            suffix.endsWith(statusSuffix)) {
-            const QByteArray idText =
-                suffix.left(
-                    suffix.size() - statusSuffix.size());
+        if (method == "PATCH" && suffix.endsWith(statusSuffix)) {
+            qint64 id = 0;
 
-            bool ok = false;
-            const long long id = idText.toLongLong(&ok);
+            const QByteArray idText = suffix.left(
+                suffix.size() - statusSuffix.size());
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_BRANCH_ID",
-                        "Invalid branch ID")
-                };
+            if (!parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "INVALID_BRANCH_ID",
+                    "Invalid branch ID");
             }
 
             return branchController.changeBranchStatus(id, body);
@@ -706,16 +601,12 @@ HttpResponse HttpRouter::route(
 
         if ((method == "GET" || method == "PUT") &&
             !suffix.contains('/')) {
-            bool ok = false;
-            const long long id = suffix.toLongLong(&ok);
+            qint64 id = 0;
 
-            if (!ok || id <= 0) {
-                return {
-                    "400 Bad Request",
-                    ApiResponse::error(
-                        "INVALID_BRANCH_ID",
-                        "Invalid branch ID")
-                };
+            if (!parsePositiveId(suffix, &id)) {
+                return badRequest(
+                    "INVALID_BRANCH_ID",
+                    "Invalid branch ID");
             }
 
             if (method == "GET") {
@@ -726,6 +617,7 @@ HttpResponse HttpRouter::route(
         }
     }
 
+    // Unknown route
     return {
         "404 Not Found",
         ApiResponse::error("ROUTE_NOT_FOUND", "Not Found")
