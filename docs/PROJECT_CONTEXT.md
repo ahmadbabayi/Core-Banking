@@ -733,3 +733,52 @@ sudo -u postgres psql -X -c '\du'
 
 *پایان سند مرجع پروژه*
 
+
+## الحاقیه وضعیت پروژه — 2026-10-26
+
+### Git و Build
+- شاخه `main` با `origin/main` هماهنگ است؛ آخرین وضعیت مخزن پاک بود.
+- Commit `1fe1c1d`: Implement deposit API and redesign internal transfers
+- Commit `c37a1b7`: Fix ledger balance posting for internal transfers
+- هر دو Commit روی GitHub قرار دارند.
+- کاربر Build و Run را از Qt Creator انجام می‌دهد؛ فایل‌های تغییرکرده باید به‌صورت کامل ارائه شوند، نه وصله‌های پراکنده.
+- اتصال `src/infrastructure/database.cpp` برای محیط محلی فعلاً روی دیتابیس `corebanking` است.
+
+### Migration شماره 016
+- فایل `database/schema/016_allow_overdraft_balances.sql` در مخزن ثبت شده است.
+- Migration در هر دو دیتابیس محلی `corebanking_test` و `corebanking` با موفقیت اجرا شد.
+- ستون‌های `idempotency_key`، `request_fingerprint`، `result_code` و `result_message` و ایندکس یکتای `uq_transaction_api_idempotency` ایجاد و بررسی شدند.
+- قید `ck_account_balance_available` حذف شده و قید غیرمنفی بودن `ledger_balance` حفظ شده است.
+- وضعیت `REJECTED` برای تراکنش مجاز است.
+
+### Deposit API
+- مسیر: `POST /api/v1/deposits`
+- واریز یک واحد به حساب 1 در `corebanking_test` موفق بود: تراکنش 4 و Journal شماره 3؛ سند `POSTED` و متوازن بود.
+- واریز یک واحد به حساب 1 در `corebanking` موفق بود: تراکنش 1 و Journal شماره 1؛ سند `POSTED` و متوازن بود.
+- در دیتابیس اصلی محلی، پس از واریز، `ledger_balance` و `available_balance` حساب 1 برابر 1 بودند.
+- در هر دو دیتابیس retry با همان کلید همان تراکنش را برگرداند و رکورد تکراری ایجاد نکرد.
+- سرفصل تسویه `10100101` در دیتابیس اصلی محلی ایجاد شده است: شناسه 4، ارز 1، دسته ASSET، فعال و قابل ثبت.
+- سرفصل سپرده مشتری `20100101` از نوع LIABILITY است.
+
+### Internal Transfer API
+- مسیر: `POST /api/v1/transfers`
+- در `corebanking_test` انتقال یک واحد از حساب 1 به حساب 3 موفق شد: تراکنش 6 و Journal شماره 5؛ سند `POSTED` و متوازن بود.
+- پس از انتقال، مانده حساب 1 برابر 0 و حساب 3 برابر 1 شد.
+- retry با همان کلید، تراکنش 6 را برگرداند و تراکنش جدیدی ایجاد نکرد.
+- تلاش قبلی با موجودی ناکافی نیز با `INSUFFICIENT_AVAILABLE_FUNDS` رد شد و retry همان نتیجه را برگرداند.
+- انتقال موفق هنوز در دیتابیس `corebanking` آزموده نشده است؛ حساب 2 آن دیتابیس CLOSED است و نباید برای انتقال استفاده شود.
+
+### قواعد مالی و محدودیت‌های شناخته‌شده
+- `ledger_balance` نباید منفی شود؛ `available_balance` می‌تواند منفی باشد.
+- قرارداد فعلی مانده دفتر کل `balance = debit_total - credit_total` است؛ بنابراین مانده بستانکار یک حساب LIABILITY منفی نمایش داده می‌شود.
+- انتقالی که به استفاده از اضافه‌برداشت نیاز داشته باشد، فعلاً با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود؛ ثبت کامل مطالبات بانک بابت اضافه‌برداشت هنوز پیاده‌سازی و آزمون نشده است.
+- آزمون هم‌زمانی واقعی، کلید idempotency یکسان با payload متفاوت، تمام حالت‌های rollback و آزمون انتقال موفق در `corebanking` هنوز انجام نشده‌اند.
+- دیتابیس محلی `corebanking` همچنان داده‌ها و نام‌های آزمایشی مانند `Test Current Account IRR` دارد؛ آن را محیط عملیاتی بانکی با پول واقعی فرض نکنید.
+
+### گام‌های پیشنهادی بعدی
+1. پیاده‌سازی APIهای ایجاد، آزادسازی جزئی، آزادسازی کامل، انقضا و لغو مسدودی وجه بر اساس Schema شماره 015.
+2. تکمیل و آزمون محاسبه سقف باقی‌مانده اضافه‌برداشت و ثبت بدهی مشتری و مطالبات بانک.
+3. افزودن آزمون‌های تکرارپذیر برای idempotency، rollback، موجودی ناکافی و هم‌زمانی.
+4. در زمان مناسب، افتتاح یک حساب مقصد فعال با API رسمی در دیتابیس محلی اصلی و سپس آزمون کنترل‌شده انتقال.
+5. پس از هر مرحله، Build در Qt Creator، آزمون API، بررسی مالی و ثبت تغییرات تأییدشده در Git.
+
