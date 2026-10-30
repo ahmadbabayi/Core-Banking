@@ -351,21 +351,22 @@ Commit مرتبط:
 
 `POST /api/v1/transfers`
 
-وضعیت ثبت‌شده در 2026-10-26:
-- پیاده‌سازی API انتقال داخلی در مخزن گزارش شده است.
-- انتقال موفق هنوز در دیتابیس اصلی `corebanking` آزموده نشده است.
-- حساب `2` در دیتابیس اصلی `CLOSED` است؛ نباید به‌عنوان مقصد انتقال استفاده شود.
-- پیش از آزمون انتقال موفق در دیتابیس اصلی، یک حساب مقصد فعال باید از مسیر رسمی `POST /api/v1/accounts` افتتاح شود.
-- انتقالی که نیاز به تسویه اضافه‌برداشت داشته باشد، فعلاً با خطای `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود.
-- آزمون موفق انتقال در دیتابیس آزمایشی در سابقه قدیمی‌تر گزارش شده است؛ این نتیجه جایگزین آزمون دیتابیس اصلی نیست.
+**Snapshot تاریخی در 2026-10-26** (و نه وضعیت نهایی کنونی):
+- در آن تاریخ، API انتقال داخلی در مخزن پیاده‌سازی شده بود.
+- در آن snapshot، انتقال موفق روی دیتابیس اصلی `corebanking` هنوز ثبت نشده بود.
+- حساب `2` در آن گزارش `CLOSED` بود؛ وضعیت جاری هر حساب باید از API/دیتابیس همان محیط بررسی شود.
+- مسیر نیازمند تسویه اضافه‌برداشت با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شد.
+- آزمون موفق انتقال در دیتابیس آزمایشی در سابقه قدیمی‌تر گزارش شده بود.
 
-هنوز موارد زیر به‌طور کامل اثبات نشده‌اند:
-- انتقال موفق روی دیتابیس اصلی.
-- انتقال با موجودی ناکافی.
-- Rollback کامل در تمام نقاط شکست.
-- درخواست‌های هم‌زمان برای یک حساب مبدأ.
+**اصلاح وضعیت در 2026-10-28:** کاربر تأیید کرده API انتقال داخلی تکمیل و تست شده است. این تأیید، عبارت «API تست نشده» را به‌عنوان وضعیت فعلی رفع می‌کند. با این حال، چون جزئیات تست جدید (محیط دیتابیس، payload، پاسخ و نتایج مانده/Journal) هنوز در این سند درج نشده، از آن نمی‌توان نتیجه گرفت که حتماً تست موفق در دیتابیس اصلی یا همه حالت‌های شکست اجرا شده است.
+
+مواردی که همچنان در آزمون جامع نیازمند پوشش/ثبت شواهدند:
+- انتقال با موجودی ناکافی و حفظ بی‌تغییری مانده در صورت رد.
+- Rollback در تمام نقاط شکست.
+- درخواست‌های هم‌زمان برای یک حساب مبدأ یا مقصد.
 - Retry با کلید یکسان و محتوای متفاوت.
-- اثر انتقال و برگشت روی مانده دفتر کل و Journal در همه سناریوها.
+- تطبیق مانده حساب‌ها، مانده دفتر کل و Journal در همه سناریوها.
+- مسیر نیازمند تسویه اضافه‌برداشت؛ تا تکمیل چرخه اضافه‌برداشت، رد امن این مسیر باید حفظ شود.
 
 ## 12. تاریخچه Commitهای مرتبط
 
@@ -412,9 +413,9 @@ Commit `0c5ac38` شامل این تغییرات گزارش شده بود:
 
 ## 13. اشکالات و محدودیت‌های شناخته‌شده
 
-### سازگاری سرویس‌های مالی قدیمی با Schema جدید
+### سازگاری سرویس‌های مالی با Schema جدید
 
-سرویس‌های قدیمی مانده، انتقال و ثبت حسابداری، مرجع معماری جدید محسوب نمی‌شوند. آن‌ها باید در برابر قواعد و Schema جدید بازبینی شوند.
+سرویس‌های قدیمی مانده و ثبت حسابداری مرجع معماری جدید محسوب نمی‌شوند. مسیر انتقال واریز باید با قواعد و Schema جاری بررسی شود؛ این مورد به‌معنای منکرشدن تست APIهایی که کاربر تأیید کرده نیست، بلکه یکپارچگی مالی جامع و پوشش تمام سناریوها را هدف می‌گیرد.
 
 ### محاسبه مانده قابل برداشت
 
@@ -432,20 +433,107 @@ Migration و Triggerهای مسدودی در دیتابیس ثبت شده‌ان
 
 آزمون SQL با `ROLLBACK` جایگزین آزمون بار هم‌زمان واقعی نیست. سناریوهای رقابتی در واریز، برداشت، انتقال، برگشت و آزادسازی مسدودی باید جداگانه آزمون شوند.
 
-## 14. گام‌های بعدی ثبت‌شده
+## 14. گام‌های بعدی ثبت‌شده در تاریخچه قبلی
 
-1. بررسی فایل‌های واقعی مربوط به `account_balance` و لایه‌های Repository و Service.
-2. طراحی و تکمیل API ایجاد مسدودی، آزادسازی جزئی، آزادسازی کامل، انقضا و لغو.
-3. بازیابی نتیجه رویداد قبلی در Retry مسدودی، با همان `(hold_id, idempotency_key)`.
-4. حفظ `effective_at` در Retry برای جلوگیری از تفاوت ناخواسته payload.
-5. تکمیل محاسبه اعتبار باقی‌مانده اضافه‌برداشت و ثبت بدهی مشتری و مطالبات بانک.
-6. افتتاح حساب مقصد فعال با API رسمی در دیتابیس اصلی و اجرای کنترل‌شده آزمون انتقال.
-7. اجرای آزمون‌های HTTP و بررسی وضعیت نهایی حساب‌ها، مانده‌ها، Journal و رویدادها.
-8. افزودن آزمون‌های Idempotency، Rollback، موجودی ناکافی و هم‌زمانی.
-9. پس از Build و آزمون‌های لازم، ارائه تغییرات برای بررسی و سپس Commit/Push با تأیید کاربر.
+این فهرست در تاریخچه قبلی نوشته شده بود و در بازبینی 2026-10-28 اصلاح شده است:
+1. بررسی سازگاری `account_balance` و لایه‌های Repository/Service با Schema فعلی.
+2. طراحی و تکمیل API ایجاد Hold، آزادسازی جزئی/کامل، انقضا و لغو؛ مسیرهای HTTP آن در Router بررسی‌شده وجود ندارند.
+3. تکمیل Idempotency رویدادهای Hold: بازیابی نتیجه در Retry با همان `(hold_id, idempotency_key)` و یکسان‌بودن fingerprint/effective time.
+4. تکمیل محاسبه اعتبار باقی‌مانده اضافه‌برداشت و ثبت بدهی مشتری/مطالبات بانک.
+5. پوشش آزمون جامع HTTP و تطبیق مانده، Transaction، Journal، `ledger_account_balance` و رویدادهای Hold.
+6. ثبت شواهد آزمون‌های مستقیم Province، Account Type و Product–Ledger Mapping در صورت موجودبودن/نیاز.
+7. افزودن یا تعیین تکلیف endpointهای Withdrawal، Reversal، Balance و جست‌وجوی Transaction/Journal.
+8. آزمون Idempotency با payload متفاوت، Rollback در نقاط شکست، موجودی ناکافی و بار هم‌زمان واقعی.
+9. ثبت گزارش شفاف Build، تست HTTP و وضعیت Git. Commit/Push فقط پس از ارائه نتیجه و تأیید کاربر.
 
 ## 15. قاعده پایانی تاریخچه
 
 History شاهدی از اتفاقات گذشته است. هر نتیجه باید همراه با محدودیت‌ها و محیط اجرای آن خوانده شود.
 
 اگر در ادامه پروژه قاعده کسب‌وکار جدیدی تصویب شد، باید به `PROJECT_CONTEXT.md` منتقل شود. اگر آزمون جدیدی اجرا شد، نتیجه دقیق آن باید در همین فایل ثبت شود. سابقه قدیمی بدون آزمون جدید، مدرک کافی برای تأیید وضعیت جاری نیست.
+
+## 16. بازبینی Router و اصلاح فهرست APIها — 2026-10-28
+
+### منبع بررسی
+
+- Commit گزارش‌شده از سوی کاربر: `038638e76a89012e1d94275b192514b4afb4696d`.
+- فایل Router بررسی‌شده: `src/web/httprouter.cpp`.
+- فایل سیم‌کشی Controllerها در برنامه: `src/main.cpp`.
+- فهرست فایل‌های Build: `CMakeLists.txt`.
+- اسناد بررسی‌شده: `docs/PROJECT_CONTEXT.md` و `docs/PROJECT_HISTORY.md`.
+
+این بازبینی از کد Router برای استخراج method/path استفاده می‌کند، و از تأیید مستقیم کاربر برای وضعیت «تکمیل و تست‌شده» در دوازده گروه استفاده می‌کند. وجود یک route بدون گزارش تست، به‌تنهایی به‌عنوان تست‌شده ثبت نشده است. این بازبینی فقط مستنداتی/کدخوانی بود و در این نوبت Build یا آزمون HTTP جدیدی اجرا نشد؛ وضعیت آزمون APIهای دوازده‌گانه بر اساس تأیید کاربر است.
+
+فایل‌های اصلاح‌شده‌ای که همراه این گزارش تحویل می‌شوند هنوز جایگزین فایل‌های درخت کاری کاربر نشده‌اند و Commit/Push جدیدی برای آن‌ها انجام نشده است.
+
+### 16.1 فهرست کامل مسیرهای موجود در Router بررسی‌شده
+
+| گروه | روش‌ها و مسیرها |
+|---|---|
+| Health | `GET /api/v1/health` |
+| Transfers | `POST /api/v1/transfers` |
+| Deposits | `POST /api/v1/deposits` |
+| Accounts | `POST /api/v1/accounts`; `GET /api/v1/accounts/{id}`; `PATCH /api/v1/accounts/{id}/status` |
+| Customers | `POST /api/v1/customers`; `GET /api/v1/customers?nationalId={value}`; `GET /api/v1/customers/{id}` |
+| Currencies | `POST /api/v1/currencies`; `GET /api/v1/currencies`; `GET /api/v1/currencies/{id}` |
+| Account Types | `POST /api/v1/account-types`; `GET /api/v1/account-types` (فیلتر `status`, `currencyId`); `GET /api/v1/account-types/{id}`; `PATCH /api/v1/account-types/{id}/status` |
+| Products | `POST /api/v1/products`; `GET /api/v1/products` (فیلتر `status`, `accountTypeId`, `currencyId`); `GET /api/v1/products/{id}`; `PATCH /api/v1/products/{id}/status` |
+| Product–Ledger Mappings | `POST /api/v1/product-ledger-mappings`; `GET /api/v1/product-ledger-mappings` (فیلتر `status`, `productId`, `ledgerAccountId`); `GET /api/v1/product-ledger-mappings/{id}`; `PATCH /api/v1/product-ledger-mappings/{id}/status`; `PATCH /api/v1/product-ledger-mappings/{id}/effective-to` |
+| Ledger Accounts | `POST /api/v1/ledger-accounts`; `GET /api/v1/ledger-accounts` (فیلتر `status`, `category`, `currencyId`); `GET /api/v1/ledger-accounts/{id}`; `PATCH /api/v1/ledger-accounts/{id}/status` |
+| Countries | `POST /api/v1/countries`; `GET /api/v1/countries`; `GET /api/v1/countries/{id}` |
+| Provinces | `POST /api/v1/provinces`; `GET /api/v1/provinces`; `GET /api/v1/provinces/{id}` |
+| Cities | `POST /api/v1/cities`; `GET /api/v1/cities`; `GET /api/v1/cities/{id}` |
+| Branches | `POST /api/v1/branches`; `GET /api/v1/branches`; `GET /api/v1/branches/{id}`; `PUT /api/v1/branches/{id}`; `PATCH /api/v1/branches/{id}/status` |
+
+Router در صورت ناشناخته‌بودن مسیر، پاسخ `404 Not Found` با کد `ROUTE_NOT_FOUND` برمی‌گرداند. برای Deposit و Transfer، اگر Controller مربوطه تنظیم نشده باشد، Router پاسخ `503 Service Unavailable` برمی‌گرداند.
+
+### 16.2 APIهای تکمیل و تست‌شده — تأیید مستقیم کاربر در 2026-10-28
+
+کاربر صریحاً تأیید کرد همه گروه‌های زیر پیاده‌سازی و تست شده‌اند. این جدول مستقل است تا هنگام ادامهٔ پروژه این قابلیت‌ها به‌اشتباه «باقی‌مانده» معرفی نشوند.
+
+| گروه API | مسیرهای Router | وضعیت ثبت‌شده |
+|---|---|---|
+| Health | `GET /api/v1/health` | تکمیل و تست‌شده |
+| Countries | `POST /api/v1/countries`؛ `GET /api/v1/countries`؛ `GET /api/v1/countries/{id}` | تکمیل و تست‌شده |
+| Currencies | `POST /api/v1/currencies`؛ `GET /api/v1/currencies`؛ `GET /api/v1/currencies/{id}` | تکمیل و تست‌شده |
+| Cities | `POST /api/v1/cities`؛ `GET /api/v1/cities`؛ `GET /api/v1/cities/{id}` | تکمیل و تست‌شده |
+| Branches | `POST /api/v1/branches`؛ `GET /api/v1/branches`؛ `GET /api/v1/branches/{id}`؛ `PUT /api/v1/branches/{id}`؛ `PATCH /api/v1/branches/{id}/status` | تکمیل و تست‌شده |
+| Customers | `POST /api/v1/customers`؛ `GET /api/v1/customers?nationalId={value}`؛ `GET /api/v1/customers/{id}` | تکمیل و تست‌شده |
+| Products | `POST /api/v1/products`؛ `GET /api/v1/products`؛ `GET /api/v1/products/{id}`؛ `PATCH /api/v1/products/{id}/status` | تکمیل و تست‌شده |
+| Ledger Accounts | `POST /api/v1/ledger-accounts`؛ `GET /api/v1/ledger-accounts`؛ `GET /api/v1/ledger-accounts/{id}`؛ `PATCH /api/v1/ledger-accounts/{id}/status` | تکمیل و تست‌شده |
+| Account Opening | `POST /api/v1/accounts` | تکمیل و تست‌شده |
+| Account Details / Status | `GET /api/v1/accounts/{id}`؛ `PATCH /api/v1/accounts/{id}/status` | تکمیل و تست‌شده |
+| Deposits | `POST /api/v1/deposits` | تکمیل و تست‌شده |
+| Internal Transfers | `POST /api/v1/transfers` | تکمیل و تست‌شده |
+
+این وضعیت بر اساس تأیید مستقیم کاربر است. چون جزئیات کامل تست همه گروه‌ها (تاریخ، محیط، payload، پاسخ و تطبیق مانده/Journal) در History موجود نیست، هیچ خروجی HTTP جدیدی بازسازی یا حدس زده نشده و نباید همه این تست‌ها را خودبه‌خود «تست روی دیتابیس اصلی» یا «پوشش کامل همه سناریوها» نامید.
+
+### 16.3 مسیرهای پیاده‌سازی‌شده که شواهد تست آن‌ها در History کافی نیست
+
+برای Province، Account Type و تمام عملیات Product–Ledger Mapping، مسیر در Router وجود دارد ولی شواهد تست HTTP مستقیم هر عملیات در سابقه فعلی کامل نیست. نگاشت با شناسه `3` در آزمون افتتاح حساب استفاده شده؛ این تنها، به معنی تست همه endpointهای نگاشت نیست. این سه گروه را API مفقود تلقی نکنید؛ شواهد آزمون را بیابید یا فقط در صورت اجرا نشدن آزمون لازم، تست اضافه کنید.
+
+### 16.4 مواردی که Router مسیرشان را ندارد
+
+در Router بررسی‌شده endpointی برای Hold، Hold release/cancel/expiry، Withdrawal، Reversal، دریافت Balance، فهرست/جزئیات Transaction یا Journal، مدیریت `product_balance_rule` و `account_balance_rule_override`، مدیریت روابط/اختیارات حساب و مدیریت مستقل محدودیت‌های عملیاتی دیده نشد. وجود جدول یا Migration مرتبط به معنی وجود API نیست. این موارد در بخش «کارهای باقی‌مانده» ثبت می‌شوند؛ هیچ مسیر پیشنهادی به‌عنوان قرارداد فعلی فرض نشده است.
+
+## 17. فهرست کارهای باقی‌مانده پس از بازبینی 2026-10-28
+
+1. **Hold API:** تکمیل Controller/Service/Repository و ثبت مسیرهای HTTP برای ایجاد، مشاهده و آزادسازی جزئی/کامل، لغو و انقضا. منطق دیتابیس Migration 015 وجود دارد، اما endpointهای آن در Router نیستند.
+2. **Withdrawal:** تعیین قرارداد و پیاده‌سازی برداشت با بررسی وجه قابل برداشت، Holdها، حداقل مانده، اضافه‌برداشت مجاز و Journal متوازن.
+3. **Reversal:** ایجاد API برگشت که تراکنش و Journal معکوس مستقل بسازد، برگشت دوگانه را با کنترل هم‌زمانی رد کند و اثر کارمزد/Hold/Overdraft را لحاظ کند.
+4. **Overdraft settlement:** جایگزینی مسیر رد `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` فقط پس از پیاده‌سازی و آزمون ثبت بدهی مشتری و مطالبات بانک؛ مانده سپرده مشتری نباید برای نمایش بدهی منفی شود.
+5. **Balance and history endpoints:** تصمیم درباره نیاز و قرارداد APIهای دریافت مانده، تراکنش‌ها و Journal؛ در صورت تأیید نیاز، پیاده‌سازی با مجوزهای دسترسی لازم.
+6. **Available balance invariant:** بررسی یکپارچگی فرمول `ledger_balance - active_holds + remaining_overdraft_limit` در Deposit، Transfer و مسیرهای مالی آینده.
+7. **بازنویسی/هم‌ترازی سرویس‌های مالی قدیمی:** سرویس‌ها و Repositoryهای قدیمی مانده حساب، تراکنش و ثبت دفتر کل باید با Schema بازطراحی‌شده تطبیق داده یا بازنویسی شوند. تا وقتی سازگاری آن‌ها با `CURRENT_SCHEMA.sql` و قواعد جدید (Hold، Idempotency، Journal و اضافه‌برداشت) اثبات نشده، آن‌ها را مرجع معماری فعلی فرض نکنید.
+8. **Financial reconciliation:** کنترل اینکه هر Journal ثبت‌شده متوازن باشد و مانده حساب‌ها با Transactionها و مجموع Debit/Credit دفتر کل سازگار بماند.
+9. **Concurrency / Idempotency / Rollback:** تست درخواست‌های رقابتی؛ کلید یکسان با payload متفاوت؛ Retry؛ موجودی ناکافی؛ شکست بین درج Transaction، Journal و به‌روزرسانی مانده؛ اطمینان از عدم ثبت تکراری.
+10. **ثبت شواهد آزمون:** ثبت مستقیم تست‌های Province، Account Type و Product–Ledger Mapping؛ تکمیل جزئیات تست‌های APIهای تأییدشده توسط کاربر در صورت امکان، بدون جعل خروجی تاریخی.
+11. **بازبینی نهایی Router و راه‌اندازی:** تأیید اینکه `main.cpp` Controllerها را به Router متصل می‌کند، Build جاری موفق است و پاسخ 503 ناشی از Controller تنظیم‌نشده رخ نمی‌دهد.
+12. **به‌روزرسانی اسناد بعد از هر کار:** Context برای قراردادها، تصمیم‌ها و وضعیت فعلی؛ History برای SHA، محیط، دستور، پاسخ، کنترل مانده/Journal و محدودیت‌های آزمون.
+
+این فهرست به معنای باقی‌ماندن دوازده گروه API تأییدشده از سوی کاربر نیست؛ موارد فوق عمدتاً endpointهایی هستند که Router ندارد، عمق کامل آزمون مالی را می‌خواهند، یا شواهد مستقیمشان در History ناقص است.
+
+## 18. قاعده پایانی تاریخچه
+
+History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.
+
