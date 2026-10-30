@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "gapgpt": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "GapGPT",
+      "options": {
+        "baseURL": "https://api.gapgpt.app/v1"
+      },
+      "models": {
+        "gpt-4o-mini": {
+          "name": "GPT-4o Mini (GapGPT)"
+        }
+      }
+    }
+  }
+}
