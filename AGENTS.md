@@ -1,42 +1,59 @@
-# AGENTS.md — Core Banking
+# AGENTS.md — CoreBanking
 
-## Project shape
-- C++17 / Qt 5.15 (Core, Sql, Network) / PostgreSQL 15 backend.
-- Layered: src/domain → src/application → src/infrastructure → src/web.
-- Entrypoint: src/main.cpp. HTTP server + router in src/web/httpserver.*, src/web/httprouter.*.
-- Full context, decisions, and rules: read docs/PROJECT_CONTEXT.md first. Historical test results: docs/PROJECT_HISTORY.md.
-- Schema migrations: database/schema/NNN_*.sql (numbered, additive; never rewrite an applied migration).
+## 1. Mandatory project context
+- Before starting any task, read `docs/PROJECT_CONTEXT.md` and `docs/PROJECT_HISTORY.md` completely enough to understand the current architecture, settled decisions, implemented services, and outstanding work.
+- Treat those two files as the project's source of truth. Also inspect the relevant current source files and schema snapshot before proposing or implementing changes.
+- Do not revive settled decisions or mark completed work as pending. When sources conflict, stop and explain the discrepancy instead of guessing.
+- Work from the local repository. Do not use GitHub raw files as a substitute for the checked-out project files.
 
-## Build (exact commands)
-Out-of-source build, separate from repo. Run:
-cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
-If the build dir is missing or CMake cache is stale, run:
-cmake -S /home/ahmad/projects/CoreBanking -B /home/ahmad/projects/build-CoreBanking-Desktop-Debug
-cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
-Do not create a build/ directory inside the repo.
+## 2. Development workflow — one service per stage
+- Work on exactly one service or one explicitly approved, narrowly scoped task at a time.
+- Before editing, summarize the intended scope, relevant files, dependencies, and test plan. Do not begin another service while the current stage is unfinished.
+- Complete implementation, build, API tests, database read-back checks, and documentation updates for the current stage.
+- At the end of the stage, report changed files, behavior changed, build result, API requests made, created business identifiers, database verification, and any remaining issues.
+- Then STOP. Do not start the next service until the user explicitly approves it.
 
-## Run / test
-- Server runs on port 8080. Health check: curl -i http://localhost:8080/api/v1/health → {"status":"UP"}.
-- There is no unit-test framework. Integration tests are done by calling the real HTTP API with curl and asserting JSON responses. Do not add temp test code to main.cpp.
-- For financial changes, verify DB state too (psql), not just the HTTP response:
-  psql -U corebanking -h localhost -d corebanking -W
+## 3. Database permissions and schema-change boundary
+- The development database is `corebanking`. It is a development/test database and is not used by a real bank or for live customer operations.
+- For direct SQL inspection, use only the PostgreSQL role `corebanking_reader`, which is intended to have read-only access. Connect with `psql -h localhost -p 5432 -U corebanking_reader -d corebanking` and rely on the user's `~/.pgpass`; never ask to display, read, copy, or print that file or any password.
+- Direct SQL is for reading schema and data only. Use `SELECT` and read-only catalog/information-schema queries. Never attempt direct `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, DML through functions, or other database writes.
+- Never connect directly as `corebanking`, `postgres`, or another privileged database role. Never use `sudo -u postgres`, `su`, or another privilege escalation route.
+- Never execute or apply migrations. Never run DDL such as `CREATE`, `ALTER`, `DROP`, `COMMENT ON`, `GRANT`, `REVOKE`, `CREATE INDEX`, or schema-changing commands. Never run migration scripts through `psql`, the application, or another tool.
+- If a service requires a table, column, relation, index, constraint, trigger, function, view, extension, or migration change, STOP before implementing code that depends on it. Explain the required schema change and provide the proposed SQL or migration plan for the user to review and apply manually. Resume only after the user confirms the schema change is applied.
+- The model may inspect the schema and verify database state using `corebanking_reader`; schema changes and migration execution are always performed by the user.
 
-## Database
-- DB name: corebanking. User: corebanking. Always pass -U corebanking; the default OS role will fail.
-- Migrations are applied manually in numeric order. Before adding one, check that it is additive and compatible with already-applied schemas.
-- Known conflict: schema 007_balances.sql enforces non-negative balances; overdraft (schema 014) may need an additive migration, not a rewrite.
+## 4. API integration tests and development data
+- The application API is the authorized write path for development/testing. It is explicitly permitted to create customers, open accounts, make deposits, execute internal transfers, and perform other business operations through the real local API when needed for the approved stage.
+- Use the real API workflows, validation rules, identifier generators, account-number generators, transaction logic, and business rules. Do not invent fixed IDs or bypass business logic to make tests easier.
+- Use synthetic/fictitious customer information, but otherwise realistic banking data and operation sequences. The project is not in production; realistic development records and transactions are expected in the development database.
+- Target only the local development server, normally `http://localhost:8080`. Never send test writes to a remote or production host. Verify the base URL before any write request.
+- Record the returned customer/account/transaction identifiers and use read-only SQL queries to verify persisted results and financial consistency.
+- Do not directly modify or delete test records with SQL. Do not delete or reverse API-created records unless the approved test plan explicitly requires it and the relevant operation is performed through the API.
+- Keep a clear record of test data created during each stage so the user knows what remains in the development database.
 
-## Conventions that an agent would otherwise get wrong
-- When proposing a file change, output the full file content, not a fragment or diff-only. The user applies files manually.
-- Read the current file from GitHub before proposing a replacement. The user does not grant local-FS access; use raw GitHub URLs under https://raw.githubusercontent.com/ahmadbabayi/Core-Banking/refs/heads/main/
-- Do not re-open settled design decisions listed in docs/PROJECT_CONTEXT.md section 4 unless you find a real contradiction in code.
-- Keep commits separated by concern: code / schema / docs in separate commits.
+## 5. Build and test environment
+- Use the existing Qt Creator build directory only: `/home/ahmad/projects/build-CoreBanking-Desktop-Debug`.
+- The existing build uses CMake, `Unix Makefiles`, and `Debug`. Do not create a second build directory or an in-repository `build/` directory.
+- Normal build command:
+  `cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2`
+- Do not run `cmake -S`, reconfigure CMake, change the Qt kit, change build type, or alter the build directory without first explaining why and obtaining user approval.
+- Run the application and API integration tests against the local development instance. Do not add temporary test code to `src/main.cpp`.
+- A successful compile is not a substitute for API tests. Verify relevant API responses and use `corebanking_reader` to check persisted state.
 
-## Current known gaps (do not assume these are done)
-- Schema 015_account_holds.sql is untracked, unapplied, and unapproved. Open issues: idempotency, concurrent release serialization, reliable last-event ordering, view/trigger validation on real PostgreSQL.
-- idempotency and reconciliation are specified but not fully implemented/tested.
-- Financial end-to-end integration test (transfer → journal → balances) is still pending.
+## 6. Git boundaries
+- Inspect Git status and diffs as needed, but do not run `git add`, `git commit`, `git push`, or commands that change branches, reset, clean, merge, or rebase.
+- Do not stage files. The user reviews the final diff and performs all staging, commits, and pushes.
+- At the end of each stage, provide a concise list of changed files and a suggested commit message, but do not execute it.
 
-## Model / tool caveat (OpenCode)
-- deepseek-reasoner currently breaks tool-calling in OpenCode (missing reasoning_content). Prefer deepseek-chat or another non-reasoning model for agent loops.
-- Some gateways (e.g. GapGPT free tier) may not expose Tool Calling; if the agent only chats but cannot edit files, that is the cause.
+## 7. Documentation is part of every completed stage
+- After each completed service/stage, update both `docs/PROJECT_CONTEXT.md` and `docs/PROJECT_HISTORY.md`.
+- `PROJECT_CONTEXT.md` should reflect the current architecture, implementation status, API behavior, important decisions, and remaining work.
+- `PROJECT_HISTORY.md` should record the completed stage, files changed, build/test results, API operations performed, generated business identifiers, verified database results, and known limitations.
+- Do not claim a test passed unless its command was actually run and its output checked. Distinguish implemented, built, API-tested, and database-verified status.
+- Include the two documentation files in the final diff report for the stage.
+
+## 8. User confirmation and reporting
+- The user performs all database schema changes and all Git staging/commits/pushes.
+- Ask for approval before moving to a new service, expanding the approved scope, applying a schema-dependent change, reconfiguring the build, or running an operation outside the approved local test plan.
+- Do not interpret permission to test through the API as permission to change the database schema directly.
+- Never run OpenCode with `--auto` for this project. Keep interactive approvals enabled.

@@ -13,5 +13,74 @@
         }
       }
     }
+  },
+  "permission": {
+    "*": "ask",
+    "read": {
+      "*": "allow",
+      "*.env": "ask",
+      "*.env.*": "ask",
+      "*.env.example": "allow",
+      "/home/ahmad/.pgpass": "deny"
+    },
+    "edit": {
+      "*": "allow",
+      "/home/ahmad/projects/build-CoreBanking-Desktop-Debug/**": "deny",
+      "/home/ahmad/.pgpass": "deny"
+    },
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "lsp": "allow",
+    "question": "allow",
+    "todowrite": "allow",
+    "task": "ask",
+    "webfetch": "ask",
+    "websearch": "ask",
+    "external_directory": {
+      "/home/ahmad/projects/build-CoreBanking-Desktop-Debug/**": "allow",
+      "/home/ahmad/.pgpass": "deny"
+    },
+    "bash": {
+      "*": "ask",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "git ls-files*": "allow",
+      "git branch --show-current": "allow",
+      "cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2*": "allow",
+      "curl *http://localhost:8080*": "allow",
+      "curl *http://127.0.0.1:8080*": "allow",
+      "git add*": "deny",
+      "git * add*": "deny",
+      "git commit*": "deny",
+      "git * commit*": "deny",
+      "git push*": "deny",
+      "git * push*": "deny",
+      "git reset*": "deny",
+      "git * reset*": "deny",
+      "git clean*": "deny",
+      "git * clean*": "deny",
+      "git checkout*": "deny",
+      "git switch*": "deny",
+      "git merge*": "deny",
+      "git rebase*": "deny",
+      "git cherry-pick*": "deny",
+      "sudo*": "deny",
+      "su *": "deny",
+      "pkexec*": "deny",
+      "createdb*": "deny",
+      "dropdb*": "deny",
+      "createuser*": "deny",
+      "dropuser*": "deny",
+      "pg_restore*": "deny",
+      "pg_ctl*": "deny",
+      "initdb*": "deny",
+      "psql*": "deny",
+      "psql -h localhost -p 5432 -U corebanking_reader -d corebanking*": "allow",
+      "psql -h localhost -U corebanking_reader -d corebanking*": "allow",
+      "psql -U corebanking_reader -h localhost -d corebanking*": "allow"
+    }
   }
 }
