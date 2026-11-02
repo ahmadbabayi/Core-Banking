@@ -449,6 +449,8 @@ Migration شماره 015 این ساختارها و Triggerهای مربوط ر�
   - `POST /api/v1/holds/{id}/events`
   - `GET /api/v1/holds/{id}/events`
 - Controller فقط اعتبارسنجی ساختار JSON، نوع فیلدها، شناسه مثبت و حضور فیلدهای الزامی را انجام می‌دهد؛ قواعد کسب‌وکار، Idempotency و اعتبارسنجی Trigger در `HoldService` باقی مانده‌اند.
+- `amount` در Hold و Event فقط به‌صورت JSON string پذیرفته می‌شود. ورودی عددی JSON، صفر، منفی، رشته خالی، فاصله ابتدا/انتها، قالب علمی، جداکننده نامعتبر و بیش از ۸ رقم اعشار رد می‌شوند. هیچ تبدیل یا گردکردن بی‌صدایی انجام نمی‌شود.
+- `HoldService` مبلغ معتبر را قبل از ساخت Fingerprint نرمال می‌کند (حذف صفرهای انتهایی)؛ بنابراین `"0.10"` و `"0.1"` برای Idempotency یک مقدار canonical دارند. دقت ستون‌های `account_hold.amount` و `account_hold_events.amount` در Schema فعلی `numeric` بدون precision/scale ثابت است و محدودیت ۸ رقم اعشار یک قاعده سرویس است، نه فرض دقت ارز.
 - پاسخ `POST /api/v1/holds` برای ایجاد جدید `201 Created` و برای Retry دقیق `200 OK` است و از `HoldResult.snapshot` ساخته می‌شود.
 - پاسخ `POST /api/v1/holds/{id}/events` برای ایجاد جدید `201 Created` و برای Retry دقیق `200 OK` است و وضعیت Hold را از `HoldEventResult.snapshot` می‌آورد.
 - `HoldEventResult` علاوه بر `eventId`، فیلدهای واقعی Event ثبت‌شده شامل `holdId`، `eventType`، `amount`، `effectiveAt` و `reasonCode` را نیز برمی‌گرداند. این مقادیر داخل همان تراکنش و پیش از Commit از `account_hold_events` خوانده می‌شوند.

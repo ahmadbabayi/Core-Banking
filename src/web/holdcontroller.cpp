@@ -114,15 +114,18 @@ bool parsePositiveId(const QJsonValue& value, qint64* id)
     return true;
 }
 
-QString amountToText(const QJsonValue& value)
+bool parseAmountString(const QJsonValue& value, QString* amount)
 {
-    if (value.isString())
-        return value.toString().trimmed();
+    if (!value.isString())
+        return false;
 
-    if (value.isDouble())
-        return QString::number(value.toDouble(), 'f', 8);
+    const QString text = value.toString();
 
-    return QString();
+    if (text.isEmpty() || text != text.trimmed())
+        return false;
+
+    *amount = text;
+    return true;
 }
 
 } // namespace
@@ -243,7 +246,6 @@ HttpResponse HoldController::createHold(const QByteArray& body)
     const QJsonValue idempotencyValue = object.value("idempotencyKey");
 
     if (!accountValue.isDouble() ||
-        (!amountValue.isString() && !amountValue.isDouble()) ||
         !reasonCodeValue.isString() ||
         !idempotencyValue.isString()) {
         return {
@@ -251,6 +253,16 @@ HttpResponse HoldController::createHold(const QByteArray& body)
             ApiResponse::error(
                 "INVALID_HOLD_REQUEST",
                 "accountId, amount, reasonCode and idempotencyKey are required")
+        };
+    }
+
+    QString amount;
+    if (!parseAmountString(amountValue, &amount)) {
+        return {
+            "400 Bad Request",
+            ApiResponse::error(
+                "INVALID_AMOUNT",
+                "amount must be a JSON string without surrounding whitespace")
         };
     }
 
@@ -277,7 +289,6 @@ HttpResponse HoldController::createHold(const QByteArray& body)
         };
     }
 
-    const QString amount = amountToText(amountValue);
     const QString reasonCode = reasonCodeValue.toString().trimmed();
     const QString reasonDescription =
         reasonDescriptionValue.toString().trimmed();
@@ -478,15 +489,14 @@ HttpResponse HoldController::createEvent(
         };
     }
 
-    if (!amountValue.isUndefined() &&
-        !amountValue.isNull() &&
-        !amountValue.isString() &&
-        !amountValue.isDouble()) {
+    QString amount;
+    if (!amountValue.isUndefined() && !amountValue.isNull() &&
+        !parseAmountString(amountValue, &amount)) {
         return {
             "400 Bad Request",
             ApiResponse::error(
                 "INVALID_AMOUNT",
-                "amount must be a string or number")
+                "amount must be a JSON string without surrounding whitespace")
         };
     }
 
@@ -502,7 +512,6 @@ HttpResponse HoldController::createEvent(
     }
 
     const QString eventType = eventTypeValue.toString().trimmed();
-    const QString amount = amountToText(amountValue);
     const QString effectiveAt = effectiveAtValue.toString().trimmed();
     const QString reasonCode = reasonCodeValue.toString().trimmed();
     const QString referenceType = referenceTypeValue.toString().trimmed();

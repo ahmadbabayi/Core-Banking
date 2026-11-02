@@ -38,7 +38,7 @@ Controller فقط اعتبارسنجی ورودی HTTP، ساخت پاسخ JSON 
 
 ### 3.1 `POST /api/v1/holds`
 
-فیلدهای الزامی: `accountId` (عدد صحیح مثبت)، `amount` (رشته یا عدد)، `reasonCode`، `idempotencyKey`.
+فیلدهای الزامی: `accountId` (عدد صحیح مثبت)، `amount` (JSON string)، `reasonCode`، `idempotencyKey`. ورودی عددی JSON برای مبلغ رد می‌شود و مقدار باید حداکثر ۸ رقم اعشار داشته باشد.
 
 فیلدهای اختیاری: `reasonDescription`، `referenceType`، `referenceId`، `effectiveAt`، `expiresAt`.
 

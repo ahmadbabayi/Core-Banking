@@ -517,7 +517,7 @@ struct HoldEventResult {
 قواعد:
 
 - `accountId`: عدد صحیح مثبت و ≤ `2^53-1`.
-- `amount`: رشته یا عدد؛ رشته ترجیح دارد. عدد با `QString::number(value, 'f', 8)` تبدیل می‌شود و سپس سرویس آن را نرمال می‌کند.
+- `amount`: فقط JSON string پذیرفته می‌شود. ورودی عددی JSON رد می‌شود و هیچ تبدیل یا گردکردنی انجام نمی‌شود. مقدار باید مثبت، بدون فاصله ابتدا/انتها، بدون قالب علمی و با حداکثر ۸ رقم اعشار باشد. `HoldService` مقدار معتبر را برای Fingerprint و ذخیره‌سازی نرمال می‌کند (حذف صفرهای انتهایی).
 - `reasonCode`: رشته غیرخالی.
 - `reasonDescription`، `referenceType`، `referenceId`، `effectiveAt`، `expiresAt`: اختیاری؛ `undefined`/`null`/رشته مجاز است.
 - `idempotencyKey`: رشته غیرخالی.
@@ -590,7 +590,7 @@ struct HoldEventResult {
 قواعد:
 
 - `eventType`: اجباری و یکی از `PARTIAL_RELEASE`، `FULL_RELEASE`، `EXPIRY_RELEASE`، `CANCELLATION_RELEASE`.
-- `amount`: فقط برای `PARTIAL_RELEASE` اجباری و معتبر؛ در بقیه انواع نادیده گرفته می‌شود.
+- `amount`: فقط برای `PARTIAL_RELEASE` اجباری و معتبر؛ در بقیه انواع نادیده گرفته می‌شود. اگر ارسال شود، باید JSON string معتبر با حداکثر ۸ رقم اعشار باشد؛ ورودی عددی JSON رد می‌شود.
 - `effectiveAt`: اختیاری.
 - `reasonCode`: اجباری.
 - `referenceType`/`referenceId`: اختیاری.

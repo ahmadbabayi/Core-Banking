@@ -825,6 +825,83 @@ cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
 
 آزمون هم‌زمانی و مسیرهای Expiry/Cancellation همچنان خارج از این اصلاح باقی مانده‌اند.
 
+### 18.10 اصلاح دقت مبلغ در Hold API — 2026-11-02
+
+#### محدوده و فایل‌ها
+
+- تغییر `src/web/holdcontroller.cpp`
+- به‌روزرسانی `docs/PROJECT_CONTEXT.md` و همین سند
+- به‌روزرسانی `docs/opencode-reports/HOLD_CONTROLLER_DESIGN.md`
+- به‌روزرسانی `docs/opencode-reports/HOLD_CONTROLLER_IMPLEMENTATION.md`
+- ایجاد `docs/opencode-reports/HOLD_AMOUNT_VALIDATION_FIX.md`
+
+هیچ Migration یا تغییر Schema، DDL/DML مستقیم، تغییر `HoldService`، تغییر `DepositService`/`TransferService` یا عملیات Git انجام نشد.
+
+#### منطق اعتبارسنجی
+
+- `amountToText` که ورودی عددی JSON را با `QString::number(value, 'f', 8)` تبدیل می‌کرد حذف شد.
+- `amount` در Hold و Event فقط به‌صورت JSON string پذیرفته می‌شود.
+- رشته خالی، فاصله ابتدا/انتها و ورودی عددی JSON در Controller با `400 INVALID_AMOUNT` رد می‌شوند.
+- اعتبارسنجی دقیق‌تر مقدار (مثبت بودن، حداکثر ۸ رقم اعشار، رد قالب علمی/جداکننده/صفر) در `HoldService` باقی مانده و پاسخ آن `400 HOLD_INVALID_AMOUNT` است.
+- `HoldService` مقدار معتبر را قبل از Fingerprint نرمال می‌کند؛ بنابراین `"0.10"` و `"0.1"` یک مقدار canonical دارند.
+- ستون‌های مبلغ در Schema فعلی `numeric` بدون precision/scale ثابت هستند؛ محدودیت ۸ رقم اعشار قاعده موجود سرویس است و فرض جدیدی درباره دقت ارز ایجاد نشد.
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+خروجی نهایی:
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/holdcontroller.cpp.o
+[  2%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+نتیجه: موفق، بدون هشدار کامپایلر در خروجی.
+
+#### آزمون‌های HTTP
+
+| ورودی | نتیجه |
+|---|---|
+| `"0.12"` | `201`، مبلغ ذخیره‌شده `0.12` |
+| `"0.12345678"` | `201`، مبلغ ذخیره‌شده دقیقاً `0.12345678` |
+| `"0.123456789"` | `400 HOLD_INVALID_AMOUNT` |
+| عدد JSON `0.1` | `400 INVALID_AMOUNT` |
+| `"0"` | `400 HOLD_INVALID_AMOUNT` |
+| `"-0.1"` | `400 HOLD_INVALID_AMOUNT` |
+| `""` | `400 INVALID_AMOUNT` |
+| `" 0.1"` و `"0.1 "` | `400 INVALID_AMOUNT` |
+| `"   "` | `400 INVALID_AMOUNT` |
+| `"1e-3"` | `400 HOLD_INVALID_AMOUNT` |
+| `"1,000.00"` | `400 HOLD_INVALID_AMOUNT` |
+| `"+0.1"` | `400 HOLD_INVALID_AMOUNT` |
+| `"01.0"` | `400 HOLD_INVALID_AMOUNT` |
+| Event با `amount` عددی JSON | `400 INVALID_AMOUNT` |
+| Event با `"0.123456789"` | `400 HOLD_INVALID_AMOUNT` |
+
+آزمون Idempotency canonical:
+
+- ایجاد Hold با `amount="0.10"` و کلید `amount-canonical-20261102` → `201`، `holdId=6`
+- Retry همان کلید با `amount="0.1"` → `200`، همان `holdId=6`، `replayed=true`
+- مقدار ذخیره‌شده در دیتابیس: `0.1`
+
+#### داده‌های آزمایشی جدید
+
+- Hold `4`، مبلغ `0.12`، کلید `amount-valid-2dp-20261102`، وضعیت نهایی `RELEASED`
+- Hold `5`، مبلغ `0.12345678`، کلید `amount-valid-8dp-20261102`، وضعیت نهایی `RELEASED`
+- Hold `6`، مبلغ `0.1`، کلید `amount-canonical-20261102`، وضعیت نهایی `RELEASED`
+- Eventهای `5`، `6` و `7` برای آزادسازی کامل این Holdها
+
+`account_balance` حساب `1` پس از آزمون: `ledger_balance=1`، `available_balance=1`.
+
+#### محدودیت‌ها
+
+- آزمون هم‌زمانی انجام نشد.
+- هیچ مبلغی در مسیر عددی JSON گرد نشد؛ چنین ورودی‌ای اکنون رد می‌شود.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.
