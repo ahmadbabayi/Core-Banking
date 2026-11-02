@@ -44,6 +44,11 @@ void HttpRouter::setDepositController(DepositController* controller)
     depositController = controller;
 }
 
+void HttpRouter::setHoldController(HoldController* controller)
+{
+    holdController = controller;
+}
+
 HttpResponse HttpRouter::route(
     const QByteArray& method,
     const QByteArray& path,
@@ -113,6 +118,99 @@ HttpResponse HttpRouter::route(
         }
 
         return depositController->deposit(body);
+    }
+
+    // Holds
+    if (method == "POST" && path == "/api/v1/holds") {
+        if (holdController == nullptr) {
+            return {
+                "503 Service Unavailable",
+                ApiResponse::error(
+                    "HOLD_SERVICE_UNAVAILABLE",
+                    "Hold service is not configured")
+            };
+        }
+
+        return holdController->createHold(body);
+    }
+
+    if (method == "GET" && path == "/api/v1/holds") {
+        if (holdController == nullptr) {
+            return {
+                "503 Service Unavailable",
+                ApiResponse::error(
+                    "HOLD_SERVICE_UNAVAILABLE",
+                    "Hold service is not configured")
+            };
+        }
+
+        return holdController->getHoldsByAccount(query);
+    }
+
+    const QByteArray holdPrefix = "/api/v1/holds/";
+
+    if (path.startsWith(holdPrefix)) {
+        const QByteArray suffix = path.mid(holdPrefix.size());
+        const QByteArray eventsSuffix = "/events";
+
+        if (suffix.endsWith(eventsSuffix)) {
+            const QByteArray idText = suffix.left(
+                suffix.size() - eventsSuffix.size());
+
+            qint64 id = 0;
+
+            if (idText.isEmpty() || idText.contains('/') ||
+                !parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "INVALID_HOLD_ID",
+                    "Invalid hold ID");
+            }
+
+            if (method == "POST") {
+                if (holdController == nullptr) {
+                    return {
+                        "503 Service Unavailable",
+                        ApiResponse::error(
+                            "HOLD_SERVICE_UNAVAILABLE",
+                            "Hold service is not configured")
+                    };
+                }
+
+                return holdController->createEvent(id, body);
+            }
+
+            if (method == "GET") {
+                if (holdController == nullptr) {
+                    return {
+                        "503 Service Unavailable",
+                        ApiResponse::error(
+                            "HOLD_SERVICE_UNAVAILABLE",
+                            "Hold service is not configured")
+                    };
+                }
+
+                return holdController->getEvents(id);
+            }
+        } else if (method == "GET" && !suffix.contains('/')) {
+            qint64 id = 0;
+
+            if (!parsePositiveId(suffix, &id)) {
+                return badRequest(
+                    "INVALID_HOLD_ID",
+                    "Invalid hold ID");
+            }
+
+            if (holdController == nullptr) {
+                return {
+                    "503 Service Unavailable",
+                    ApiResponse::error(
+                        "HOLD_SERVICE_UNAVAILABLE",
+                        "Hold service is not configured")
+                };
+            }
+
+            return holdController->getHoldById(id);
+        }
     }
 
     // Account opening

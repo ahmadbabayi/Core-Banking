@@ -45,6 +45,8 @@ add_executable(CoreBanking
     src/application/accountopeningservice.cpp
     src/application/depositservice.h
     src/application/depositservice.cpp
+    src/application/holdservice.h
+    src/application/holdservice.cpp
 
     src/domain/account.cpp
     src/domain/account.h
@@ -171,6 +173,8 @@ add_executable(CoreBanking
     src/web/transfercontroller.cpp
     src/web/depositcontroller.h
     src/web/depositcontroller.cpp
+    src/web/holdcontroller.h
+    src/web/holdcontroller.cpp
 )
 
 target_link_libraries(CoreBanking

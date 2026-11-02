@@ -415,6 +415,48 @@ Migration شماره 015 این ساختارها و Triggerهای مربوط ر�
 
 اگر Trigger درج یک رویداد کاملاً تکراری را با `RETURN NULL` متوقف کند، سرویس باید رویداد قبلی را با `(hold_id, idempotency_key)` بازیابی و نتیجه قبلی را بازگرداند.
 
+### وضعیت پیاده‌سازی HoldService — 2026-11-01
+
+- `HoldService` در `src/application/holdservice.h` و `src/application/holdservice.cpp` پیاده‌سازی شده است؛ در این مرحله فقط `createHold` و `createEvent`.
+- این سرویس مستقیماً SQL اجرا می‌کند و Repository جدیدی اضافه نشده است؛ سبک آن هم‌راستا با `DepositService` و `TransferService` است.
+- ترتیب قفل در هر دو عملیات: Account → Account Balance → Account Hold؛ این ترتیب با Deposit و Transfer یکسان است.
+- Idempotency ایجاد Hold روی `account_hold` با `idempotency_key` و `request_fingerprint` انجام می‌شود. Migration 017 این ستون‌ها، قیدهای سازگاری و ایندکس یکتای `uq_hold_api_idempotency` را اضافه کرده است.
+- Idempotency رویداد روی `(hold_id, idempotency_key)` و پیش از اعتبارسنجی وضعیت/مبلغ بررسی می‌شود؛ بنابراین Retry پس از `FULL_RELEASE` نیز نتیجه قبلی را برمی‌گرداند.
+- `AvailableForHold = ledger_balance - active holds` است و از اضافه‌برداشت برای Hold استفاده نمی‌شود.
+- `createHold` و `createEvent` هیچ تغییری در `ledger_balance` یا `available_balance` نمی‌دهند.
+- نتیجه سرویس شامل فیلد `replayed` است تا لایه Controller بعدی بتواند بین ایجاد جدید (201) و Retry (200) تمایز بدهد.
+- در این مرحله هیچ Controller، Route یا Endpoint برای Hold ایجاد نشده است؛ بنابراین هنوز آزمون HTTP یا نوشتن داده از طریق API برای این سرویس انجام‌شدنی نیست.
+
+### تکمیل HoldService — 2026-11-02
+
+- زمان پیش‌فرض `createHold` و `createEvent` اکنون از `CURRENT_TIMESTAMP` دیتابیس و داخل همان تراکنش خوانده می‌شود. مقدار خوانده‌شده به میلی‌ثانیه Truncate می‌شود و همان مقدار نرمال‌شده در INSERT بایند می‌شود.
+- Fingerprint تغییری نکرده است: زمان پیش‌فرض سرور وارد Fingerprint نمی‌شود و درخواست بدون زمان همچنان مقدار خالی را در Fingerprint دارد. زمان ارسالی کلاینت مانند قبل نرمال‌شده وارد Fingerprint می‌شود.
+- Idempotency Lookup در هر دو عملیات پیش از همه اعتبارسنجی‌های وابسته به وضعیت فعلی Hold انجام می‌شود.
+- `getHoldById`، `getHoldsByAccount` و `getHoldEvents` اضافه شده‌اند. مبالغ به‌صورت `QString` از `NUMERIC` خوانده می‌شوند و از VIEW `account_hold_status` یا جدول رویدادها می‌آیند.
+- `HoldResult` و `HoldEventResult` دارای `HoldStatusData snapshot` و `hasSnapshot` هستند. Snapshot در همه مسیرهای `Completed`، شامل Retry، Unique Conflict و Trigger RETURN NULL، پیش از Commit و داخل همان تراکنش خوانده می‌شود.
+- نگاشت خطاهای PostgreSQL با SQLSTATE، ترکیب `databaseText()` و `text()` و تشخیص نام Constraint/Index مقاوم‌تر شده است. کدهای اعتبارسنجی Trigger به `Rejected` و کدهای immutability یا خطاهای ناشناخته به `Failed` نگاشت می‌شوند.
+- برای INSERT رویداد نیز `SAVEPOINT hold_event_insert` اضافه شده است. در صورت تعارض Unique Idempotency، پس از `ROLLBACK TO SAVEPOINT` نتیجه قبلی بازیابی می‌شود؛ اگر Rollback به Savepoint شکست بخورد، تراکنش ادامه پیدا نمی‌کند.
+- هیچ تغییر Schema، Migration، Controller، Route، Endpoint، `CMakeLists.txt`، `DepositService` یا `TransferService` انجام نشده است.
+- آزمون HTTP همچنان انجام‌شدنی نیست. Build موفق و مسیرهای خواندن با یک Harness موقت read-only روی نقش `corebanking_reader` بررسی شده‌اند؛ آزمون نوشتن و سناریوهای کامل Idempotency/Trigger به مرحله Controller موکول است.
+
+### Hold HTTP API — 2026-11-02
+
+- `HoldController` در `src/web/holdcontroller.h` و `src/web/holdcontroller.cpp` پیاده‌سازی شده و در `HttpRouter` و `main.cpp` متصل است.
+- Endpointها:
+  - `POST /api/v1/holds`
+  - `GET /api/v1/holds/{id}`
+  - `GET /api/v1/holds?accountId={id}`
+  - `POST /api/v1/holds/{id}/events`
+  - `GET /api/v1/holds/{id}/events`
+- Controller فقط اعتبارسنجی ساختار JSON، نوع فیلدها، شناسه مثبت و حضور فیلدهای الزامی را انجام می‌دهد؛ قواعد کسب‌وکار، Idempotency و اعتبارسنجی Trigger در `HoldService` باقی مانده‌اند.
+- پاسخ `POST /api/v1/holds` برای ایجاد جدید `201 Created` و برای Retry دقیق `200 OK` است و از `HoldResult.snapshot` ساخته می‌شود.
+- پاسخ `POST /api/v1/holds/{id}/events` برای ایجاد جدید `201 Created` و برای Retry دقیق `200 OK` است و وضعیت Hold را از `HoldEventResult.snapshot` می‌آورد.
+- `HoldEventResult` علاوه بر `eventId`، فیلدهای واقعی Event ثبت‌شده شامل `holdId`، `eventType`، `amount`، `effectiveAt` و `reasonCode` را نیز برمی‌گرداند. این مقادیر داخل همان تراکنش و پیش از Commit از `account_hold_events` خوانده می‌شوند.
+- در مسیر Retry و بازیابی Unique Conflict نیز اطلاعات همان Event قبلی از دیتابیس خوانده و بازگردانده می‌شود.
+- Controller پس از Commit هیچ Query جدیدی اجرا نمی‌کند و پاسخ Create رویداد را از فیلدهای واقعی `HoldEventResult` می‌سازد، نه از ورودی درخواست.
+- نگاشت خطا: خطاهای اعتبارسنجی ورودی و سرویس به `400`، Hold/Account ناموجود به `404`، تعارض Idempotency به `409`، رد کسب‌وکاری Hold/Trigger به `422` و خطاهای داخلی به `500` نگاشت می‌شوند. نبود Controller در Router نیز `503 HOLD_SERVICE_UNAVAILABLE` می‌دهد.
+- آزمون پایه API محلی در 2026-11-02 انجام شد: ایجاد Hold، Retry Hold، تعارض کلید، دریافت جزئیات/فهرست، آزادسازی PARTIAL و FULL، Retry رویداد، تاریخچه رویدادها، خطاهای `400/404/409/422` و عدم تغییر `ledger_balance`. آزمون هم‌زمانی و پوشش کامل همه حالت‌های Expiry/Cancellation هنوز انجام نشده است.
+
 ## 14. محدودیت‌های عملیاتی حساب
 
 محدودیت عملیاتی با مسدودی وجه یکی نیست.
@@ -469,6 +511,14 @@ Migration شماره 015 این ساختارها و Triggerهای مربوط ر�
 
 **محدودیت شواهد:** History حاوی گزارش جزئی برخی تست‌ها است، اما خروجی کامل همه تست‌های مورد تأیید کاربر، مخصوصاً گروه‌های جغرافیا و شعب و آخرین تست Transfer، در این فایل ثبت نشده است. هنگام اجرای دوباره تست‌ها، تاریخ، SHA، دیتابیس، درخواست، پاسخ و کنترل مانده/Journal به History اضافه شود. از این کمبود مستندات نباید نتیجه گرفت APIها تست نشده‌اند؛ وضعیت تکمیل و تست آن‌ها طبق تأیید کاربر پذیرفته شده است.
 
+### 16.1.1 Hold API — پیاده‌سازی و آزمون محلی 2026-11-02
+
+| گروه API | مسیرهای ثبت‌شده در Router | وضعیت |
+|---|---|---|
+| Holds | `POST /api/v1/holds`؛ `GET /api/v1/holds/{id}`؛ `GET /api/v1/holds?accountId={id}`؛ `POST /api/v1/holds/{id}/events`؛ `GET /api/v1/holds/{id}/events` | پیاده‌سازی و آزمون پایه API محلی |
+
+این آزمون شامل ایجاد Hold، Retry، تعارض کلید، دریافت جزئیات و فهرست، آزادسازی جزئی و کامل، Retry رویداد، تاریخچه رویدادها، چند مسیر خطا و کنترل عدم تغییر مانده سپرده بود. آزمون هم‌زمانی، بار و پوشش کامل Expiry/Cancellation هنوز باقی است.
+
 ### 16.2 مسیرهای موجود در Router که تست مستقیمشان در History ثبت نشده است
 
 این مسیرها در Router متصل به Controller هستند، اما سند تاریخچه فعلی شواهد کافی از اجرای تست HTTP مستقیم و کامل آن‌ها ندارد. بنابراین آن‌ها را «API مفقود» نمی‌دانیم؛ فقط لازم است شواهد آزمونشان ثبت یا تأیید شود.
@@ -500,6 +550,7 @@ History استفاده از یک نگاشت فعال در آزمون افتتا�
 - Account Types: `status`، `currencyId`.
 - Product–Ledger Mappings: `status`، `productId`، `ledgerAccountId`.
 - Customers: پارامتر `nationalId` برای مسیر `GET /api/v1/customers` اجباری است.
+- Holds: پارامتر `accountId` برای مسیر `GET /api/v1/holds` اجباری است.
 
 فیلدهای شناخته‌شده ایجاد محصول: `code`، `name`، `accountTypeId`، `currencyId`، `effectiveFrom` و `effectiveTo`؛ مقدار `effectiveTo` می‌تواند `null` باشد. برای افتتاح حساب، فیلدهای `productId`، `openingBranchId` و `ownerCustomerIds` ثبت شده‌اند. قرارداد کامل body و پاسخ باید در صورت تغییر از Controller مربوطه استخراج شود؛ این فهرست جایگزین قرارداد کامل JSON نیست.
 
@@ -507,8 +558,6 @@ History استفاده از یک نگاشت فعال در آزمون افتتا�
 
 در `src/web/httprouter.cpp` بررسی‌شده، مسیر HTTP مستقیمی برای موارد زیر وجود ندارد؛ وجود جدول، Migration یا منطق داخلی را نباید با وجود API اشتباه گرفت:
 
-- ایجاد مسدودی و دریافت جزئیات/فهرست مسدودی‌ها.
-- آزادسازی جزئی یا کامل، لغو و آزادسازی انقضای Hold.
 - برداشت وجه (Withdrawal).
 - برگشت تراکنش (Reversal).
 - دریافت مانده حساب از مسیر اختصاصی.
@@ -552,12 +601,15 @@ Migrationهای تاریخی شناخته‌شده:
 - `014_product_balance_rules.sql`
 - `015_account_holds.sql`
 - `016_allow_overdraft_balances.sql`
+- `017_hold_idempotency.sql`
 
 فهرست بالا سابقه تغییرات است؛ وضعیت اعمال Migration در هر محیط باید جداگانه تأیید شود.
 
 Migration شماره 015 برای مسدودی وجه و رویدادهای آزادسازی است. طبق سابقه، در تاریخ 2026-10-24 روی دیتابیس اصلی محلی اجرا شده است.
 
 Migration شماره 016 طبق سابقه در دیتابیس اصلی محلی اجرا شده و شامل تغییرات مربوط به مانده قابل برداشت و Idempotency تراکنش است؛ جزئیات قطعی هر تغییر باید با فایل Migration و Schema جاری تطبیق داده شود.
+
+Migration شماره 017 (`017_hold_idempotency.sql`) ستون‌های `idempotency_key` و `request_fingerprint`، سه Check Constraint مرتبط و ایندکس یکتای `uq_hold_api_idempotency` را به `account_hold` اضافه می‌کند. کاربر اجرای موفق آن را در 2026-11-01 تأیید کرده و وجود ستون‌ها، قیدها و ایندکس با بررسی read-only دیتابیس `corebanking` تأیید شده است.
 
 ## 18. وضعیت قابلیت‌ها و کارهای باقی‌مانده
 
@@ -575,7 +627,7 @@ Migration شماره 016 طبق سابقه در دیتابیس اصلی محلی
 
 ### 18.3 قابلیت‌های/APIهای باقی‌مانده
 
-1. **Hold API در C++/HTTP:** Migration 015 و triggerهای دیتابیس موجودند، اما Router فعلی endpoint برای ایجاد، نمایش، لغو، آزادسازی جزئی/کامل و آزادسازی انقضا ندارد.
+1. **Hold API در C++/HTTP:** `HoldService` و `HoldController` پیاده‌سازی شده‌اند و پنج Endpoint Hold در Router متصل‌اند. آزمون پایه API محلی انجام شده است؛ آزمون هم‌زمانی، پوشش کامل Expiry/Cancellation و برخی سناریوهای مرزی هنوز باقی است.
 2. **Withdrawal API:** endpoint برداشت در Router بررسی‌شده وجود ندارد؛ باید قرارداد و ثبت حسابداری آن، در صورت ورود به دامنه فعلی، طراحی و پیاده‌سازی شود.
 3. **Reversal API:** مسیر مستقل برگشت وجود ندارد. برگشت باید تراکنش جدید و Journal معکوس ایجاد کند، نه اینکه تراکنش قبلی را حذف یا ویرایش کند.
 4. **Balance/Transaction/Journal read APIs:** endpoint اختصاصی برای دریافت مانده یا پرس‌وجوی تراکنش‌ها و Journalها در Router فعلی دیده نشده است؛ مشخص شود برای کلاینت/عملیات لازم‌اند یا خیر.

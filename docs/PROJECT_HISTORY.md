@@ -533,7 +533,299 @@ Router در صورت ناشناخته‌بودن مسیر، پاسخ `404 Not Fo
 
 این فهرست به معنای باقی‌ماندن دوازده گروه API تأییدشده از سوی کاربر نیست؛ موارد فوق عمدتاً endpointهایی هستند که Router ندارد، عمق کامل آزمون مالی را می‌خواهند، یا شواهد مستقیمشان در History ناقص است.
 
-## 18. قاعده پایانی تاریخچه
+## 18. پیاده‌سازی HoldService — 2026-11-01
+
+### 18.1 محدوده و فایل‌ها
+
+- ایجاد `src/application/holdservice.h`
+- ایجاد `src/application/holdservice.cpp`
+- تغییر `CMakeLists.txt` فقط برای افزودن دو فایل بالا به target (با تأیید کاربر)
+- به‌روزرسانی `docs/PROJECT_CONTEXT.md` و همین سند
+- ایجاد گزارش `docs/opencode-reports/HOLD_SERVICE_IMPLEMENTATION.md`
+
+در این مرحله هیچ Controller، Router، Endpoint، `main.cpp`، Migration یا تغییر Git انجام نشد.
+
+### 18.2 پیش‌نیاز Schema
+
+کاربر اجرای موفق Migration 017 را تأیید کرد. با اتصال read-only به `corebanking` موارد زیر تأیید شدند:
+
+- ستون‌های `account_hold.idempotency_key` (`varchar(100)`, nullable) و `account_hold.request_fingerprint` (`varchar(64)`, nullable)
+- `ck_hold_idempotency_pair`، `ck_hold_idempotency_key_length` و `ck_hold_fingerprint_length`
+- ایندکس یکتای جزئی `uq_hold_api_idempotency` روی `idempotency_key` برای مقادیر غیر NULL
+- وجود VIEW `account_hold_status` و Trigger اعتبارسنجی رویداد مطابق Migration 015
+
+هیچ DDL یا DML اجرا نشد.
+
+### 18.3 Build
+
+دستور اجراشده:
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+نتیجه واقعی خروجی:
+
+```text
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/ahmad/projects/build-CoreBanking-Desktop-Debug
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/holdservice.cpp.o
+[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/infrastructure/database.cpp.o
+[  4%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+Build موفق بود. هیچ هشدار کامپایلر در خروجی مشاهده نشد. پس از یک اصلاح کوچک در بایندینگ پارامتر Idempotency، Build افزایشی دوباره اجرا شد و مجدداً با `[100%] Built target CoreBanking` پایان یافت.
+
+### 18.4 آزمون‌ها
+
+- آزمون HTTP انجام نشد؛ در این مرحله هیچ Controller/Route برای Hold وجود ندارد و فراخوانی سرویس از طریق API محلی ممکن نیست.
+- داده آزمایشی ایجاد نشد و هیچ نوشتن مستقیم در دیتابیس انجام نشد.
+- بررسی دیتابیس فقط read-only با نقش `corebanking_reader` انجام شد.
+- آزمون عملکردی `createHold`/`createEvent`، Idempotency، قفل‌ها و سناریوهای خطا باید در مرحله Controller/Route و با API واقعی انجام و ثبت شود.
+
+### 18.5 نکات پیاده‌سازی
+
+- `createHold`: اعتبارسنجی ورودی، fingerprint بخش 8.1 طراحی، Advisory Lock با پیشوند `HOLD:`، Idempotency Lookup روی `account_hold`، قفل Account → Balance → Hold، بررسی وضعیت حساب/محصول/سرفصل، `AvailableForHold = ledger_balance - active holds`، INSERT با Idempotency، خواندن `account_hold_status` پیش از Commit.
+- `createEvent`: پارس و نرمال‌سازی زمان پیش از Idempotency، fingerprint بخش 8.2، Advisory Lock با پیشوند `HOLD-EVENT:`، Pre-check رویداد پیش از اعتبارسنجی وضعیت/مبلغ، قفل Account → Balance → Hold، بازخوانی وضعیت از VIEW، قواعد مبلغ PARTIAL/FULL/EXPIRY/CANCELLATION و نگاشت خطاهای Trigger.
+- در همه SELECTها خطای `exec()` از نتیجه صفر ردیف (`query.next() == false`) جدا مدیریت می‌شود و `numRowsAffected()` مبنای تشخیص وجود ردیف نیست.
+- در مسیر رقابت نادر `uq_hold_api_idempotency`، برای امکان ادامه Query پس از خطای PostgreSQL از `SAVEPOINT hold_insert` و `ROLLBACK TO SAVEPOINT` استفاده شد؛ سپس ردیف موجود خوانده و نتیجه قبلی برگردانده می‌شود.
+- فیلد `replayed` به `HoldResult` و `HoldEventResult` اضافه شد تا Controller مرحله بعد بتواند 201 (ایجاد جدید) را از 200 (Retry) تفکیک کند.
+- کد خطای `HOLD_INVALID_REFERENCE` برای طول بیش از حد `referenceType`/`referenceId` اضافه شد؛ این مورد در جدول خطاهای طراحی به‌صراحت نیامده بود ولی برای جلوگیری از خطای 500 ناشی از طول ستون لازم است.
+- برای محاسبه موجودی Hold، تابع بارگذاری وضعیت حساب علاوه بر فیلدهای Deposit، ستون `b.ledger_balance` را نیز می‌خواند؛ به همین دلیل SQL آن نسخه تطبیق‌یافته‌ی `loadLockedAccount` است و بخش Overdraft (که برای Hold استفاده نمی‌شود) حذف شده است.
+
+### 18.6 محدودیت‌های باقی‌مانده
+
+- Controller، Route و Endpointهای Hold هنوز وجود ندارند.
+- قرارداد پاسخ JSON و نگاشت HTTP (201/200/422/409/404/500) در مرحله Controller پیاده‌سازی و آزمون می‌شود.
+- آزمون هم‌زمانی واقعی، Retry با payload متفاوت، موجودی ناکافی و بررسی مالی پس از Commit هنوز اجرا نشده‌اند.
+
+### 18.7 تکمیل HoldService — 2026-11-02
+
+#### محدوده و فایل‌ها
+
+- تغییر `src/application/holdservice.h`
+- تغییر `src/application/holdservice.cpp`
+- به‌روزرسانی `docs/PROJECT_CONTEXT.md`
+- به‌روزرسانی همین سند
+- به‌روزرسانی `docs/opencode-reports/HOLD_SERVICE_IMPLEMENTATION.md`
+
+هیچ Controller، Route، Endpoint، Migration، تغییر Schema، `main.cpp`، `CMakeLists.txt`، `DepositService` یا `TransferService` تغییر نکرد. هیچ عملیات Git انجام نشد.
+
+#### تغییرات پیاده‌سازی
+
+- افزودن `databaseNow()` با خواندن `CURRENT_TIMESTAMP` داخل تراکنش و Truncate به میلی‌ثانیه. زمان پیش‌فرض Hold و Event اکنون از دیتابیس می‌آید.
+- Fingerprint بدون زمان ارسالی تغییر نکرده است؛ زمان پیش‌فرض سرور وارد Fingerprint نمی‌شود.
+- Idempotency Lookup در `createHold` و `createEvent` پیش از اعتبارسنجی‌های وابسته به وضعیت فعلی Hold باقی مانده است.
+- افزودن `HoldStatusData`، `HoldEventData`، `HoldQueryResult`، `HoldListResult` و `HoldEventsResult`.
+- افزودن `getHoldById`، `getHoldsByAccount` و `getHoldEvents`.
+- افزودن `snapshot` و `hasSnapshot` به `HoldResult` و `HoldEventResult` و پرکردن آن در همه مسیرهای `Completed` پیش از Commit، شامل Retry و بازیابی Unique Conflict.
+- مقاوم‌سازی نگاشت خطا با SQLSTATE، `databaseText()`، `text()` و نام Constraint/Index. کدهای اعتبارسنجی Trigger به Rejected و کدهای immutability/ناشناخته به Failed نگاشت می‌شوند.
+- افزودن `SAVEPOINT hold_event_insert` و مسیر بازیابی `uq_account_hold_event_idempotency`. شکست `ROLLBACK TO SAVEPOINT` باعث پایان تراکنش با خطا می‌شود و ادامه Query انجام نمی‌شود.
+
+#### Build
+
+دستور اجراشده:
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+خروجی نهایی:
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/holdservice.cpp.o
+[  2%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+نتیجه: موفق. هشدار کامپایلری در خروجی مشاهده نشد.
+
+#### آزمون‌ها
+
+- **آزمون HTTP: انجام نشد.** در این مرحله Controller/Route/Endpoint وجود ندارد و نوشتن از طریق API ممکن نیست.
+- **آزمون نوشتن Hold/Event: انجام نشد.** هیچ داده آزمایشی ایجاد نشد و هیچ DML اجرا نشد.
+- **بررسی Schema: فقط read-only** با نقش `corebanking_reader` روی `corebanking`:
+  - وجود `account_hold.idempotency_key` و `request_fingerprint`
+  - وجود ایندکس `uq_hold_api_idempotency`
+  - وجود ستون‌های VIEW `account_hold_status`
+  - وجود Triggerهای `trg_validate_account_hold_event` و `trg_account_hold_event_immutable`
+  - خروجی نمونه `CURRENT_TIMESTAMP` با فرمت ISO-8601 UTC و میلی‌ثانیه
+- **آزمون مسیرهای خواندن:** یک Harness موقت خارج از مخزن در `/tmp/opencode/hold_read_test.cpp` با اتصال read-only به نقش `corebanking_reader` اجرا شد. موارد بررسی‌شده:
+  - `getHoldById(0)` → `Failed` با `HOLD_INVALID_HOLD_ID`
+  - `getHoldById(999999999)` → `NotFound` با `HOLD_NOT_FOUND`
+  - `getHoldsByAccount(0)` → `Failed` با `HOLD_INVALID_ACCOUNT_ID`
+  - `getHoldsByAccount(1)` → `Completed` با لیست خالی
+  - `getHoldEvents(0)` → `Failed` با `HOLD_INVALID_HOLD_ID`
+  - `getHoldEvents(999999999)` → `HoldNotFound` با `HOLD_NOT_FOUND`
+  - خروجی: `READ_METHOD_CHECKS_PASSED`
+- در زمان اجرای آزمون، جدول‌های `account_hold` و `account_hold_events` صفر ردیف داشتند؛ بنابراین مسیرهای خواندن با داده واقعی Hold و Event و همچنین Snapshot مسیر Create هنوز آزمون نشده‌اند.
+
+#### شناسه‌های ایجادشده
+
+هیچ شناسه کسب‌وکاری جدیدی ایجاد نشد.
+
+#### محدودیت‌های باقی‌مانده
+
+- Controller، Route و Endpointهای Hold هنوز وجود ندارند.
+- آزمون HTTP، Idempotency واقعی، Snapshot پس از Create، خطاهای Trigger و هم‌زمانی باید در مرحله Controller با API واقعی انجام شوند.
+- `database/CURRENT_SCHEMA.sql` نسبت به Migration 017 همچنان قدیمی است؛ در این مرحله تغییر نکرد.
+
+### 18.8 HoldController و اتصال HTTP — 2026-11-02
+
+#### محدوده و فایل‌ها
+
+- ایجاد `src/web/holdcontroller.h`
+- ایجاد `src/web/holdcontroller.cpp`
+- تغییر `src/web/httprouter.h` و `src/web/httprouter.cpp`
+- تغییر `src/main.cpp`
+- تغییر `CMakeLists.txt` برای افزودن فایل‌های Controller
+- به‌روزرسانی `docs/PROJECT_CONTEXT.md` و همین سند
+- ایجاد `docs/opencode-reports/HOLD_CONTROLLER_IMPLEMENTATION.md`
+
+هیچ Migration، DDL/DML مستقیم، تغییر Schema، تغییر `DepositService`/`TransferService` یا عملیات Git انجام نشد.
+
+#### Endpointهای پیاده‌شده
+
+- `POST /api/v1/holds`
+- `GET /api/v1/holds/{id}`
+- `GET /api/v1/holds?accountId={id}`
+- `POST /api/v1/holds/{id}/events`
+- `GET /api/v1/holds/{id}/events`
+
+Controller برای پاسخ Create از Snapshot سرویس استفاده می‌کند و پس از Commit هیچ Query جدیدی اجرا نمی‌کند. ایجاد جدید `201`، Retry دقیق `200`، تعارض Idempotency `409`، ورودی نامعتبر `400`، Hold/Account ناموجود `404`، رد کسب‌وکاری `422` و خطای داخلی `500` برمی‌گرداند. نبود Controller در Router نیز `503 HOLD_SERVICE_UNAVAILABLE` است.
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+خروجی نهایی:
+
+```text
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/ahmad/projects/build-CoreBanking-Desktop-Debug
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/main.cpp.o
+[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httpserver.cpp.o
+[  4%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httprouter.cpp.o
+[  5%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/holdcontroller.cpp.o
+[  2%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+در تلاش اول، خطای نوع `QString` در برابر `HttpResponse::status` مشاهده و اصلاح شد؛ Build نهایی موفق بود.
+
+#### آزمون HTTP محلی
+
+سرور محلی از Build فعلی روی `http://localhost:8080` اجرا و پس از آزمون متوقف شد. همه نوشتن‌ها از API انجام شدند.
+
+| سناریو | نتیجه |
+|---|---|
+| `POST /api/v1/holds` با `stage3-hold-001-20261102` و مبلغ `0.10` | `201`، `holdId=1`، status=`ACTIVE`، snapshot کامل |
+| Retry همان Hold با همان Payload | `200`، همان `holdId=1`، `replayed=true` |
+| همان کلید با Payload متفاوت | `409 IDEMPOTENCY_KEY_REUSED` |
+| `GET /api/v1/holds/1` | `200`، Snapshot منطبق |
+| `GET /api/v1/holds/999999999` | `404 HOLD_NOT_FOUND` |
+| `GET /api/v1/holds?accountId=1` | `200`، `count=1` |
+| `GET /api/v1/holds` بدون `accountId` | `400 MISSING_ACCOUNT_ID` |
+| `GET /api/v1/holds?accountId=abc` | `400 HOLD_INVALID_ACCOUNT_ID` |
+| `GET /api/v1/holds/abc` | `400 INVALID_HOLD_ID` |
+| `POST /holds/1/events` با PARTIAL `0.04` | `201`، `eventId=1`، remaining=`0.06`، status=`PARTIALLY_RELEASED` |
+| Retry همان Event | `200`، همان `eventId=1`، `replayed=true` |
+| `POST /holds/1/events` با FULL_RELEASE | `201`، `eventId=2`، remaining=`0`، status=`RELEASED` |
+| Retry FULL_RELEASE | `200`، همان `eventId=2`، `replayed=true` |
+| همان کلید Event با Payload متفاوت | `409 IDEMPOTENCY_KEY_REUSED` |
+| `GET /holds/1/events` | `200`، `count=2`، هر دو Event |
+| `POST /holds/999999999/events` | `404 HOLD_NOT_FOUND` |
+| `GET /holds/999999999/events` | `404 HOLD_NOT_FOUND` |
+| JSON نامعتبر | `400 INVALID_JSON` |
+| `eventType` نامعتبر | `400 HOLD_INVALID_EVENT_TYPE` |
+| PARTIAL برابر remaining | `422 PARTIAL_RELEASE_MUST_BE_LESS_THAN_REMAINING_AMOUNT` |
+| رویداد با `effectiveAt` آینده | `422 ACCOUNT_HOLD_EVENT_CANNOT_BE_FUTURE_DATED` |
+| Hold با مبلغ بیشتر از موجودی قابل Hold | `422 INSUFFICIENT_AVAILABLE_FUNDS` |
+| Hold برای حساب ناموجود | `404 ACCOUNT_NOT_FOUND` |
+
+داده‌های ساخته‌شده:
+
+- Hold `1`: `stage3-hold-001-20261102`، مبلغ `0.10`، وضعیت نهایی `RELEASED`
+- Event `1`: `PARTIAL_RELEASE` مبلغ `0.04` روی Hold `1`
+- Event `2`: `FULL_RELEASE` مبلغ `0.06` روی Hold `1`
+- Hold `2`: `stage3-hold-002-20261102`، مبلغ `0.05`، وضعیت نهایی `RELEASED`
+- Event `3`: `FULL_RELEASE` مبلغ `0.05` روی Hold `2`
+
+بررسی read-only دیتابیس:
+
+- `account_balance` حساب `1` قبل و بعد از همه عملیات: `ledger_balance=1`، `available_balance=1`
+- `account_hold_status`: Holdهای `1` و `2` با `remaining_amount=0`، `currently_blocked_amount=0` و وضعیت `RELEASED`
+- `account_hold_events`: سه رویداد مطابق موارد بالا
+
+#### محدودیت‌ها و انحراف‌های ثبت‌شده
+
+- `HoldEventResult` در این مرحله فیلدهای واقعی Event را برنمی‌گرداند و Controller آن‌ها را از ورودی درخواست منعکس می‌کرد. این محدودیت در بخش 18.9 رفع شد.
+- آزمون هم‌زمانی، بار، Expiry Release واقعی، CANCELLATION_RELEASE و پوشش کامل همه حالت‌های مرزی Trigger انجام نشده است.
+- `database/CURRENT_SCHEMA.sql` همچنان نسبت به Migration 017 قدیمی است و تغییر نکرد.
+
+### 18.9 اصلاح HoldEventResult برای بازگرداندن داده واقعی Event — 2026-11-02
+
+#### محدوده و فایل‌ها
+
+- تغییر `src/application/holdservice.h`
+- تغییر `src/application/holdservice.cpp`
+- تغییر `src/web/holdcontroller.h`
+- تغییر `src/web/holdcontroller.cpp`
+- به‌روزرسانی `docs/PROJECT_CONTEXT.md` و همین سند
+- ایجاد `docs/opencode-reports/HOLD_EVENT_RESULT_FIX.md`
+
+هیچ Migration، DDL/DML مستقیم، تغییر Schema، تغییر منطق کسب‌وکار یا تغییر در سرویس‌های دیگر انجام نشد.
+
+#### تغییرات
+
+- `HoldEventResult` اکنون فیلدهای `eventId`، `holdId`، `eventType`، `amount`، `effectiveAt` و `reasonCode` را دارد.
+- یک Loader جدید، رکورد Event را با `eventId` از `account_hold_events` داخل همان تراکنش می‌خواند.
+- این Loader در مسیر ایجاد جدید، Trigger RETURN NULL، بازیابی Unique Conflict و Idempotency Retry پیش از Commit فراخوانی می‌شود.
+- Controller دیگر از `amount`، `effectiveAt` و `reasonCode` ورودی برای ساخت پاسخ استفاده نمی‌کند و پاسخ را از `HoldEventResult` می‌سازد.
+- هیچ Query پس از Commit اضافه نشد.
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+خروجی نهایی:
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/holdservice.cpp.o
+[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/main.cpp.o
+[  4%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httpserver.cpp.o
+[  5%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httprouter.cpp.o
+[  7%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/holdcontroller.cpp.o
+[  8%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+نتیجه: موفق، بدون هشدار کامپایلر در خروجی.
+
+#### آزمون HTTP
+
+- Hold جدید `3` از API با مبلغ `0.01` و کلید `stage4-hold-001-20261102` ایجاد شد.
+- Event بدون `effectiveAt` با `FULL_RELEASE` و کلید `stage4-evt-full-001` ایجاد شد:
+  - پاسخ ایجاد: `201`، `eventId=4`، `amount="0.01"`، `effectiveAt="2026-11-02T18:41:31.810Z"`، `holdStatus="RELEASED"`
+  - Retry همان درخواست: `200`، همان `eventId=4`، همان `amount` و همان `effectiveAt`، `replayed=true`
+- بررسی read-only دیتابیس:
+  - رکورد Event `4`: `amount=0.01`، `effective_at=2026-11-02 22:11:31.81+03:30`، `reason_code=API_TEST_EVENT_DEFAULT_TIME`
+  - زمان پاسخ `18:41:31.810Z` با مقدار ذخیره‌شده در دیتابیس منطبق است.
+- `account_balance` حساب `1` پس از آزمون: `ledger_balance=1`، `available_balance=1`
+- Hold `3` در `account_hold_status`: `remaining_amount=0`، `currently_blocked_amount=0`، `status=RELEASED`
+
+#### محدودیت
+
+آزمون هم‌زمانی و مسیرهای Expiry/Cancellation همچنان خارج از این اصلاح باقی مانده‌اند.
+
+## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.
 

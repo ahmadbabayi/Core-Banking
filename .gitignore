@@ -7,3 +7,4 @@ build/
 
 # Database backup files
 /database/backups/*.dump
+opencode.json
