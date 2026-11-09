@@ -902,6 +902,79 @@ cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
 - آزمون هم‌زمانی انجام نشد.
 - هیچ مبلغی در مسیر عددی JSON گرد نشد؛ چنین ورودی‌ای اکنون رد می‌شود.
 
+### 18.11 اصلاح Idempotency مربوط به `effectiveAt` رویداد — 2026-11-03
+
+#### محدوده و فایل‌ها
+
+- تغییر `src/application/holdservice.cpp`
+- تغییر `src/web/holdcontroller.cpp`
+- به‌روزرسانی `docs/PROJECT_CONTEXT.md` و همین سند
+- ایجاد `docs/opencode-reports/HOLD_EVENT_EFFECTIVE_AT_IDEMPOTENCY_FIX.md`
+
+هیچ Migration یا تغییر Schema، DDL/DML مستقیم، تغییر `DepositService`/`TransferService`، تغییر `main.cpp`/`CMakeLists.txt` یا عملیات Git انجام نشد.
+
+#### بررسی Fingerprint و علت نقص
+
+- `fingerprintForEvent` شامل `holdId`، `eventType`، `amount` (فقط `PARTIAL_RELEASE`)، `effectiveAt` (نرمال‌شده یا رشته خالی)، `reasonCode`، `referenceType` و `referenceId` است.
+- نتیجه Fingerprint رویداد ذخیره نمی‌شود؛ `account_hold_events` ستون `request_fingerprint` ندارد و Lookup فیلدبه‌فیلد است.
+- در `lookupEventByKey` قدیمی، اگر Retry بدون `effectiveAt` بود، شرط زمان Wildcard می‌شد و زمان ذخیره‌شده مقایسه نمی‌شد؛ در نتیجه Retry بدون زمان برای رویداد اولیه صریح به‌اشتباه Replay می‌شد.
+
+#### منطق اصلاح‌شده
+
+- Presence/absence زمان در Lookup اضافه شد. برای درخواست بدون `effectiveAt`، ردیف ذخیره‌شده باید `effective_at = date_trunc('milliseconds', created_at)` باشد. برای درخواست با زمان صریح، مقدار ذخیره‌شده باید با زمان نرمال‌شده کلاینت برابر باشد و شرط پیش‌فرض بالا را نداشته باشد.
+- عدم تطابق `effectiveAt` با کد `IDEMPOTENCY_CONFLICT` و HTTP `409` پاسخ داده می‌شود. این کد در `HoldController` به `409 Conflict` نگاشت شد.
+- سایر فیلدها همچنان با `IDEMPOTENCY_KEY_REUSED` و HTTP `409` رد می‌شوند.
+- `fingerprintForEvent` تغییر نکرد، چون از قبل «غایب» را با رشته خالی و «صریح» را با مقدار نرمال‌شده تفکیک می‌کرد؛ نقص در منطق Lookup بود.
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+خروجی نهایی:
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/holdcontroller.cpp.o
+[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/holdservice.cpp.o
+[  4%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+نتیجه: موفق، بدون هشدار کامپایلر در خروجی.
+
+#### آزمون‌های HTTP
+
+سرور محلی `http://localhost:8080`، دیتابیس `corebanking`. Hold آزمایشی `7` روی حساب `1` با مبلغ `0.50` ساخته شد. زمان‌های صریح: `T1=2026-11-03T16:23:06.000Z` و `T2=2026-11-03T16:23:07.000Z`.
+
+| سناریو | نتیجه |
+|---|---|
+| Retry یکسان با `effectiveAt` صریح | `201` سپس `200`، `replayed=true`، همان `eventId=8` |
+| Retry یکسان بدون `effectiveAt` | `201` سپس `200`، `replayed=true`، همان `eventId=9` |
+| اولیه صریح، Retry بدون زمان | `201` سپس `409 IDEMPOTENCY_CONFLICT` |
+| اولیه بدون زمان، Retry صریح | `201` سپس `409 IDEMPOTENCY_CONFLICT` |
+| دو `effectiveAt` صریح متفاوت | `201` سپس `409 IDEMPOTENCY_CONFLICT` |
+| تفاوت `reasonCode` بدون زمان | `201` سپس `409 IDEMPOTENCY_KEY_REUSED` |
+
+#### بررسی دیتابیس
+
+با نقش read-only `corebanking_reader`:
+
+- برای `hold_id=7` دقیقاً ۶ رویداد با ۶ کلید مجزا ثبت شد؛ Retryها رکورد تکراری ایجاد نکردند.
+- مجموع آزادشده `0.06` از مبلغ اولیه `0.50` بود.
+- ردیف‌های بدون زمان دارای `effective_at = date_trunc('milliseconds', created_at)` و ردیف‌های صریح دارای مقدار T1 بودند.
+
+#### داده‌های آزمایشی جدید
+
+- Hold `7`، مبلغ `0.50`، کلید `effat-review-1793723166-hold`
+- Eventهای `8` تا `13` با کلیدهای `effat-review-1793723166-t1` تا `effat-review-1793723166-t6`
+
+#### محدودیت‌ها
+
+- تشخیص Presence زمان به رابطه `effective_at` با `created_at` وابسته است، چون ستون Presence/Fingerprint در جدول رویداد وجود ندارد.
+- اگر زمان صریح درخواست اولیه دقیقاً برابر `date_trunc('milliseconds', created_at)` باشد، تشخیص ممکن است اشتباه شود. رفع قطعی نیازمند Migration و ذخیره Presence/Fingerprint است و در این مرحله انجام نشد.
+- آزمون هم‌زمانی برای این تغییر انجام نشد.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

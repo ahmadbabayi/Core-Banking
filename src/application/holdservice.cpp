@@ -535,16 +535,26 @@ bool lookupEventByKey(
     qint64* eventId,
     bool* found,
     bool* matches,
+    bool* effectiveAtMatches,
     QString* error)
 {
+    // effective_at is NOT NULL, so a request without an explicit effectiveAt
+    // is stored with the server default. The service writes that default as
+    // date_trunc('milliseconds', CURRENT_TIMESTAMP), while created_at keeps
+    // the transaction timestamp. That lets the lookup distinguish an omitted
+    // effectiveAt from an explicit one without a schema change.
     QString sql = QStringLiteral(
         "SELECT id, "
         " (event_type = CAST(:event_type AS VARCHAR(30))) AS type_matches, "
         " (CASE WHEN CAST(:event_type AS VARCHAR(30)) = 'PARTIAL_RELEASE' "
         "        THEN CAST(:client_amount AS NUMERIC) = amount "
         "        ELSE TRUE END) AS amount_matches, "
-        " (CAST(:effective_provided AS VARCHAR) = 'false' "
-        "  OR effective_at = CAST(:client_effective AS TIMESTAMPTZ)) AS effective_matches, "
+        " (CASE "
+        "   WHEN CAST(:effective_provided AS VARCHAR) = 'false' "
+        "   THEN effective_at = date_trunc('milliseconds', created_at) "
+        "   ELSE effective_at = CAST(:client_effective AS TIMESTAMPTZ) "
+        "        AND effective_at <> date_trunc('milliseconds', created_at) "
+        "  END) AS effective_matches, "
         " (reference_type IS NOT DISTINCT FROM CAST(:reference_type AS VARCHAR(50))) AS ref_type_matches, "
         " (reference_id IS NOT DISTINCT FROM CAST(:reference_id AS VARCHAR(100))) AS ref_id_matches, "
         " (reason_code = CAST(:reason_code AS VARCHAR(50))) AS reason_matches "
@@ -579,6 +589,7 @@ bool lookupEventByKey(
     *eventId = 0;
     *found = false;
     *matches = false;
+    *effectiveAtMatches = false;
 
     if (!query.exec()) {
         *error = query.lastError().text();
@@ -590,6 +601,7 @@ bool lookupEventByKey(
 
     *found = true;
     *eventId = query.value(0).toLongLong();
+    *effectiveAtMatches = query.value(3).toBool();
 
     bool allMatch = true;
     for (int column = 1; column <= 6; ++column) {
@@ -1158,13 +1170,15 @@ HoldEventResult HoldService::createEvent(
         qint64 priorEventId = 0;
         bool found = false;
         bool matches = false;
+        bool effectiveAtMatches = false;
         QString lookupError;
 
         if (!lookupEventByKey(
                 db, holdId, idempotencyKey, eventType, isPartial, eventAmount,
                 effectiveAtProvided, effectiveAtNormalized,
                 referenceType, referenceId, reasonCode, true,
-                &priorEventId, &found, &matches, &lookupError)) {
+                &priorEventId, &found, &matches, &effectiveAtMatches,
+                &lookupError)) {
             return rollbackFailure(
                 QStringLiteral("HOLD_IDEMPOTENCY_LOOKUP_FAILED"),
                 lookupError);
@@ -1173,6 +1187,12 @@ HoldEventResult HoldService::createEvent(
         if (found) {
             if (!matches) {
                 db.rollback();
+                if (!effectiveAtMatches) {
+                    return rejectedEvent(
+                        QStringLiteral("IDEMPOTENCY_CONFLICT"),
+                        QStringLiteral("This idempotencyKey was already used with a different effectiveAt"),
+                        priorEventId);
+                }
                 return rejectedEvent(
                     QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
                     QStringLiteral("This idempotencyKey was already used with a different request"),
@@ -1439,13 +1459,15 @@ HoldEventResult HoldService::createEvent(
                 qint64 priorEventId = 0;
                 bool found = false;
                 bool matches = false;
+                bool effectiveAtMatches = false;
                 QString lookupError;
 
                 if (!lookupEventByKey(
                         db, holdId, idempotencyKey, eventType, isPartial,
                         eventAmount, effectiveAtProvided, effectiveAtNormalized,
                         referenceType, referenceId, reasonCode, false,
-                        &priorEventId, &found, &matches, &lookupError)) {
+                        &priorEventId, &found, &matches, &effectiveAtMatches,
+                        &lookupError)) {
                     return rollbackFailure(
                         QStringLiteral("HOLD_IDEMPOTENCY_LOOKUP_FAILED"),
                         lookupError);
@@ -1459,6 +1481,12 @@ HoldEventResult HoldService::createEvent(
 
                 if (!matches) {
                     db.rollback();
+                    if (!effectiveAtMatches) {
+                        return rejectedEvent(
+                            QStringLiteral("IDEMPOTENCY_CONFLICT"),
+                            QStringLiteral("This idempotencyKey was already used with a different effectiveAt"),
+                            priorEventId);
+                    }
                     return rejectedEvent(
                         QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
                         QStringLiteral("This idempotencyKey was already used with a different request"),

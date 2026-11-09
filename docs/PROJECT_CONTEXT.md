@@ -459,6 +459,15 @@ Migration شماره 015 این ساختارها و Triggerهای مربوط ر�
 - نگاشت خطا: خطاهای اعتبارسنجی ورودی و سرویس به `400`، Hold/Account ناموجود به `404`، تعارض Idempotency به `409`، رد کسب‌وکاری Hold/Trigger به `422` و خطاهای داخلی به `500` نگاشت می‌شوند. نبود Controller در Router نیز `503 HOLD_SERVICE_UNAVAILABLE` می‌دهد.
 - آزمون پایه API محلی در 2026-11-02 انجام شد: ایجاد Hold، Retry Hold، تعارض کلید، دریافت جزئیات/فهرست، آزادسازی PARTIAL و FULL، Retry رویداد، تاریخچه رویدادها، خطاهای `400/404/409/422` و عدم تغییر `ledger_balance`. آزمون هم‌زمانی و پوشش کامل همه حالت‌های Expiry/Cancellation هنوز انجام نشده است.
 
+### اصلاح Idempotency مربوط به `effectiveAt` رویداد — 2026-11-03
+
+- حضور یا عدم حضور `effectiveAt` اکنون بخشی از هویت Idempotency رویداد است: درخواست اولیه با زمان صریح و Retry بدون زمان (و برعکس) با `409 IDEMPOTENCY_CONFLICT` رد می‌شود. دو زمان صریح متفاوت نیز همین کد را برمی‌گردانند.
+- تفاوت سایر فیلدهای Event همچنان با `409 IDEMPOTENCY_KEY_REUSED` پاسخ داده می‌شود؛ رفتار قبلی آن‌ها تغییر نکرده است.
+- `fingerprintForEvent` این فیلدها را شامل می‌شود: `holdId`، `eventType`، `amount` فقط برای `PARTIAL_RELEASE`، `effectiveAt` (مقدار نرمال‌شده یا رشته خالی در صورت عدم ارسال)، `reasonCode`، `referenceType` و `referenceId`. نتیجه این Fingerprint برای رویداد در دیتابیس ذخیره نمی‌شود؛ جدول `account_hold_events` ستون Fingerprint ندارد و Idempotency رویداد با مقایسه فیلدبه‌فیلد انجام می‌شود.
+- `lookupEventByKey` اکنون Presence زمان را نیز بررسی می‌کند. چون Service برای درخواست بدون `effectiveAt` مقدار پیش‌فرض را به‌صورت `date_trunc('milliseconds', CURRENT_TIMESTAMP)` ذخیره می‌کند و `created_at` زمان کامل تراکنش را دارد، ردیف بدون زمان با `effective_at = date_trunc('milliseconds', created_at)` تشخیص داده می‌شود. ردیف با زمان صریح باید هم با مقدار کلاینت برابر باشد و هم این شرط پیش‌فرض را نداشته باشد.
+- هیچ Migration یا تغییر Schema انجام نشد. محدودیت مرزی: اگر زمان صریح درخواست اولیه دقیقاً برابر `date_trunc('milliseconds', created_at)` همان ردیف باشد، ممکن است به‌صورت «بدون زمان» تفسیر شود. رفع قطعی این ابهام نیازمند ذخیره Presence/Fingerprint در جدول رویداد و Migration است.
+- آزمون API محلی در 2026-11-03 شامل شش سناریوی Idempotency زمان (Retry صریح، Retry بدون زمان، دو حالت ترکیبی، دو زمان متفاوت و تفاوت فیلد دیگر) موفق بود؛ جزئیات در `docs/opencode-reports/HOLD_EVENT_EFFECTIVE_AT_IDEMPOTENCY_FIX.md` و History ثبت شده است.
+
 ## 14. محدودیت‌های عملیاتی حساب
 
 محدودیت عملیاتی با مسدودی وجه یکی نیست.

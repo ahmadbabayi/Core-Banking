@@ -59,6 +59,7 @@ QByteArray httpStatusForCode(const QString& code)
 
     static const QStringList conflict = {
         QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
+        QStringLiteral("IDEMPOTENCY_CONFLICT"),
         QStringLiteral("ACCOUNT_HOLD_IDEMPOTENCY_KEY_REUSED")
     };
 
