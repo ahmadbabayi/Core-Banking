@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict MDr2eXbbDnX8SUsPOY9EXV6pszHbseyZNML4erM6ALhogAznnuvNjLqHdab56vU
+\restrict uyYZH5CXeUAWWwjioEQJmZounuw4cxSWagNdtfchibBFRaZ0baq2AfyLwuELeAy
 
 -- Dumped from database version 15.19 (Debian 15.19-0+deb12u1)
 -- Dumped by pg_dump version 15.19 (Debian 15.19-0+deb12u1)
@@ -30,6 +30,173 @@ CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA public;
 --
 
 COMMENT ON EXTENSION btree_gist IS 'support for indexing common datatypes in GiST';
+
+
+--
+-- Name: hold_event_canonical_amount(numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.hold_event_canonical_amount(p_amount numeric) RETURNS numeric
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $_$
+DECLARE
+    v_text TEXT;
+BEGIN
+    v_text := p_amount::text;
+
+    IF v_text IN ('NaN', 'Infinity', '-Infinity') THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_AMOUNT'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF position('.' IN v_text) > 0 THEN
+        v_text := regexp_replace(v_text, '0+$', '');
+        v_text := regexp_replace(v_text, '[.]$', '');
+    END IF;
+
+    RETURN v_text::numeric;
+END;
+$_$;
+
+
+--
+-- Name: hold_event_fingerprint(smallint, bigint, text, numeric, boolean, timestamp with time zone, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.hold_event_fingerprint(p_version smallint, p_hold_id bigint, p_event_type text, p_amount numeric, p_effective_at_provided boolean, p_effective_at timestamp with time zone, p_reason_code text, p_reference_type text, p_reference_id text) RETURNS text
+    LANGUAGE plpgsql STABLE
+    AS $$
+BEGIN
+    IF p_version = 1 THEN
+        RETURN hold_event_fingerprint_v1(
+            p_hold_id,
+            p_event_type,
+            p_amount,
+            p_effective_at_provided,
+            p_effective_at,
+            p_reason_code,
+            p_reference_type,
+            p_reference_id
+        );
+    END IF;
+
+    RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_FINGERPRINT_VERSION_UNSUPPORTED'
+        USING ERRCODE = '0A000';
+END;
+$$;
+
+
+--
+-- Name: hold_event_fingerprint_v1(bigint, text, numeric, boolean, timestamp with time zone, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.hold_event_fingerprint_v1(p_hold_id bigint, p_event_type text, p_amount numeric, p_effective_at_provided boolean, p_effective_at timestamp with time zone, p_reason_code text, p_reference_type text, p_reference_id text) RETURNS text
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    v_event_type TEXT;
+    v_reason_code TEXT;
+    v_reference_type TEXT;
+    v_reference_id TEXT;
+    v_amount_text TEXT;
+    v_amount_provided TEXT;
+    v_effective_text TEXT;
+    v_payload TEXT;
+BEGIN
+    IF p_effective_at_provided IS NULL THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID'
+            USING ERRCODE = '23514';
+    END IF;
+
+    v_event_type := hold_event_fp_trim(p_event_type);
+    v_reason_code := hold_event_fp_trim(p_reason_code);
+    v_reference_type := NULLIF(hold_event_fp_trim(p_reference_type), '');
+    v_reference_id := NULLIF(hold_event_fp_trim(p_reference_id), '');
+
+    IF v_event_type IS NULL OR v_event_type = '' THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF v_reason_code IS NULL OR v_reason_code = '' THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF v_event_type = 'PARTIAL_RELEASE' THEN
+        IF p_amount IS NULL THEN
+            RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_AMOUNT'
+                USING ERRCODE = '23514';
+        END IF;
+
+        v_amount_provided := '1';
+        v_amount_text := hold_event_canonical_amount(p_amount)::text;
+    ELSE
+        v_amount_provided := '0';
+        v_amount_text := '';
+    END IF;
+
+    IF p_effective_at_provided THEN
+        IF p_effective_at IS NULL THEN
+            RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_EFFECTIVE_AT'
+                USING ERRCODE = '23514';
+        END IF;
+
+        v_effective_text := to_char(
+            date_trunc('milliseconds', p_effective_at) AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        );
+    ELSE
+        v_effective_text := '';
+    END IF;
+
+    v_payload :=
+        'HOLD_EVENT_FP' || chr(10) ||
+        '1' || chr(10) ||
+        'holdId=' || p_hold_id::text || chr(10) ||
+        'eventType=' ||
+            octet_length(convert_to(v_event_type, 'UTF8'))::text ||
+            ':' || v_event_type || chr(10) ||
+        'amountProvided=' || v_amount_provided || chr(10) ||
+        'amount=' ||
+            octet_length(convert_to(v_amount_text, 'UTF8'))::text ||
+            ':' || v_amount_text || chr(10) ||
+        'effectiveAtProvided=' ||
+            CASE WHEN p_effective_at_provided THEN '1' ELSE '0' END ||
+            chr(10) ||
+        'effectiveAt=' ||
+            octet_length(convert_to(v_effective_text, 'UTF8'))::text ||
+            ':' || v_effective_text || chr(10) ||
+        'reasonCode=' ||
+            octet_length(convert_to(v_reason_code, 'UTF8'))::text ||
+            ':' || v_reason_code || chr(10) ||
+        'referenceType=' ||
+            octet_length(convert_to(COALESCE(v_reference_type, ''), 'UTF8'))::text ||
+            ':' || COALESCE(v_reference_type, '') || chr(10) ||
+        'referenceId=' ||
+            octet_length(convert_to(COALESCE(v_reference_id, ''), 'UTF8'))::text ||
+            ':' || COALESCE(v_reference_id, '');
+
+    -- Trailing newline after the last field.
+    v_payload := v_payload || chr(10);
+
+    RETURN encode(sha256(convert_to(v_payload, 'UTF8')), 'hex');
+END;
+$$;
+
+
+--
+-- Name: hold_event_fp_trim(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.hold_event_fp_trim(p_value text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+    SELECT btrim(
+        p_value,
+        U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000'
+    );
+$$;
 
 
 --
@@ -66,16 +233,140 @@ $$;
 
 CREATE FUNCTION public.validate_account_hold_event() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
+    AS $_$
 DECLARE
     v_hold account_hold%ROWTYPE;
     v_existing account_hold_events%ROWTYPE;
     v_released NUMERIC;
     v_remaining NUMERIC;
     v_now TIMESTAMPTZ;
+    v_amount_text TEXT;
+    v_expected_fingerprint TEXT;
+    v_existing_is_legacy BOOLEAN;
 BEGIN
-    v_now := clock_timestamp();
+    -- --------------------------------------------------------
+    -- 1. New events must carry complete idempotency metadata.
+    -- --------------------------------------------------------
+    IF NEW.request_fingerprint IS NULL
+       OR NEW.fingerprint_version IS NULL
+       OR NEW.effective_at_provided IS NULL THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_FINGERPRINT_REQUIRED'
+            USING ERRCODE = '23514';
+    END IF;
 
+    IF NEW.request_fingerprint !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.fingerprint_version <> 1 THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_FINGERPRINT_VERSION_UNSUPPORTED'
+            USING ERRCODE = '0A000';
+    END IF;
+
+    -- --------------------------------------------------------
+    -- 2. Normalize textual fields before fingerprint/business checks.
+    -- --------------------------------------------------------
+    NEW.event_type := hold_event_fp_trim(NEW.event_type);
+    NEW.reason_code := hold_event_fp_trim(NEW.reason_code);
+    NEW.reference_type := NULLIF(hold_event_fp_trim(NEW.reference_type), '');
+    NEW.reference_id := NULLIF(hold_event_fp_trim(NEW.reference_id), '');
+
+    IF NEW.event_type IS NULL
+       OR NEW.event_type NOT IN (
+            'PARTIAL_RELEASE',
+            'FULL_RELEASE',
+            'EXPIRY_RELEASE',
+            'CANCELLATION_RELEASE'
+       ) THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_EVENT_TYPE'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.reason_code IS NULL OR NEW.reason_code = '' THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_REASON_CODE'
+            USING ERRCODE = '23514';
+    END IF;
+
+    -- --------------------------------------------------------
+    -- 3. Normalize effective_at.
+    --    false: use the transaction default, not created_at and not
+    --           clock_timestamp.
+    --    true:  preserve the client timestamp, truncated to milliseconds.
+    -- --------------------------------------------------------
+    IF NEW.effective_at_provided THEN
+        IF NEW.effective_at IS NULL THEN
+            RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_EFFECTIVE_AT'
+                USING ERRCODE = '23514';
+        END IF;
+
+        NEW.effective_at := date_trunc('milliseconds', NEW.effective_at);
+    ELSE
+        NEW.effective_at := date_trunc('milliseconds', CURRENT_TIMESTAMP);
+    END IF;
+
+    -- --------------------------------------------------------
+    -- 4. Normalize and validate the amount.
+    --    Only PARTIAL_RELEASE contributes amount to the fingerprint.
+    --
+    --    account_hold_events.amount is unconstrained NUMERIC
+    --    (atttypmod = -1), so PostgreSQL parses the input exactly and
+    --    does not round it before this trigger. Keep it unconstrained.
+    --    If a future migration introduces NUMERIC(p,s), PostgreSQL can
+    --    round the input before this trigger and the original precision
+    --    would no longer be detectable here.
+    -- --------------------------------------------------------
+    IF NEW.event_type = 'PARTIAL_RELEASE' THEN
+        IF NEW.amount IS NULL THEN
+            RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_AMOUNT'
+                USING ERRCODE = '23514';
+        END IF;
+
+        v_amount_text := hold_event_canonical_amount(NEW.amount)::text;
+
+        IF v_amount_text !~ '^(0|[1-9][0-9]*)([.][0-9]{1,8})?$'
+           OR v_amount_text !~ '[1-9]' THEN
+            RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_AMOUNT'
+                USING ERRCODE = '23514';
+        END IF;
+
+        NEW.amount := v_amount_text::numeric;
+    ELSE
+        IF NEW.amount IS NULL
+           OR NEW.amount::text IN ('NaN', 'Infinity', '-Infinity') THEN
+            RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_AMOUNT'
+                USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.amount <= 0 THEN
+            RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_INVALID_AMOUNT'
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
+
+    -- --------------------------------------------------------
+    -- 5. Recompute the fingerprint from the normalized values.
+    -- --------------------------------------------------------
+    v_expected_fingerprint := hold_event_fingerprint(
+        NEW.fingerprint_version,
+        NEW.hold_id,
+        NEW.event_type,
+        NEW.amount,
+        NEW.effective_at_provided,
+        NEW.effective_at,
+        NEW.reason_code,
+        NEW.reference_type,
+        NEW.reference_id
+    );
+
+    IF NEW.request_fingerprint IS DISTINCT FROM v_expected_fingerprint THEN
+        RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_FINGERPRINT_MISMATCH'
+            USING ERRCODE = '23514';
+    END IF;
+
+    -- --------------------------------------------------------
+    -- 6. Lock the hold.
+    -- --------------------------------------------------------
     SELECT *
       INTO v_hold
       FROM account_hold
@@ -87,9 +378,13 @@ BEGIN
             USING ERRCODE = '23503';
     END IF;
 
-    -- Check the idempotency key before applying release validation.
-    -- This permits a retry even if the original event fully released
-    -- the hold.
+    -- Capture business-validation time only after the hold lock is held.
+    -- This keeps expiry/effective-time checks based on the post-lock clock.
+    v_now := clock_timestamp();
+
+    -- --------------------------------------------------------
+    -- 7. Idempotency before release validation.
+    -- --------------------------------------------------------
     SELECT *
       INTO v_existing
       FROM account_hold_events
@@ -97,23 +392,68 @@ BEGIN
        AND idempotency_key = NEW.idempotency_key;
 
     IF FOUND THEN
-        IF v_existing.event_type = NEW.event_type
-           AND v_existing.amount = NEW.amount
-           AND v_existing.effective_at = NEW.effective_at
-           AND v_existing.reference_type
-               IS NOT DISTINCT FROM NEW.reference_type
-           AND v_existing.reference_id
-               IS NOT DISTINCT FROM NEW.reference_id
-           AND v_existing.reason_code = NEW.reason_code
-        THEN
-            -- Exact retry: do not insert a duplicate event.
-            RETURN NULL;
+        v_existing_is_legacy := (
+            v_existing.request_fingerprint IS NULL
+            AND v_existing.fingerprint_version IS NULL
+            AND v_existing.effective_at_provided IS NULL
+        );
+
+        -- Partially populated metadata is invalid data; fail closed.
+        IF NOT v_existing_is_legacy
+           AND (
+               v_existing.request_fingerprint IS NULL
+               OR v_existing.fingerprint_version IS NULL
+               OR v_existing.effective_at_provided IS NULL
+           ) THEN
+            RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID'
+                USING ERRCODE = '23514';
+        END IF;
+
+        IF v_existing_is_legacy THEN
+            -- Legacy rows have no fingerprint. Preserve the previous
+            -- field-by-field comparison and the legacy time heuristic.
+            IF v_existing.event_type = NEW.event_type
+               AND v_existing.amount = NEW.amount
+               AND v_existing.reference_type
+                   IS NOT DISTINCT FROM NEW.reference_type
+               AND v_existing.reference_id
+                   IS NOT DISTINCT FROM NEW.reference_id
+               AND v_existing.reason_code = NEW.reason_code
+               AND (
+                    (
+                        NEW.effective_at_provided = FALSE
+                        AND v_existing.effective_at =
+                            date_trunc('milliseconds', v_existing.created_at)
+                    )
+                    OR
+                    (
+                        NEW.effective_at_provided = TRUE
+                        AND v_existing.effective_at = NEW.effective_at
+                        AND v_existing.effective_at <>
+                            date_trunc('milliseconds', v_existing.created_at)
+                    )
+               ) THEN
+                -- Exact Legacy retry: do not insert a duplicate event.
+                RETURN NULL;
+            END IF;
+        ELSE
+            -- Versioned rows compare only the stored version and the
+            -- fingerprint. Never compare fingerprints across versions.
+            IF v_existing.fingerprint_version = NEW.fingerprint_version
+               AND v_existing.request_fingerprint
+                   IS NOT DISTINCT FROM NEW.request_fingerprint THEN
+                -- Exact retry: do not insert a duplicate event.
+                RETURN NULL;
+            END IF;
         END IF;
 
         RAISE EXCEPTION 'ACCOUNT_HOLD_IDEMPOTENCY_KEY_REUSED'
             USING ERRCODE = '23505';
     END IF;
 
+    -- --------------------------------------------------------
+    -- 8. Existing business validation (unchanged semantics).
+    -- --------------------------------------------------------
     IF NEW.effective_at > v_now THEN
         RAISE EXCEPTION 'ACCOUNT_HOLD_EVENT_CANNOT_BE_FUTURE_DATED'
             USING ERRCODE = '23514';
@@ -177,7 +517,7 @@ BEGIN
 
     RETURN NEW;
 END;
-$$;
+$_$;
 
 
 SET default_tablespace = '';
@@ -310,9 +650,14 @@ CREATE TABLE public.account_hold (
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     effective_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     expires_at timestamp with time zone,
+    idempotency_key character varying(100),
+    request_fingerprint character varying(64),
     CONSTRAINT ck_account_hold_amount CHECK ((amount > (0)::numeric)),
     CONSTRAINT ck_account_hold_expiry CHECK (((expires_at IS NULL) OR (expires_at > effective_at))),
-    CONSTRAINT ck_account_hold_reason CHECK ((btrim((reason_code)::text) <> ''::text))
+    CONSTRAINT ck_account_hold_reason CHECK ((btrim((reason_code)::text) <> ''::text)),
+    CONSTRAINT ck_hold_fingerprint_length CHECK (((request_fingerprint IS NULL) OR (length((request_fingerprint)::text) = 64))),
+    CONSTRAINT ck_hold_idempotency_key_length CHECK (((idempotency_key IS NULL) OR ((length(btrim((idempotency_key)::text)) >= 1) AND (length(btrim((idempotency_key)::text)) <= 100)))),
+    CONSTRAINT ck_hold_idempotency_pair CHECK ((((idempotency_key IS NULL) AND (request_fingerprint IS NULL)) OR ((idempotency_key IS NOT NULL) AND (request_fingerprint IS NOT NULL))))
 );
 
 
@@ -331,8 +676,14 @@ CREATE TABLE public.account_hold_events (
     reference_type character varying(50),
     reference_id character varying(100),
     reason_code character varying(50) NOT NULL,
+    request_fingerprint character varying(64),
+    fingerprint_version smallint,
+    effective_at_provided boolean,
     CONSTRAINT ck_account_hold_event_amount CHECK ((amount > (0)::numeric)),
+    CONSTRAINT ck_account_hold_event_fingerprint_format CHECK (((request_fingerprint IS NULL) OR ((request_fingerprint)::text ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT ck_account_hold_event_fingerprint_version CHECK (((fingerprint_version IS NULL) OR (fingerprint_version = 1))),
     CONSTRAINT ck_account_hold_event_idempotency_key CHECK ((btrim((idempotency_key)::text) <> ''::text)),
+    CONSTRAINT ck_account_hold_event_idempotency_metadata CHECK ((((request_fingerprint IS NULL) AND (fingerprint_version IS NULL) AND (effective_at_provided IS NULL)) OR ((request_fingerprint IS NOT NULL) AND (fingerprint_version IS NOT NULL) AND (effective_at_provided IS NOT NULL)))),
     CONSTRAINT ck_account_hold_event_reason CHECK ((btrim((reason_code)::text) <> ''::text)),
     CONSTRAINT ck_account_hold_event_type CHECK (((event_type)::text = ANY ((ARRAY['PARTIAL_RELEASE'::character varying, 'FULL_RELEASE'::character varying, 'EXPIRY_RELEASE'::character varying, 'CANCELLATION_RELEASE'::character varying])::text[])))
 );
@@ -2180,6 +2531,13 @@ CREATE UNIQUE INDEX uq_account_owner_active ON public.account_owner USING btree 
 
 
 --
+-- Name: uq_hold_api_idempotency; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_hold_api_idempotency ON public.account_hold USING btree (idempotency_key) WHERE (idempotency_key IS NOT NULL);
+
+
+--
 -- Name: uq_transaction_api_idempotency; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2691,4 +3049,5 @@ ALTER TABLE ONLY public.transaction
 -- PostgreSQL database dump complete
 --
 
-\unrestrict MDr2eXbbDnX8SUsPOY9EXV6pszHbseyZNML4erM6ALhogAznnuvNjLqHdab56vU
+\unrestrict uyYZH5CXeUAWWwjioEQJmZounuw4cxSWagNdtfchibBFRaZ0baq2AfyLwuELeAy
+

@@ -1,11 +1,77 @@
 #ifndef HOLDSERVICE_H
 #define HOLDSERVICE_H
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QSqlDatabase>
 #include <QString>
 #include <QVector>
 #include <QtGlobal>
+
+namespace HoldFingerprint
+{
+
+inline QString compute(
+    qint64 accountId,
+    const QString& amount,
+    const QString& reasonCode,
+    const QString& reasonDescription,
+    const QString& referenceType,
+    const QString& referenceId,
+    const QString& effectiveAt,
+    const QString& expiresAt)
+{
+    const QByteArray payload =
+        QStringLiteral("HOLD\n%1\n%2\n%3\n%4\n%5\n%6\n%7\n%8")
+            .arg(accountId)
+            .arg(amount)
+            .arg(reasonCode)
+            .arg(reasonDescription)
+            .arg(referenceType)
+            .arg(referenceId)
+            .arg(effectiveAt)
+            .arg(expiresAt)
+            .toUtf8();
+
+    return QString::fromLatin1(
+        QCryptographicHash::hash(
+            payload, QCryptographicHash::Sha256).toHex());
+}
+
+inline bool normalizeLegacyTimestamp(
+    const QString& input,
+    QString* normalized)
+{
+    if (!normalized)
+        return false;
+
+    const QString value = input.trimmed();
+
+    if (value.isEmpty())
+        return false;
+
+    QDateTime timestamp = QDateTime::fromString(value, Qt::ISODateWithMs);
+
+    if (!timestamp.isValid())
+        timestamp = QDateTime::fromString(value, Qt::ISODate);
+
+    if (!timestamp.isValid())
+        return false;
+
+    *normalized = timestamp.toUTC().toString(Qt::ISODateWithMs);
+    return true;
+}
+
+inline bool matchesStored(
+    const QString& stored,
+    const QString& current,
+    const QString& legacy)
+{
+    return stored == current ||
+        (!legacy.isEmpty() && stored == legacy);
+}
+
+} // namespace HoldFingerprint
 
 struct HoldStatusData
 {

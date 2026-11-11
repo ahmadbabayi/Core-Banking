@@ -48,7 +48,9 @@ QByteArray httpStatusForCode(const QString& code)
         QStringLiteral("HOLD_INVALID_REFERENCE"),
         QStringLiteral("HOLD_INVALID_EVENT_TYPE"),
         QStringLiteral("HOLD_INVALID_EFFECTIVE_AT"),
-        QStringLiteral("HOLD_INVALID_EXPIRES_AT")
+        QStringLiteral("HOLD_INVALID_EXPIRES_AT"),
+        QStringLiteral("INVALID_TEXT_INPUT"),
+        QStringLiteral("HOLD_INVALID_TEXT_INPUT")
     };
 
     static const QStringList notFound = {
@@ -78,7 +80,19 @@ QByteArray httpStatusForCode(const QString& code)
         QStringLiteral("ACCOUNT_HOLD_ALREADY_FULLY_RELEASED"),
         QStringLiteral("ACCOUNT_HOLD_RELEASE_EXCEEDS_REMAINING_AMOUNT"),
         QStringLiteral("PARTIAL_RELEASE_MUST_BE_LESS_THAN_REMAINING_AMOUNT"),
-        QStringLiteral("FULL_RELEASE_MUST_MATCH_REMAINING_AMOUNT")
+        QStringLiteral("FULL_RELEASE_MUST_MATCH_REMAINING_AMOUNT"),
+        QStringLiteral("ACCOUNT_HOLD_EVENT_INVALID_EVENT_TYPE"),
+        QStringLiteral("ACCOUNT_HOLD_EVENT_INVALID_REASON_CODE"),
+        QStringLiteral("ACCOUNT_HOLD_EVENT_INVALID_AMOUNT"),
+        QStringLiteral("ACCOUNT_HOLD_EVENT_INVALID_EFFECTIVE_AT")
+    };
+
+    static const QStringList serverError = {
+        QStringLiteral("ACCOUNT_HOLD_EVENT_FINGERPRINT_REQUIRED"),
+        QStringLiteral("ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID"),
+        QStringLiteral("ACCOUNT_HOLD_EVENT_FINGERPRINT_MISMATCH"),
+        QStringLiteral(
+            "ACCOUNT_HOLD_EVENT_FINGERPRINT_VERSION_UNSUPPORTED")
     };
 
     if (badRequest.contains(code))
@@ -89,6 +103,8 @@ QByteArray httpStatusForCode(const QString& code)
         return QByteArray("409 Conflict");
     if (unprocessable.contains(code))
         return QByteArray("422 Unprocessable Entity");
+    if (serverError.contains(code))
+        return QByteArray("500 Internal Server Error");
 
     return QByteArray("500 Internal Server Error");
 }
@@ -127,6 +143,21 @@ bool parseAmountString(const QJsonValue& value, QString* amount)
 
     *amount = text;
     return true;
+}
+
+bool containsNullCharacter(const QString& value)
+{
+    return value.contains(QChar(0x0000));
+}
+
+HttpResponse invalidTextInput()
+{
+    return {
+        "400 Bad Request",
+        ApiResponse::error(
+            "INVALID_TEXT_INPUT",
+            "Text input must not contain U+0000")
+    };
 }
 
 } // namespace
@@ -299,6 +330,13 @@ HttpResponse HoldController::createHold(const QByteArray& body)
     const QString expiresAt = expiresAtValue.toString().trimmed();
     const QString idempotencyKey =
         idempotencyValue.toString().trimmed();
+
+    for (const QString& value : {
+             amount, reasonCode, reasonDescription, referenceType,
+             referenceId, effectiveAt, expiresAt, idempotencyKey}) {
+        if (containsNullCharacter(value))
+            return invalidTextInput();
+    }
 
     if (idempotencyKey.isEmpty()) {
         return {
@@ -519,6 +557,13 @@ HttpResponse HoldController::createEvent(
     const QString referenceId = referenceIdValue.toString().trimmed();
     const QString idempotencyKey =
         idempotencyValue.toString().trimmed();
+
+    for (const QString& value : {
+             eventType, amount, effectiveAt, reasonCode,
+             referenceType, referenceId, idempotencyKey}) {
+        if (containsNullCharacter(value))
+            return invalidTextInput();
+    }
 
     if (idempotencyKey.isEmpty()) {
         return {

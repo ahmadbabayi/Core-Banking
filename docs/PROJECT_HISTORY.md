@@ -935,9 +935,8 @@ cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
 خروجی نهایی:
 
 ```text
-[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/holdcontroller.cpp.o
-[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/holdservice.cpp.o
-[  4%] Linking CXX executable CoreBanking
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/holdservice.cpp.o
+[  2%] Linking CXX executable CoreBanking
 [100%] Built target CoreBanking
 ```
 
@@ -974,6 +973,343 @@ cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
 - تشخیص Presence زمان به رابطه `effective_at` با `created_at` وابسته است، چون ستون Presence/Fingerprint در جدول رویداد وجود ندارد.
 - اگر زمان صریح درخواست اولیه دقیقاً برابر `date_trunc('milliseconds', created_at)` باشد، تشخیص ممکن است اشتباه شود. رفع قطعی نیازمند Migration و ذخیره Presence/Fingerprint است و در این مرحله انجام نشد.
 - آزمون هم‌زمانی برای این تغییر انجام نشد.
+
+### 18.12 پیاده‌سازی Versioned Idempotency رویداد Hold — 2026-11-09
+
+#### محدوده و فایل‌ها
+
+- تغییر `src/application/holdservice.cpp`
+- تغییر `src/web/holdcontroller.cpp`
+- ایجاد `src/application/holdeventfingerprint.h`
+- ایجاد `tests/hold_event_fingerprint_and_validation_test.cpp`
+- ایجاد `docs/opencode-reports/HOLD_EVENT_VERSIONED_IDEMPOTENCY_IMPLEMENTATION.md`
+- به‌روزرسانی `docs/PROJECT_CONTEXT.md` و همین سند
+
+انجام نشد: اجرای Migration 018، هر نوع DDL/DML یا نوشتن در دیتابیس، تغییر فایل Migration یا `CURRENT_SCHEMA.sql`، آزمون HTTP، تغییر `CMakeLists.txt`، `DepositService`، `TransferService` یا `main.cpp`، و هر عملیات Git.
+
+#### Canonicalizer نسخه ۱
+
+- Trim با مجموعه ثابت Unicode White_Space نسخه ۱ پیاده‌سازی شد؛ Whitespace داخلی حفظ می‌شود و U+001C تا U+001F جزو مجموعه نیستند.
+- طول فیلدها با `toUtf8().size()` محاسبه می‌شود.
+- Amount با حذف صفرهای انتهایی و نقطه اعشاری انتهایی Canonical می‌شود.
+- Timestamp به UTC تبدیل و به میلی‌ثانیه Truncate می‌شود. Parser ابتدا کسر ثانیه را به سه رقم Truncate می‌کند تا Round کردن Qt رخ ندهد.
+- Timestamp بدون Timezone و Timestamp نامعتبر رد می‌شوند.
+- Payload با ترتیب `HOLD_EVENT_FP`، نسخه، HoldId، EventType، AmountProvided/Amount، EffectiveAtProvided/EffectiveAt، ReasonCode، ReferenceType و ReferenceId و Trailing Newline ساخته می‌شود.
+
+#### Test Vectorها
+
+| Vector | Hash |
+|---|---|
+| A — با `effectiveAt` صریح | `f541ed0f9447fc6e41b03dae6cef34e49d95e2f6978ba96a6b52c625c73bb1d1` |
+| B — بدون `effectiveAt` | `5e7271fc717f758194af0a0a66247da6a65e34d669359d084876397a3fa5ea8f` |
+
+هر دو Hash در آزمون Unit C++ با Payload دقیقاً هم‌شکل SQL بازتولید شدند.
+
+#### Service و Lookup
+
+- INSERT رویداد اکنون `request_fingerprint`، `fingerprint_version = 1` و `effective_at_provided` را ارسال می‌کند.
+- `lookupEventByKey` سه ستون Metadata را می‌خواند.
+- هر سه NULL: Legacy Fallback با مقایسه فیلد‌به‌فیلد و heuristic قبلی زمان.
+- Metadata ناقص: Fail-Closed با `ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID`.
+- Version ناشناخته: Fail-Closed با `ACCOUNT_HOLD_EVENT_FINGERPRINT_VERSION_UNSUPPORTED`.
+- Version 1: بررسی فرمت و مقایسه Fingerprint؛ Replay فقط با برابری کامل.
+- مسیرهای Replay، Conflict، Unique Conflict با Savepoint و Trigger RETURN NULL حفظ شدند.
+- تفکیک `IDEMPOTENCY_CONFLICT` و `IDEMPOTENCY_KEY_REUSED` مطابق رفتار قبلی حفظ شد.
+
+#### Validation و نگاشت خطا
+
+- U+0000 در همه ورودی‌های متنی Hold و Event در Controller و Service رد می‌شود.
+- Controller کد `INVALID_TEXT_INPUT` و Service کد `HOLD_INVALID_TEXT_INPUT` را با HTTP `400` برمی‌گردانند.
+- کدهای اعتبارسنجی جدید Trigger به `422`، Metadata/Fingerprint به `500` و Immutability به `500` نگاشت می‌شوند.
+- `triggerErrorInfo` کدهای جدید را می‌شناسد و کدهای Fail-Closed را به `Failed` نگاشت می‌کند.
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+خروجی نهایی:
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/holdservice.cpp.o
+[  2%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+نتیجه: موفق.
+
+#### آزمون Unit
+
+```bash
+g++ -std=c++17 -fPIC -I. \
+  tests/hold_event_fingerprint_and_validation_test.cpp \
+  src/application/holdservice.cpp \
+  src/web/holdcontroller.cpp \
+  src/web/apiresponse.cpp \
+  $(pkg-config --cflags --libs Qt5Core Qt5Sql) \
+  -o /tmp/hold_event_fingerprint_and_validation_test
+
+/tmp/hold_event_fingerprint_and_validation_test
+```
+
+خروجی:
+
+```text
+All hold event fingerprint and validation tests passed
+```
+
+پوشش آزمون: Trim نسخه ۱، Amount Canonical، Timestamp با Timezone/بدون Timezone، Truncate میلی‌ثانیه، UTF-8 byte length، هر دو Test Vector، Legacy/Versioned classification، Metadata ناقص، Version ناشناخته، Fingerprint نامعتبر، و U+0000 در Service و Controller.
+
+#### آزمون‌های انجام‌نشده
+
+- Replay و Conflict واقعی از طریق API و دیتابیس پس از Migration 018
+- Legacy Retry واقعی بدون و با `effectiveAt` صریح
+- هم‌زمانی و Unique Conflict واقعی
+- بررسی Read-only ستون‌های Metadata و Fingerprint ردیف‌های جدید
+- آزمون Trigger جدید با INSERT مستقیم
+
+#### داده‌های آزمایشی جدید
+
+هیچ داده‌ای از طریق API یا SQL ایجاد یا تغییر نکرد.
+
+#### محدودیت‌ها
+
+- در زمان ثبت این بخش، Migration 018 اجرا نشده بود؛ بنابراین Schema آن زمان ستون‌های جدید را نداشت و Service جدید بدون Migration قابل استقرار نبود. وضعیت به‌روز در بخش 18.14 آمده است.
+- Migration 018 بدون Service جدید نیز نوشتن Event را متوقف می‌کند؛ استقرار باید هماهنگ و در Maintenance Window باشد.
+- تطابق Hashها در سطح Unit تأیید شد، نه با فراخوانی توابع SQL روی دیتابیس.
+- رویه Restore و Rollback باید طبق گزارش آمادگی Migration بررسی شود.
+
+### 18.13 جمع‌بندی نهایی Versioned Idempotency رویداد Hold — 2026-11-11
+
+#### محدوده و فایل‌ها
+
+- تغییر `src/application/holdeventfingerprint.h`
+- تغییر `src/application/holdservice.h`
+- تغییر `src/application/holdservice.cpp`
+- تغییر `tests/hold_event_fingerprint_and_validation_test.cpp`
+- ایجاد `docs/opencode-reports/HOLD_EVENT_FINAL_CLOSURE.md`
+- ایجاد `docs/opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md`
+- به‌روزرسانی کوتاه `docs/PROJECT_CONTEXT.md` و همین سند
+
+انجام نشد: اتصال به دیتابیس، هر نوع DDL/DML یا Migration، تغییر فایل Migration یا `CURRENT_SCHEMA.sql`، تغییر `HoldController`، `CMakeLists.txt`، `DepositService`، `TransferService` یا `main.cpp`، آزمون HTTP/یکپارچه‌سازی، و هر عملیات Git.
+
+#### تعیین تکلیف موارد باز
+
+- تفاوت Legacy مقایسه `amount` برای آزادسازی کامل حفظ شد: Trigger خط ۵۱۸ Migration 018 برای همه انواع مبلغ را مقایسه می‌کند، ولی Lookup سرویس فقط برای `PARTIAL_RELEASE` مبلغ را بررسی می‌کند. مسیر عادی API پیش از INSERT همان رویداد را Replay می‌کند؛ فقط رقابت باریک روی ردیف Legacy می‌تواند `409` بدهد. این رفتار از Migration 015 نیز وجود داشت.
+- ریسک Round/Truncate برای Retry Holdهای Legacy تأیید شد: Qt 5.15.8 برای `...06.1239Z` مقدار `...06.124Z` تولید می‌کند، در حالی که Parser جدید `...06.123Z` می‌سازد. سازگاری صرفاً در کد اضافه شد: Fingerprint فعلی و یک Fingerprint کاندید Legacy محاسبه می‌شود و Replay فقط با برابری Fingerprint ذخیره‌شده با یکی از آن دو پذیرفته می‌شود. Timestamp بدون Timezone همچنان طبق قرارداد جدید رد می‌شود.
+- پاسخ عمومی چهار کد `ACCOUNT_HOLD_EVENT_FINGERPRINT_*` از متن خام دیتابیس به پیام ثابت تغییر کرد و متن خام فقط با `qWarning` ثبت می‌شود.
+- منشأ `ACCOUNT_HOLD_EVENT_INVALID_EVENT_TYPE`، `INVALID_REASON_CODE`، `INVALID_AMOUNT` و `INVALID_EFFECTIVE_AT` فقط شاخه دفاعی Trigger است و از مسیر عادی API قابل‌دسترس نیست. نگاشت `422` به‌عنوان قرارداد API تغییر نکرد.
+- تشخیص Metadata به تابع Production `classifyMetadata` منتقل شد و Service از همان تابع استفاده می‌کند.
+
+#### آزمون‌های Unit اضافه‌شده
+
+- همه ۸ ترکیب NULL/غیرNULL برای سه ستون Metadata.
+- Versionهای `0`، `-1` و `2` و Fingerprint کوتاه/uppercase.
+- یکسانی Fingerprint برای `0.10` و `0.1`.
+- نادیده‌گرفتن مبلغ محاسبه‌شده در Fingerprint `FULL_RELEASE`.
+- Timestamp با Offset مثبت، Offset فقط‌ساعت، Offset منفی و Truncate بدون Round.
+- سازگاری Fingerprint Hold Legacy: Round قبلی Qt در برابر Truncate جدید و پذیرش Fingerprint ذخیره‌شده Legacy فقط با کاندید Legacy.
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+خروجی واقعی:
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/main.cpp.o
+[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/holdservice.cpp.o
+[  4%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httpserver.cpp.o
+[  5%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httprouter.cpp.o
+[  7%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/holdcontroller.cpp.o
+[  8%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+نتیجه: موفق.
+
+#### آزمون Unit
+
+```bash
+g++ -std=c++17 -fPIC -I. \
+  tests/hold_event_fingerprint_and_validation_test.cpp \
+  src/application/holdservice.cpp \
+  src/web/holdcontroller.cpp \
+  src/web/apiresponse.cpp \
+  $(pkg-config --cflags --libs Qt5Core Qt5Sql) \
+  -o /tmp/hold_event_fingerprint_and_validation_test
+
+/tmp/hold_event_fingerprint_and_validation_test
+```
+
+خروجی واقعی:
+
+```text
+All hold event fingerprint and validation tests passed
+```
+
+نتیجه: موفق و بدون اتصال به دیتابیس.
+
+#### داده‌های آزمایشی جدید
+
+هیچ داده‌ای از طریق API یا SQL ایجاد یا تغییر نکرد.
+
+#### محدودیت‌ها
+
+- در زمان ثبت این بخش، Migration 018 و آزمون یکپارچه‌سازی هنوز اجرا نشده بودند؛ وضعیت به‌روز در بخش 18.14 آمده است.
+- در زمان ثبت این بخش، تطابق Fingerprint با توابع SQL روی دیتابیس آزمون نشده بود؛ این آزمون در بخش 18.14 انجام شد.
+- سازگاری Holdهای Legacy با Timestamp بیش از سه رقم اعشار در کد اضافه شد و آزمون Unit دارد؛ در زمان ثبت این بخش آزمون Regression دیتابیس هنوز اجرا نشده بود. آزمون مصنوعی پس از 018 در بخش 18.14 انجام شد.
+- در 2026-11-11 کاربر حفظ HTTP `400` برای Timestamp بدون Timezone را پذیرفت؛ این مورد به‌عنوان محدودیت شناخته‌شده ثبت شد و اصلاح جدیدی انجام نشد.
+- بررسی فقط‌خواندنی پیش از Migration روی `corebanking`: Schema روی 017 بود و 018 اعمال نشده بود؛ 7 Hold و 13 Event موجود بود. Eventهای 8 و 9 به‌عنوان Fixture Legacy با زمان صریح و غایب قابل استفاده‌اند. Hold 7 با زمان صریح روی مرز `.000` است و مسیر Fallback چهاررقمی را فعال نمی‌کند؛ برای این آزمون از Hold مصنوعی پس از 018 استفاده می‌شود. باینری قدیمی پیش از 018 موجود نبود و سرویس در حال اجرا نبود. هیچ نوشتن، API یا تغییر باینری انجام نشد.
+- برنامه آزمون دیتابیس توسعه `corebanking` در `docs/opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md` آماده شد؛ اجرای پس از 018 در بخش 18.14 و بخش ۱۲ همان گزارش ثبت شده است.
+- تصمیم درباره نگاشت `ACCOUNT_HOLD_EVENT_INVALID_*` به `422` یا `500` باقی است.
+- هیچ رویه Restore/Rollback آزمون یا تأیید نشده است.
+
+### 18.14 استقرار و آزمون یکپارچه‌سازی Hold پس از Migration 018 — 2026-11-11
+
+#### محدوده و فایل‌ها
+
+- تغییر `docs/PROJECT_CONTEXT.md`
+- تغییر `docs/PROJECT_HISTORY.md`
+- تغییر `docs/opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md` (افزودن بخش ۱۲ نتایج و دستورهای باقی‌مانده)
+- کد برنامه، `CMakeLists.txt`، فایل Migration و `CURRENT_SCHEMA.sql` در این مرحله توسط مدل تغییر نکردند.
+
+اقدامات کاربر پیش از این مرحله: تهیه دامپ کامل پیش از 018 در `database/backups`، اجرای موفق Migration 018 با COMMIT، و به‌روزرسانی `database/CURRENT_SCHEMA.sql` با pg_dump از دیتابیس واقعی.
+
+انجام نشد: هیچ SQL نوشتنی مستقیم، Migration، DDL، تغییر Schema، Build مجدد، اجرای Unit Test مجدد، یا عملیات Git توسط مدل انجام نشد. آزمون‌های SQL کنترل‌شده بخش ۸ برنامه آزمون نیز اجرا نشدند.
+
+#### بررسی read-only پس از 018
+
+اتصال فقط با نقش `corebanking_reader` روی `corebanking`:
+
+- ستون‌های `account_hold_events.request_fingerprint` (`character varying`)، `fingerprint_version` (`smallint`) و `effective_at_provided` (`boolean`) موجودند.
+- Constraintهای `ck_account_hold_event_fingerprint_format`، `ck_account_hold_event_fingerprint_version` و `ck_account_hold_event_idempotency_metadata` موجودند؛ Constraintهای قبلی `amount`، `idempotency_key`، `reason` و `type` نیز حفظ شده‌اند.
+- توابع `hold_event_fp_trim(text)`، `hold_event_canonical_amount(numeric)`، `hold_event_fingerprint_v1(...)` و `hold_event_fingerprint(...)` موجودند.
+- Triggerهای `trg_validate_account_hold_event` و `trg_account_hold_event_immutable` فعال‌اند.
+- `database/CURRENT_SCHEMA.sql` همین ستون‌ها، Constraintها، توابع و Triggerها را منعکس می‌کند.
+- پیش از نوشتن جدید: `total_events=13`، `legacy_events=13`، `non_legacy_events=0`، `hold_count=7`.
+- پس از آزمون: `total_events=17`، `legacy_events=13`، `versioned_events=4`، `inconsistent_metadata=0`، `hold_count=9`.
+
+#### اجرای باینری جدید
+
+- باینری: `/home/ahmad/projects/build-CoreBanking-Desktop-Debug/CoreBanking` با زمان `2026-11-11 16:51`.
+- فرآیند جدید با PID `5240` اجرا شد و روی پورت `8080` گوش می‌دهد.
+- `GET /api/v1/health` پاسخ `200` با `{"data":{"status":"UP"},"success":true}` داد.
+- باینری قدیمی اجرا نشد.
+
+#### آزمون تطابق Fingerprint C++ و SQL
+
+یک Probe موقت در `/tmp/fp_probe.cpp` با `HoldEventFingerprintV1::fingerprint` کامپایل و اجرا شد. برای Test Vector A و ورودی با `reasonCode` فارسی `سلام`:
+
+- C++ Vector A: `f541ed0f9447fc6e41b03dae6cef34e49d95e2f6978ba96a6b52c625c73bb1d1`
+- SQL Vector A: `f541ed0f9447fc6e41b03dae6cef34e49d95e2f6978ba96a6b52c625c73bb1d1`
+- C++ فارسی: `3ece7c699eb93232f9d0589a92e720d51dc1871eb14eb274a8decf13e7756ee2`
+- SQL فارسی: `3ece7c699eb93232f9d0589a92e720d51dc1871eb14eb274a8decf13e7756ee2`
+
+نتیجه: برابر و موفق.
+
+#### آزمون‌های API
+
+- ایجاد Hold جدید (حساب `1`، مبلغ `0.10`، کلید `hold018-api-20261111-h1`) → `201`، `holdId=8`.
+- ایجاد Event (`PARTIAL_RELEASE`، `0.01`، `R`، کلید `hold018-api-20261111-e1`) → `201`، `eventId=14`.
+- همان درخواست → `200`، همان `eventId=14`، `replayed=true`.
+- همان کلید با `effectiveAt` متفاوت → `409 IDEMPOTENCY_CONFLICT`.
+- همان کلید با `amount` متفاوت → `409 IDEMPOTENCY_KEY_REUSED`.
+- Legacy Event `8` (`effat-review-1793723166-t1`) با `effectiveAt=2026-11-03T16:23:06.000Z` → `200 replayed=true`، همان `eventId=8`.
+- Legacy Event `9` (`effat-review-1793723166-t2`) بدون `effectiveAt` → `200 replayed=true`، همان `eventId=9`.
+- همان کلید Legacy با زمان متفاوت `2026-11-03T16:28:25.390Z` → `409 IDEMPOTENCY_CONFLICT`.
+- Hold مصنوعی پس از 018 با `effectiveAt=2026-11-03T16:23:06.123Z` و کلید `hold018-api-20261111-h2` → `201`، `holdId=9`.
+- Retry همان Hold با `effectiveAt=2026-11-03T16:23:06.1229Z` → `200 replayed=true`، همان `holdId=9` (مسیر Fallback Round/Truncate).
+- هم‌زمانی دو درخواست با کلید یکسان `hold018-api-20261111-c1` روی Hold `8` → یکی `201 eventId=15` و دیگری `200 replayed=true` با همان `eventId=15`؛ فقط یک ردیف.
+- هم‌زمانی دو درخواست با کلیدهای متفاوت `hold018-api-20261111-c2a` و `hold018-api-20261111-c2b` → دو Event مستقل `eventId=16` و `eventId=17` با `201`.
+- Timestamp بدون Timezone (`2026-11-03T16:23:06`) → `400 HOLD_INVALID_EFFECTIVE_AT`؛ هیچ ردیفی با کلید `hold018-api-20261111-tz` ایجاد نشد.
+
+#### داده‌های ایجادشده
+
+- Hold `8`، حساب `1`، کلید `hold018-api-20261111-h1`، مبلغ `0.10`، `reasonCode=H018`، وضعیت نهایی `PARTIALLY_RELEASED`، رویدادهای `14` تا `17`، آزادشده `0.04`، باقی‌مانده `0.06`.
+- Hold `9`، حساب `1`، کلید `hold018-api-20261111-h2`، مبلغ `0.02`، `reasonCode=H018-ROUND`، `effectiveAt=2026-11-03T16:23:06.123Z` (`.1229Z` به همان Replay شد)، بدون Event، باقی‌مانده `0.02`.
+- Eventهای جدید `14` (`hold018-api-20261111-e1`)، `15` (`hold018-api-20261111-c1`)، `16` (`hold018-api-20261111-c2a`) و `17` (`hold018-api-20261111-c2b`) روی Hold `8`؛ همه `PARTIAL_RELEASE` با مبلغ `0.01`، Metadata کامل، `fingerprint_version=1` و `effective_at_provided=false`.
+- هیچ رکورد قبلی تغییر یا حذف نشد.
+
+#### کنترل SQL پس از آزمون
+
+- کنترل مجموع برای همه Holdها سازگار است؛ برای Hold `8`: مبلغ اولیه `0.10`، آزادشده `0.04`، باقی‌مانده `0.06`، `event_count=4`.
+- Hold `7` بدون تغییر: مبلغ اولیه `0.50`، آزادشده `0.06`، باقی‌مانده `0.44`، `event_count=6`.
+- تعداد ردیف‌های کلید هم‌زمانی `hold018-api-20261111-c1` برابر `1` است.
+- تعداد کلید Timestamp بدون Timezone برابر `0` است.
+
+#### وضعیت موارد تکمیلی و محدودیت‌ها
+
+- آزمون‌های SQL کنترل‌شده بخش ۸ برنامه آزمون (رد Metadata ناقص، Version نامعتبر، Fingerprint بدفرمت و Trigger RETURN NULL روی ردیف Legacy) بخشی از دامنه آزمون API این مرحله نیستند و اجرای آن‌ها به تصمیم کاربر خارج از این دامنه واگذار شده است. اجرا نشده‌اند و موفق اعلام نمی‌شوند. دستورهای دقیق در بخش ۱۲ گزارش `HOLD_018_COREBANKING_TEST_PLAN.md` آمده است.
+- Timestamp بدون Timezone برای Hold/Event همچنان `400` است؛ این محدودیت پذیرفته‌شده باقی می‌ماند.
+- آزمون Round/Truncate روی Hold مصنوعی ساخته‌شده پس از 018 انجام شد و ادعای آزمون کامل رکورد ساخته‌شده با باینری قدیمی نیست.
+- پوشش Expiry/Cancellation در بخش 18.15 تکمیل شد. آزمون بار، مرزهای اضافه و رویه Restore/Rollback صرفاً آزموده‌نشده‌اند و شرط پایان این مرحله نیستند.
+- سرویس جدید در پایان مرحله در حال اجرا روی پورت `8080` باقی ماند.
+
+### 18.15 آزمون API مسیرهای Expiry/Cancellation Hold — 2026-11-11
+
+#### محدوده و فایل‌ها
+
+- تغییر `docs/PROJECT_CONTEXT.md`
+- تغییر `docs/PROJECT_HISTORY.md`
+- تغییر `docs/opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md` (افزودن بخش ۱۳)
+- هیچ تغییر کد، `CMakeLists.txt`، Migration، Schema یا `CURRENT_SCHEMA.sql` انجام نشد؛ چون مسیرهای `CANCELLATION_RELEASE` و `EXPIRY_RELEASE` از قبل در `HoldService::createEvent` و Endpoint عمومی `POST /api/v1/holds/{id}/events` پیاده‌سازی شده بودند.
+- Build مجدد اجرا نشد چون کد تغییر نکرد. هیچ SQL نوشتنی مستقیم، DDL/DML یا عملیات Git انجام نشد.
+
+#### آزمون‌های API
+
+- ایجاد Hold `10` (حساب `1`، مبلغ `0.03`، کلید `hold018-cancel-20261111-h1`) → `201`، وضعیت `ACTIVE`.
+- `CANCELLATION_RELEASE` روی Hold `10` با کلید `hold018-cancel-20261111-e1` → `201`، `eventId=18`، `holdStatus=CANCELLED`، `remainingAmount=0`، `currentlyBlockedAmount=0`.
+- Retry همان Event → `200`، همان `eventId=18`، `replayed=true`.
+- `FULL_RELEASE` جدید روی Hold لغوشده با کلید `hold018-cancel-20261111-e2` → `422 ACCOUNT_HOLD_ALREADY_FULLY_RELEASED`.
+- ایجاد Hold `11` (حساب `1`، مبلغ `0.03`، `effectiveAt=2026-11-01T00:00:00Z`، `expiresAt=2026-11-02T00:00:00Z`، کلید `hold018-exp-20261111-h1`) → `201`، وضعیت `EXPIRED`، `currentlyBlockedAmount=0`.
+- `CANCELLATION_RELEASE` روی Hold `11` با کلید `hold018-exp-20261111-e0` → `422 EXPIRED_HOLD_REQUIRES_EXPIRY_RELEASE`؛ هیچ Eventی ایجاد نشد.
+- `EXPIRY_RELEASE` روی Hold `8` (غیرمنقضی) با کلید `hold018-exp-20261111-e2` → `422 ACCOUNT_HOLD_NOT_EXPIRED`؛ هیچ Eventی ایجاد نشد.
+- `EXPIRY_RELEASE` روی Hold `11` با کلید `hold018-exp-20261111-e1` → `201`، `eventId=19`، `holdStatus=EXPIRED`، `remainingAmount=0`.
+- Retry همان Event → `200`، همان `eventId=19`، `replayed=true`.
+
+#### داده‌های ایجادشده
+
+- Hold `10`، حساب `1`، کلید `hold018-cancel-20261111-h1`، مبلغ `0.03`، وضعیت `CANCELLED`، Event `18` با کلید `hold018-cancel-20261111-e1`.
+- Hold `11`، حساب `1`، کلید `hold018-exp-20261111-h1`، مبلغ `0.03`، وضعیت `EXPIRED`، Event `19` با کلید `hold018-exp-20261111-e1`.
+- کلیدهای `hold018-exp-20261111-e0` و `hold018-exp-20261111-e2` هیچ ردیفی ایجاد نکردند.
+
+#### کنترل read-only
+
+- `hold_count=11`، `event_count=19`، `legacy_events=13`، `versioned_events=6`.
+- Hold `10`: `status=CANCELLED`، `remaining_amount=0.00`، `currently_blocked_amount=0.00`، `release_event_count=1`، `last_release_event_type=CANCELLATION_RELEASE`.
+- Hold `11`: `status=EXPIRED`، `remaining_amount=0.00`، `currently_blocked_amount=0`، `release_event_count=1`، `last_release_event_type=EXPIRY_RELEASE`.
+- Hold `8` بدون تغییر باقی ماند: `PARTIALLY_RELEASED`، باقی‌مانده `0.06`، `event_count=4`.
+- `ledger_balance` حساب‌های `1` و `2` بدون تغییر (`1` و `0`)؛ مسدودی وجه روی دفتر کل اثر ندارد.
+
+#### نتیجه
+
+- نتیجه: مسیرهای Expiry/Cancellation از طریق API فعلی بدون نیاز به کدنویسی جدید موفق و با SQL فقط‌خواندنی تأیید شدند.
+- آزمون SQL مستقیم بخش ۸ شرط پایان این مرحله نیست و به تصمیم کاربر خارج از دامنه آزمون API واگذار شده است. آزمون بار، مرزهای اضافه و رویه Restore/Rollback صرفاً آزموده‌نشده‌اند و شرط جدید پایان مرحله نیستند.
+- سرویس جدید همچنان روی پورت `8080` در حال اجراست.
+
+### 18.16 بستن مرحله Hold API — 2026-11-11
+
+#### محدوده و فایل‌ها
+
+- تغییر `docs/PROJECT_CONTEXT.md`
+- تغییر `docs/PROJECT_HISTORY.md`
+- تغییر `docs/opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md` (جمع‌بندی پایانی و رفع ابهام وضعیت بخش ۸)
+- هیچ تغییر کد، Build، Migration، Schema، `CURRENT_SCHEMA.sql`، SQL جدید، آزمون جدید یا عملیات Git انجام نشد.
+
+#### وضعیت نهایی
+
+- Migration 018 اجرا شده است و `CURRENT_SCHEMA.sql` پس از آن از دیتابیس واقعی به‌روز و تطابق read-only آن بررسی شده است. چون پس از آن تغییر جدید Schema رخ نداده، فایل دوباره تولید نشد.
+- نتایج واقعی API شامل Create/Replay/Conflict، Legacy Retry، هم‌زمانی، Cancellation و Expiry و داده‌های آزمایشی باقی‌مانده در بخش‌های 18.14 و 18.15 ثبت شده‌اند.
+- آزمون SQL مستقیم بخش ۸ برنامه آزمون، شرط پایان این مرحله نیست و به تصمیم کاربر خارج از دامنه آزمون API واگذار شده است؛ اجرا نشده و موفق اعلام نمی‌شود.
+- آزمون بار، مرزهای اضافه و رویه Restore/Rollback صرفاً آزموده‌نشده‌اند و شرط جدید پایان مرحله نیستند.
+
+#### نتیجه
+
+- کار ضروری دیگری برای پایان API مسدودی باقی نمانده است. مرحله Hold API در دامنه مصوب خود بسته است.
 
 ## 19. قاعده پایانی تاریخچه
 

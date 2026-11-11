@@ -1,7 +1,10 @@
 #include "holdservice.h"
 
+#include "holdeventfingerprint.h"
+
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -108,19 +111,7 @@ bool normalizePositiveAmount(const QString& input, QString* normalized)
 bool parseTimestamp(const QString& input, QDateTime* parsed,
                     QString* normalized)
 {
-    const QString value = input.trimmed();
-    if (value.isEmpty())
-        return false;
-
-    QDateTime timestamp = QDateTime::fromString(value, Qt::ISODateWithMs);
-    if (!timestamp.isValid())
-        timestamp = QDateTime::fromString(value, Qt::ISODate);
-    if (!timestamp.isValid())
-        return false;
-
-    *parsed = timestamp;
-    *normalized = timestamp.toUTC().toString(Qt::ISODateWithMs);
-    return true;
+    return HoldEventFingerprintV1::parseTimestamp(input, parsed, normalized);
 }
 
 bool databaseNow(QSqlDatabase& db, QDateTime* now, QString* normalized,
@@ -151,52 +142,29 @@ bool databaseNow(QSqlDatabase& db, QDateTime* now, QString* normalized,
     return true;
 }
 
-QString fingerprintForHold(
-    qint64 accountId,
-    const QString& amount,
-    const QString& reasonCode,
-    const QString& reasonDescription,
-    const QString& referenceType,
-    const QString& referenceId,
-    const QString& effectiveAt,
-    const QString& expiresAt)
-{
-    const QByteArray payload = QStringLiteral("HOLD\n%1\n%2\n%3\n%4\n%5\n%6\n%7\n%8")
-        .arg(accountId)
-        .arg(amount)
-        .arg(reasonCode)
-        .arg(reasonDescription)
-        .arg(referenceType)
-        .arg(referenceId)
-        .arg(effectiveAt)
-        .arg(expiresAt)
-        .toUtf8();
-
-    return QString::fromLatin1(
-        QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
-}
-
-QString fingerprintForEvent(
+bool fingerprintForEvent(
     qint64 holdId,
     const QString& eventType,
     const QString& amount,
+    bool effectiveAtProvided,
     const QString& effectiveAt,
     const QString& reasonCode,
     const QString& referenceType,
-    const QString& referenceId)
+    const QString& referenceId,
+    QString* fingerprint,
+    QString* errorCode)
 {
-    const QByteArray payload = QStringLiteral("EVENT\n%1\n%2\n%3\n%4\n%5\n%6\n%7")
-        .arg(holdId)
-        .arg(eventType)
-        .arg(amount)
-        .arg(effectiveAt)
-        .arg(reasonCode)
-        .arg(referenceType)
-        .arg(referenceId)
-        .toUtf8();
+    HoldEventFingerprintV1::FingerprintInput input;
+    input.holdId = holdId;
+    input.eventType = eventType;
+    input.amount = amount;
+    input.effectiveAtProvided = effectiveAtProvided;
+    input.effectiveAt = effectiveAt;
+    input.reasonCode = reasonCode;
+    input.referenceType = referenceType;
+    input.referenceId = referenceId;
 
-    return QString::fromLatin1(
-        QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+    return HoldEventFingerprintV1::fingerprint(input, fingerprint, errorCode);
 }
 
 struct HoldAccountState
@@ -478,6 +446,14 @@ TriggerErrorInfo triggerErrorInfo(const QSqlError& error)
         { "ACCOUNT_HOLD_RELEASE_EXCEEDS_REMAINING_AMOUNT", true },
         { "PARTIAL_RELEASE_MUST_BE_LESS_THAN_REMAINING_AMOUNT", true },
         { "FULL_RELEASE_MUST_MATCH_REMAINING_AMOUNT", true },
+        { "ACCOUNT_HOLD_EVENT_INVALID_EVENT_TYPE", true },
+        { "ACCOUNT_HOLD_EVENT_INVALID_REASON_CODE", true },
+        { "ACCOUNT_HOLD_EVENT_INVALID_AMOUNT", true },
+        { "ACCOUNT_HOLD_EVENT_INVALID_EFFECTIVE_AT", true },
+        { "ACCOUNT_HOLD_EVENT_FINGERPRINT_REQUIRED", false },
+        { "ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID", false },
+        { "ACCOUNT_HOLD_EVENT_FINGERPRINT_MISMATCH", false },
+        { "ACCOUNT_HOLD_EVENT_FINGERPRINT_VERSION_UNSUPPORTED", false },
         { "ACCOUNT_HOLD_IS_IMMUTABLE", false },
         { "ACCOUNT_HOLD_EVENTS_ARE_IMMUTABLE", false }
     };
@@ -515,11 +491,49 @@ QString triggerRejectionMessage(const QString& code)
         return QStringLiteral("Partial release must be less than the remaining amount");
     if (code == QStringLiteral("FULL_RELEASE_MUST_MATCH_REMAINING_AMOUNT"))
         return QStringLiteral("Full release must match the remaining amount");
+    if (code == QStringLiteral("ACCOUNT_HOLD_EVENT_INVALID_EVENT_TYPE"))
+        return QStringLiteral("Hold event type is not supported");
+    if (code == QStringLiteral("ACCOUNT_HOLD_EVENT_INVALID_REASON_CODE"))
+        return QStringLiteral("Hold event reasonCode is invalid");
+    if (code == QStringLiteral("ACCOUNT_HOLD_EVENT_INVALID_AMOUNT"))
+        return QStringLiteral("Hold event amount is invalid");
+    if (code == QStringLiteral("ACCOUNT_HOLD_EVENT_INVALID_EFFECTIVE_AT"))
+        return QStringLiteral("Hold event effectiveAt is invalid");
 
     return QStringLiteral("Hold event was rejected");
 }
 
-bool lookupEventByKey(
+QString triggerFailureMessage(const QString& code)
+{
+    if (code == QStringLiteral("ACCOUNT_HOLD_EVENT_FINGERPRINT_REQUIRED"))
+        return QStringLiteral("Hold event idempotency metadata is missing");
+    if (code == QStringLiteral("ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID"))
+        return QStringLiteral("Hold event idempotency metadata is invalid");
+    if (code == QStringLiteral("ACCOUNT_HOLD_EVENT_FINGERPRINT_MISMATCH"))
+        return QStringLiteral("Hold event fingerprint does not match");
+    if (code ==
+        QStringLiteral("ACCOUNT_HOLD_EVENT_FINGERPRINT_VERSION_UNSUPPORTED")) {
+        return QStringLiteral(
+            "Hold event fingerprint version is not supported");
+    }
+
+    return QStringLiteral("Hold event idempotency validation failed");
+}
+
+struct EventLookupOutcome
+{
+    bool databaseError = false;
+    QString error;
+    bool found = false;
+    bool matches = false;
+    bool effectiveAtMatches = false;
+    bool failClosed = false;
+    qint64 eventId = 0;
+    QString failClosedCode;
+    QString failClosedMessage;
+};
+
+EventLookupOutcome lookupEventByKey(
     QSqlDatabase& db,
     qint64 holdId,
     const QString& idempotencyKey,
@@ -531,20 +545,14 @@ bool lookupEventByKey(
     const QString& referenceType,
     const QString& referenceId,
     const QString& reasonCode,
-    bool forUpdate,
-    qint64* eventId,
-    bool* found,
-    bool* matches,
-    bool* effectiveAtMatches,
-    QString* error)
+    const QString& requestFingerprint,
+    bool forUpdate)
 {
-    // effective_at is NOT NULL, so a request without an explicit effectiveAt
-    // is stored with the server default. The service writes that default as
-    // date_trunc('milliseconds', CURRENT_TIMESTAMP), while created_at keeps
-    // the transaction timestamp. That lets the lookup distinguish an omitted
-    // effectiveAt from an explicit one without a schema change.
+    EventLookupOutcome outcome;
+
     QString sql = QStringLiteral(
-        "SELECT id, "
+        "SELECT id, request_fingerprint, fingerprint_version, "
+        "       effective_at_provided, "
         " (event_type = CAST(:event_type AS VARCHAR(30))) AS type_matches, "
         " (CASE WHEN CAST(:event_type AS VARCHAR(30)) = 'PARTIAL_RELEASE' "
         "        THEN CAST(:client_amount AS NUMERIC) = amount "
@@ -554,7 +562,13 @@ bool lookupEventByKey(
         "   THEN effective_at = date_trunc('milliseconds', created_at) "
         "   ELSE effective_at = CAST(:client_effective AS TIMESTAMPTZ) "
         "        AND effective_at <> date_trunc('milliseconds', created_at) "
-        "  END) AS effective_matches, "
+        "  END) AS legacy_effective_matches, "
+        " (CASE "
+        "   WHEN CAST(:effective_provided AS VARCHAR) = 'false' "
+        "   THEN effective_at_provided = FALSE "
+        "   ELSE effective_at_provided = TRUE "
+        "        AND effective_at = CAST(:client_effective AS TIMESTAMPTZ) "
+        "  END) AS versioned_effective_matches, "
         " (reference_type IS NOT DISTINCT FROM CAST(:reference_type AS VARCHAR(50))) AS ref_type_matches, "
         " (reference_id IS NOT DISTINCT FROM CAST(:reference_id AS VARCHAR(100))) AS ref_id_matches, "
         " (reason_code = CAST(:reason_code AS VARCHAR(50))) AS reason_matches "
@@ -586,33 +600,88 @@ bool lookupEventByKey(
     query.bindValue(":hold_id", holdId);
     query.bindValue(":key", idempotencyKey);
 
-    *eventId = 0;
-    *found = false;
-    *matches = false;
-    *effectiveAtMatches = false;
-
     if (!query.exec()) {
-        *error = query.lastError().text();
-        return false;
+        outcome.databaseError = true;
+        outcome.error = query.lastError().text();
+        return outcome;
     }
 
     if (!query.next())
-        return true;
+        return outcome;
 
-    *found = true;
-    *eventId = query.value(0).toLongLong();
-    *effectiveAtMatches = query.value(3).toBool();
+    outcome.found = true;
+    outcome.eventId = query.value(0).toLongLong();
 
-    bool allMatch = true;
-    for (int column = 1; column <= 6; ++column) {
+    const QVariant fingerprintValue = query.value(1);
+    const QVariant versionValue = query.value(2);
+    const QVariant providedValue = query.value(3);
+
+    const HoldEventFingerprintV1::MetadataState metadataState =
+        HoldEventFingerprintV1::classifyMetadata(
+            fingerprintValue.isNull(),
+            versionValue.isNull(),
+            providedValue.isNull());
+    const bool allMetadataNull =
+        metadataState == HoldEventFingerprintV1::MetadataState::Legacy;
+    const bool metadataIncomplete =
+        metadataState == HoldEventFingerprintV1::MetadataState::Incomplete;
+
+    bool baseFieldsMatch = true;
+    for (int column : {4, 5, 8, 9, 10}) {
         if (!query.value(column).toBool()) {
-            allMatch = false;
+            baseFieldsMatch = false;
             break;
         }
     }
 
-    *matches = allMatch;
-    return true;
+    const bool legacyFieldsMatch =
+        baseFieldsMatch && query.value(6).toBool();
+    const bool versionedEffectiveAtMatches = query.value(7).toBool();
+
+    const HoldEventFingerprintV1::Decision decision =
+        HoldEventFingerprintV1::classify(
+            allMetadataNull,
+            metadataIncomplete,
+            fingerprintValue.toString(),
+            versionValue.toInt(),
+            legacyFieldsMatch,
+            requestFingerprint);
+
+    switch (decision) {
+    case HoldEventFingerprintV1::Decision::LegacyMatch:
+        outcome.matches = true;
+        outcome.effectiveAtMatches = query.value(6).toBool();
+        break;
+    case HoldEventFingerprintV1::Decision::LegacyConflict:
+        outcome.matches = false;
+        outcome.effectiveAtMatches = query.value(6).toBool();
+        break;
+    case HoldEventFingerprintV1::Decision::VersionedMatch:
+        outcome.matches = true;
+        outcome.effectiveAtMatches = versionedEffectiveAtMatches;
+        break;
+    case HoldEventFingerprintV1::Decision::VersionedConflict:
+        outcome.matches = false;
+        outcome.effectiveAtMatches = versionedEffectiveAtMatches;
+        break;
+    case HoldEventFingerprintV1::Decision::MetadataIncomplete:
+    case HoldEventFingerprintV1::Decision::InvalidFingerprint:
+        outcome.failClosed = true;
+        outcome.failClosedCode = QStringLiteral(
+            "ACCOUNT_HOLD_EVENT_FINGERPRINT_INVALID");
+        outcome.failClosedMessage = QStringLiteral(
+            "Stored hold event idempotency metadata is invalid");
+        break;
+    case HoldEventFingerprintV1::Decision::UnsupportedVersion:
+        outcome.failClosed = true;
+        outcome.failClosedCode = QStringLiteral(
+            "ACCOUNT_HOLD_EVENT_FINGERPRINT_VERSION_UNSUPPORTED");
+        outcome.failClosedMessage = QStringLiteral(
+            "Stored hold event fingerprint version is not supported");
+        break;
+    }
+
+    return outcome;
 }
 
 } // namespace
@@ -633,6 +702,16 @@ HoldResult HoldService::createHold(
     const QString& expiresAtInput,
     const QString& idempotencyKeyInput)
 {
+    for (const QString* value : {
+             &amountInput, &reasonCodeInput, &reasonDescriptionInput,
+             &referenceTypeInput, &referenceIdInput, &effectiveAtInput,
+             &expiresAtInput, &idempotencyKeyInput}) {
+        if (HoldEventFingerprintV1::containsNullCharacter(*value))
+            return rejected(
+                QStringLiteral("HOLD_INVALID_TEXT_INPUT"),
+                QStringLiteral("Text input must not contain U+0000"));
+    }
+
     if (!m_database.isValid() || !m_database.isOpen())
         return failed(QStringLiteral("HOLD_DATABASE_UNAVAILABLE"),
                       QStringLiteral("Database connection is not open"));
@@ -668,8 +747,10 @@ HoldResult HoldService::createHold(
         return rejected(QStringLiteral("HOLD_INVALID_REFERENCE"),
                         QStringLiteral("referenceType and referenceId exceed their maximum lengths"));
 
-    bool effectiveAtProvided = !effectiveAtInput.trimmed().isEmpty();
-    bool expiresAtProvided = !expiresAtInput.trimmed().isEmpty();
+    bool effectiveAtProvided =
+        !HoldEventFingerprintV1::trim(effectiveAtInput).isEmpty();
+    bool expiresAtProvided =
+        !HoldEventFingerprintV1::trim(expiresAtInput).isEmpty();
     QDateTime effectiveAtParsed;
     QDateTime expiresAtParsed;
     QString effectiveAtNormalized;
@@ -678,22 +759,49 @@ HoldResult HoldService::createHold(
     if (effectiveAtProvided &&
         !parseTimestamp(effectiveAtInput, &effectiveAtParsed,
                         &effectiveAtNormalized)) {
-        return rejected(QStringLiteral("HOLD_INVALID_EFFECTIVE_AT"),
-                        QStringLiteral("effectiveAt is not a valid timestamp"));
+        return rejected(
+            QStringLiteral("HOLD_INVALID_EFFECTIVE_AT"),
+            QStringLiteral("effectiveAt must be a valid timestamp with an explicit timezone"));
     }
 
     if (expiresAtProvided &&
         !parseTimestamp(expiresAtInput, &expiresAtParsed,
                         &expiresAtNormalized)) {
-        return rejected(QStringLiteral("HOLD_INVALID_EXPIRES_AT"),
-                        QStringLiteral("expiresAt is not a valid timestamp"));
+        return rejected(
+            QStringLiteral("HOLD_INVALID_EXPIRES_AT"),
+            QStringLiteral("expiresAt must be a valid timestamp with an explicit timezone"));
     }
 
-    const QString fingerprint = fingerprintForHold(
+    const QString fingerprint = HoldFingerprint::compute(
         accountId, amount, reasonCode, reasonDescription,
         referenceType, referenceId,
         effectiveAtProvided ? effectiveAtNormalized : QString(),
         expiresAtProvided ? expiresAtNormalized : QString());
+
+    QString legacyFingerprint;
+    {
+        QString legacyEffectiveAt;
+        QString legacyExpiresAt;
+        const bool legacyEffectiveValid =
+            !effectiveAtProvided ||
+            HoldFingerprint::normalizeLegacyTimestamp(
+                effectiveAtInput, &legacyEffectiveAt);
+        const bool legacyExpiresValid =
+            !expiresAtProvided ||
+            HoldFingerprint::normalizeLegacyTimestamp(
+                expiresAtInput, &legacyExpiresAt);
+
+        if (legacyEffectiveValid && legacyExpiresValid) {
+            legacyFingerprint = HoldFingerprint::compute(
+                accountId, amount, reasonCode, reasonDescription,
+                referenceType, referenceId,
+                effectiveAtProvided ? legacyEffectiveAt : QString(),
+                expiresAtProvided ? legacyExpiresAt : QString());
+
+            if (legacyFingerprint == fingerprint)
+                legacyFingerprint.clear();
+        }
+    }
 
     QSqlDatabase db = m_database;
 
@@ -750,7 +858,8 @@ HoldResult HoldService::createHold(
             const qint64 priorId = existing.value(0).toLongLong();
             const QString priorFingerprint = existing.value(1).toString();
 
-            if (priorFingerprint != fingerprint) {
+            if (!HoldFingerprint::matchesStored(
+                    priorFingerprint, fingerprint, legacyFingerprint)) {
                 db.rollback();
                 return rejected(
                     QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
@@ -986,7 +1095,9 @@ HoldResult HoldService::createHold(
                     const QString priorFingerprint =
                         raced.value(1).toString();
 
-                    if (priorFingerprint != fingerprint) {
+                    if (!HoldFingerprint::matchesStored(
+                            priorFingerprint, fingerprint,
+                            legacyFingerprint)) {
                         db.rollback();
                         return rejected(
                             QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
@@ -1069,14 +1180,26 @@ HoldEventResult HoldService::createEvent(
     const QString& referenceIdInput,
     const QString& idempotencyKeyInput)
 {
+    for (const QString* value : {
+             &eventTypeInput, &amountInput, &effectiveAtInput,
+             &reasonCodeInput, &referenceTypeInput, &referenceIdInput,
+             &idempotencyKeyInput}) {
+        if (HoldEventFingerprintV1::containsNullCharacter(*value))
+            return rejectedEvent(
+                QStringLiteral("HOLD_INVALID_TEXT_INPUT"),
+                QStringLiteral("Text input must not contain U+0000"));
+    }
+
     if (!m_database.isValid() || !m_database.isOpen())
         return failedEvent(QStringLiteral("HOLD_DATABASE_UNAVAILABLE"),
                            QStringLiteral("Database connection is not open"));
 
-    const QString eventType = eventTypeInput.trimmed();
-    const QString reasonCode = reasonCodeInput.trimmed();
-    const QString referenceType = referenceTypeInput.trimmed();
-    const QString referenceId = referenceIdInput.trimmed();
+    const QString eventType = HoldEventFingerprintV1::trim(eventTypeInput);
+    const QString reasonCode = HoldEventFingerprintV1::trim(reasonCodeInput);
+    const QString referenceType =
+        HoldEventFingerprintV1::trim(referenceTypeInput);
+    const QString referenceId =
+        HoldEventFingerprintV1::trim(referenceIdInput);
     const QString idempotencyKey = idempotencyKeyInput.trimmed();
 
     if (holdId <= 0)
@@ -1110,21 +1233,34 @@ HoldEventResult HoldService::createEvent(
         return rejectedEvent(QStringLiteral("HOLD_INVALID_AMOUNT"),
                              QStringLiteral("Amount must be positive and have at most 8 decimal places"));
 
-    const bool effectiveAtProvided = !effectiveAtInput.trimmed().isEmpty();
+    const bool effectiveAtProvided =
+        !HoldEventFingerprintV1::trim(effectiveAtInput).isEmpty();
     QDateTime effectiveAtParsed;
     QString effectiveAtNormalized;
 
     if (effectiveAtProvided &&
         !parseTimestamp(effectiveAtInput, &effectiveAtParsed,
                         &effectiveAtNormalized)) {
-        return rejectedEvent(QStringLiteral("HOLD_INVALID_EFFECTIVE_AT"),
-                             QStringLiteral("effectiveAt is not a valid timestamp"));
+        return rejectedEvent(
+            QStringLiteral("HOLD_INVALID_EFFECTIVE_AT"),
+            QStringLiteral("effectiveAt must be a valid timestamp with an explicit timezone"));
     }
 
-    const QString fingerprint = fingerprintForEvent(
-        holdId, eventType, isPartial ? eventAmount : QString(),
-        effectiveAtProvided ? effectiveAtNormalized : QString(),
-        reasonCode, referenceType, referenceId);
+    QString fingerprint;
+    QString fingerprintError;
+
+    if (!fingerprintForEvent(
+            holdId, eventType, isPartial ? eventAmount : QString(),
+            effectiveAtProvided,
+            effectiveAtProvided ? effectiveAtNormalized : QString(),
+            reasonCode, referenceType, referenceId,
+            &fingerprint, &fingerprintError)) {
+        return rejectedEvent(
+            fingerprintError.isEmpty()
+                ? QStringLiteral("HOLD_INVALID_EVENT")
+                : fingerprintError,
+            QStringLiteral("Hold event fingerprint could not be computed"));
+    }
 
     QSqlDatabase db = m_database;
 
@@ -1167,36 +1303,36 @@ HoldEventResult HoldService::createEvent(
     // Idempotency is checked before state and amount validation so that a
     // retry still returns the original event after a full release.
     {
-        qint64 priorEventId = 0;
-        bool found = false;
-        bool matches = false;
-        bool effectiveAtMatches = false;
-        QString lookupError;
+        const EventLookupOutcome lookup = lookupEventByKey(
+            db, holdId, idempotencyKey, eventType, isPartial, eventAmount,
+            effectiveAtProvided, effectiveAtNormalized,
+            referenceType, referenceId, reasonCode, fingerprint, true);
 
-        if (!lookupEventByKey(
-                db, holdId, idempotencyKey, eventType, isPartial, eventAmount,
-                effectiveAtProvided, effectiveAtNormalized,
-                referenceType, referenceId, reasonCode, true,
-                &priorEventId, &found, &matches, &effectiveAtMatches,
-                &lookupError)) {
+        if (lookup.databaseError) {
             return rollbackFailure(
                 QStringLiteral("HOLD_IDEMPOTENCY_LOOKUP_FAILED"),
-                lookupError);
+                lookup.error);
         }
 
-        if (found) {
-            if (!matches) {
+        if (lookup.failClosed) {
+            return rollbackFailure(
+                lookup.failClosedCode, lookup.failClosedMessage,
+                lookup.eventId);
+        }
+
+        if (lookup.found) {
+            if (!lookup.matches) {
                 db.rollback();
-                if (!effectiveAtMatches) {
+                if (!lookup.effectiveAtMatches) {
                     return rejectedEvent(
                         QStringLiteral("IDEMPOTENCY_CONFLICT"),
                         QStringLiteral("This idempotencyKey was already used with a different effectiveAt"),
-                        priorEventId);
+                        lookup.eventId);
                 }
                 return rejectedEvent(
                     QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
                     QStringLiteral("This idempotencyKey was already used with a different request"),
-                    priorEventId);
+                    lookup.eventId);
             }
 
             HoldStatusData snapshot;
@@ -1211,7 +1347,7 @@ HoldEventResult HoldService::createEvent(
                     readError.isEmpty()
                         ? QStringLiteral("Hold status could not be read")
                         : readError,
-                    priorEventId);
+                    lookup.eventId);
             }
 
             HoldEventData eventData;
@@ -1219,20 +1355,20 @@ HoldEventResult HoldService::createEvent(
             QString eventError;
 
             if (!loadHoldEventData(
-                    db, priorEventId, &eventData, &eventFound, &eventError) ||
+                    db, lookup.eventId, &eventData, &eventFound, &eventError) ||
                 !eventFound) {
                 return rollbackFailure(
                     QStringLiteral("HOLD_STATE_READ_FAILED"),
                     eventError.isEmpty()
                         ? QStringLiteral("Hold event could not be read")
                         : eventError,
-                    priorEventId);
+                    lookup.eventId);
             }
 
             if (!db.commit())
-                return commitFailure(db.lastError().text(), priorEventId);
+                return commitFailure(db.lastError().text(), lookup.eventId);
 
-            HoldEventResult result = completedEvent(priorEventId, true);
+            HoldEventResult result = completedEvent(lookup.eventId, true);
             result.snapshot = snapshot;
             result.hasSnapshot = true;
             applyHoldEventData(&result, eventData);
@@ -1426,10 +1562,14 @@ HoldEventResult HoldService::createEvent(
         insert.prepare(
             "INSERT INTO account_hold_events ("
             " hold_id, idempotency_key, event_type, amount, effective_at, "
-            " reference_type, reference_id, reason_code) "
+            " reference_type, reference_id, reason_code, "
+            " request_fingerprint, fingerprint_version, "
+            " effective_at_provided) "
             "VALUES (:hold_id, :idempotency_key, :event_type, "
             " CAST(:amount AS NUMERIC), CAST(:effective_at AS TIMESTAMPTZ), "
-            " :reference_type, :reference_id, :reason_code) "
+            " :reference_type, :reference_id, :reason_code, "
+            " :request_fingerprint, :fingerprint_version, "
+            " :effective_at_provided) "
             "RETURNING id");
 
         insert.bindValue(":hold_id", holdId);
@@ -1444,6 +1584,11 @@ HoldEventResult HoldService::createEvent(
             ":reference_id",
             referenceId.isEmpty() ? QVariant() : QVariant(referenceId));
         insert.bindValue(":reason_code", reasonCode);
+        insert.bindValue(":request_fingerprint", fingerprint);
+        insert.bindValue(
+            ":fingerprint_version",
+            HoldEventFingerprintV1::Version);
+        insert.bindValue(":effective_at_provided", effectiveAtProvided);
 
         if (!insert.exec()) {
             const QSqlError insertError = insert.lastError();
@@ -1456,44 +1601,44 @@ HoldEventResult HoldService::createEvent(
                         savepoint.lastError().text());
                 }
 
-                qint64 priorEventId = 0;
-                bool found = false;
-                bool matches = false;
-                bool effectiveAtMatches = false;
-                QString lookupError;
+                const EventLookupOutcome lookup = lookupEventByKey(
+                    db, holdId, idempotencyKey, eventType, isPartial,
+                    eventAmount, effectiveAtProvided, effectiveAtNormalized,
+                    referenceType, referenceId, reasonCode, fingerprint, false);
 
-                if (!lookupEventByKey(
-                        db, holdId, idempotencyKey, eventType, isPartial,
-                        eventAmount, effectiveAtProvided, effectiveAtNormalized,
-                        referenceType, referenceId, reasonCode, false,
-                        &priorEventId, &found, &matches, &effectiveAtMatches,
-                        &lookupError)) {
+                if (lookup.databaseError) {
                     return rollbackFailure(
                         QStringLiteral("HOLD_IDEMPOTENCY_LOOKUP_FAILED"),
-                        lookupError);
+                        lookup.error);
                 }
 
-                if (!found) {
+                if (lookup.failClosed) {
+                    return rollbackFailure(
+                        lookup.failClosedCode, lookup.failClosedMessage,
+                        lookup.eventId);
+                }
+
+                if (!lookup.found) {
                     return rollbackFailure(
                         QStringLiteral("HOLD_EVENT_CREATE_FAILED"),
                         insertError.text());
                 }
 
-                if (!matches) {
+                if (!lookup.matches) {
                     db.rollback();
-                    if (!effectiveAtMatches) {
+                    if (!lookup.effectiveAtMatches) {
                         return rejectedEvent(
                             QStringLiteral("IDEMPOTENCY_CONFLICT"),
                             QStringLiteral("This idempotencyKey was already used with a different effectiveAt"),
-                            priorEventId);
+                            lookup.eventId);
                     }
                     return rejectedEvent(
                         QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
                         QStringLiteral("This idempotencyKey was already used with a different request"),
-                        priorEventId);
+                        lookup.eventId);
                 }
 
-                eventId = priorEventId;
+                eventId = lookup.eventId;
                 replayed = true;
             } else {
                 const TriggerErrorInfo info = triggerErrorInfo(insertError);
@@ -1501,6 +1646,21 @@ HoldEventResult HoldService::createEvent(
                 if (info.known && info.rejected)
                     return rollbackRejected(
                         info.code, triggerRejectionMessage(info.code));
+
+                if (info.known) {
+                    if (info.code.startsWith(
+                            QStringLiteral(
+                                "ACCOUNT_HOLD_EVENT_FINGERPRINT_"))) {
+                        qWarning()
+                            << "Hold event fingerprint validation failed:"
+                            << insertError.text();
+                        return rollbackFailure(
+                            info.code,
+                            triggerFailureMessage(info.code));
+                    }
+
+                    return rollbackFailure(info.code, insertError.text());
+                }
 
                 return rollbackFailure(
                     QStringLiteral("HOLD_EVENT_CREATE_FAILED"),
