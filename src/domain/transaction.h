@@ -23,6 +23,7 @@ public:
         INITIATED,
         PROCESSING,
         COMPLETED,
+        REJECTED,
         FAILED,
         CANCELLED,
         REVERSED
@@ -51,6 +52,10 @@ public:
         const QDateTime& completedAt,
         const QString& description,
         const QString& referenceNumber,
+        const QString& idempotencyKey,
+        const QString& requestFingerprint,
+        const QString& resultCode,
+        const QString& resultMessage,
         const QDateTime& createdAt,
         const QDateTime& updatedAt
     );
@@ -74,8 +79,16 @@ public:
     const QString& getDescription() const;
     const QString& getReferenceNumber() const;
 
+    const QString& getIdempotencyKey() const;
+    const QString& getRequestFingerprint() const;
+    const QString& getResultCode() const;
+    const QString& getResultMessage() const;
+
     const QDateTime& getCreatedAt() const;
     const QDateTime& getUpdatedAt() const;
+
+    bool canTransitionTo(Status next) const;
+    static bool isAllowedTransition(Status from, Status to);
 
 private:
     qint64 id;
@@ -97,6 +110,11 @@ private:
 
     QString description;
     QString referenceNumber;
+
+    QString idempotencyKey;
+    QString requestFingerprint;
+    QString resultCode;
+    QString resultMessage;
 
     QDateTime createdAt;
     QDateTime updatedAt;

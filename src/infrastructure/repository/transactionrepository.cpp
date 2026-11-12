@@ -1,35 +1,42 @@
 #include "transactionrepository.h"
 
+#include <QSqlError>
 #include <QSqlQuery>
 #include <QVariant>
 
 namespace
 {
 
+void setError(QString* error, const QString& message)
+{
+    if (error != nullptr)
+        *error = message;
+}
+
 QString typeToString(Transaction::Type type)
 {
     switch (type)
     {
     case Transaction::Type::DEPOSIT:
-        return "DEPOSIT";
+        return QStringLiteral("DEPOSIT");
 
     case Transaction::Type::WITHDRAWAL:
-        return "WITHDRAWAL";
+        return QStringLiteral("WITHDRAWAL");
 
     case Transaction::Type::TRANSFER:
-        return "TRANSFER";
+        return QStringLiteral("TRANSFER");
 
     case Transaction::Type::PAYMENT:
-        return "PAYMENT";
+        return QStringLiteral("PAYMENT");
 
     case Transaction::Type::FEE:
-        return "FEE";
+        return QStringLiteral("FEE");
 
     case Transaction::Type::REVERSAL:
-        return "REVERSAL";
+        return QStringLiteral("REVERSAL");
     }
 
-    return "TRANSFER";
+    return QString();
 }
 
 QString statusToString(Transaction::Status status)
@@ -37,25 +44,28 @@ QString statusToString(Transaction::Status status)
     switch (status)
     {
     case Transaction::Status::INITIATED:
-        return "INITIATED";
+        return QStringLiteral("INITIATED");
 
     case Transaction::Status::PROCESSING:
-        return "PROCESSING";
+        return QStringLiteral("PROCESSING");
 
     case Transaction::Status::COMPLETED:
-        return "COMPLETED";
+        return QStringLiteral("COMPLETED");
+
+    case Transaction::Status::REJECTED:
+        return QStringLiteral("REJECTED");
 
     case Transaction::Status::FAILED:
-        return "FAILED";
+        return QStringLiteral("FAILED");
 
     case Transaction::Status::CANCELLED:
-        return "CANCELLED";
+        return QStringLiteral("CANCELLED");
 
     case Transaction::Status::REVERSED:
-        return "REVERSED";
+        return QStringLiteral("REVERSED");
     }
 
-    return "FAILED";
+    return QString();
 }
 
 QString channelToString(Transaction::Channel channel)
@@ -63,315 +73,453 @@ QString channelToString(Transaction::Channel channel)
     switch (channel)
     {
     case Transaction::Channel::BRANCH:
-        return "BRANCH";
+        return QStringLiteral("BRANCH");
 
     case Transaction::Channel::ATM:
-        return "ATM";
+        return QStringLiteral("ATM");
 
     case Transaction::Channel::MOBILE:
-        return "MOBILE";
+        return QStringLiteral("MOBILE");
 
     case Transaction::Channel::INTERNET:
-        return "INTERNET";
+        return QStringLiteral("INTERNET");
 
     case Transaction::Channel::API:
-        return "API";
+        return QStringLiteral("API");
 
     case Transaction::Channel::SYSTEM:
-        return "SYSTEM";
+        return QStringLiteral("SYSTEM");
     }
 
-    return "SYSTEM";
+    return QString();
 }
 
-Transaction::Type typeFromString(const QString& value)
+bool typeFromString(const QString& value, Transaction::Type* type)
 {
-    if (value == "DEPOSIT")
-        return Transaction::Type::DEPOSIT;
+    if (type == nullptr)
+        return false;
 
-    if (value == "WITHDRAWAL")
-        return Transaction::Type::WITHDRAWAL;
+    if (value == QStringLiteral("DEPOSIT"))
+        *type = Transaction::Type::DEPOSIT;
+    else if (value == QStringLiteral("WITHDRAWAL"))
+        *type = Transaction::Type::WITHDRAWAL;
+    else if (value == QStringLiteral("TRANSFER"))
+        *type = Transaction::Type::TRANSFER;
+    else if (value == QStringLiteral("PAYMENT"))
+        *type = Transaction::Type::PAYMENT;
+    else if (value == QStringLiteral("FEE"))
+        *type = Transaction::Type::FEE;
+    else if (value == QStringLiteral("REVERSAL"))
+        *type = Transaction::Type::REVERSAL;
+    else
+        return false;
 
-    if (value == "PAYMENT")
-        return Transaction::Type::PAYMENT;
-
-    if (value == "FEE")
-        return Transaction::Type::FEE;
-
-    if (value == "REVERSAL")
-        return Transaction::Type::REVERSAL;
-
-    return Transaction::Type::TRANSFER;
+    return true;
 }
 
-Transaction::Status statusFromString(const QString& value)
+bool statusFromString(const QString& value, Transaction::Status* status)
 {
-    if (value == "PROCESSING")
-        return Transaction::Status::PROCESSING;
+    if (status == nullptr)
+        return false;
 
-    if (value == "COMPLETED")
-        return Transaction::Status::COMPLETED;
+    if (value == QStringLiteral("INITIATED"))
+        *status = Transaction::Status::INITIATED;
+    else if (value == QStringLiteral("PROCESSING"))
+        *status = Transaction::Status::PROCESSING;
+    else if (value == QStringLiteral("COMPLETED"))
+        *status = Transaction::Status::COMPLETED;
+    else if (value == QStringLiteral("REJECTED"))
+        *status = Transaction::Status::REJECTED;
+    else if (value == QStringLiteral("FAILED"))
+        *status = Transaction::Status::FAILED;
+    else if (value == QStringLiteral("CANCELLED"))
+        *status = Transaction::Status::CANCELLED;
+    else if (value == QStringLiteral("REVERSED"))
+        *status = Transaction::Status::REVERSED;
+    else
+        return false;
 
-    if (value == "FAILED")
-        return Transaction::Status::FAILED;
-
-    if (value == "CANCELLED")
-        return Transaction::Status::CANCELLED;
-
-    if (value == "REVERSED")
-        return Transaction::Status::REVERSED;
-
-    return Transaction::Status::INITIATED;
+    return true;
 }
 
-Transaction::Channel channelFromString(const QString& value)
+bool channelFromString(const QString& value, Transaction::Channel* channel)
 {
-    if (value == "BRANCH")
-        return Transaction::Channel::BRANCH;
+    if (channel == nullptr)
+        return false;
 
-    if (value == "ATM")
-        return Transaction::Channel::ATM;
+    if (value == QStringLiteral("BRANCH"))
+        *channel = Transaction::Channel::BRANCH;
+    else if (value == QStringLiteral("ATM"))
+        *channel = Transaction::Channel::ATM;
+    else if (value == QStringLiteral("MOBILE"))
+        *channel = Transaction::Channel::MOBILE;
+    else if (value == QStringLiteral("INTERNET"))
+        *channel = Transaction::Channel::INTERNET;
+    else if (value == QStringLiteral("API"))
+        *channel = Transaction::Channel::API;
+    else if (value == QStringLiteral("SYSTEM"))
+        *channel = Transaction::Channel::SYSTEM;
+    else
+        return false;
 
-    if (value == "MOBILE")
-        return Transaction::Channel::MOBILE;
-
-    if (value == "INTERNET")
-        return Transaction::Channel::INTERNET;
-
-    if (value == "API")
-        return Transaction::Channel::API;
-
-    return Transaction::Channel::SYSTEM;
+    return true;
 }
 
+bool transactionFromQuery(
+    const QSqlQuery& query,
+    std::optional<Transaction>* transaction,
+    QString* error)
+{
+    if (transaction == nullptr)
+    {
+        setError(error, QStringLiteral("Transaction destination is null"));
+        return false;
+    }
+
+    const qint64 id = query.value(QStringLiteral("id")).toLongLong();
+    if (id <= 0)
+    {
+        setError(error, QStringLiteral("Transaction row has an invalid id"));
+        return false;
+    }
+
+    Transaction::Type type;
+    if (!typeFromString(
+            query.value(QStringLiteral("transaction_type")).toString(),
+            &type))
+    {
+        setError(error, QStringLiteral("Transaction row has an unknown type"));
+        return false;
+    }
+
+    Transaction::Status status;
+    if (!statusFromString(
+            query.value(QStringLiteral("status")).toString(),
+            &status))
+    {
+        setError(error, QStringLiteral("Transaction row has an unknown status"));
+        return false;
+    }
+
+    Transaction::Channel channel;
+    if (!channelFromString(
+            query.value(QStringLiteral("channel")).toString(),
+            &channel))
+    {
+        setError(error, QStringLiteral("Transaction row has an unknown channel"));
+        return false;
+    }
+
+    const QVariant reverseValue =
+        query.value(QStringLiteral("reverses_transaction_id"));
+    const qint64 reversesTransactionId =
+        reverseValue.isNull() ? 0 : reverseValue.toLongLong();
+
+    transaction->emplace(
+        id,
+        query.value(QStringLiteral("transaction_number")).toString(),
+        type,
+        status,
+        channel,
+        query.value(QStringLiteral("amount")).toString(),
+        query.value(QStringLiteral("currency_id")).toLongLong(),
+        reversesTransactionId,
+        query.value(QStringLiteral("initiated_at")).toDateTime(),
+        query.value(QStringLiteral("completed_at")).toDateTime(),
+        query.value(QStringLiteral("description")).toString(),
+        query.value(QStringLiteral("reference_number")).toString(),
+        query.value(QStringLiteral("idempotency_key")).toString(),
+        query.value(QStringLiteral("request_fingerprint")).toString(),
+        query.value(QStringLiteral("result_code")).toString(),
+        query.value(QStringLiteral("result_message")).toString(),
+        query.value(QStringLiteral("created_at")).toDateTime(),
+        query.value(QStringLiteral("updated_at")).toDateTime()
+    );
+
+    return true;
 }
 
-TransactionRepository::TransactionRepository(
-    const QSqlDatabase& database
-)
+TransactionLookupResult failedLookup(const QString& message)
+{
+    TransactionLookupResult result;
+    result.status = TransactionLookupResult::Status::Failed;
+    result.error = message;
+    return result;
+}
+
+TransactionLookupResult findTransaction(
+    QSqlDatabase& db,
+    const QString& sql,
+    const QString& bindName,
+    const QVariant& bindValue)
+{
+    QSqlQuery query(db);
+    query.prepare(sql);
+    query.bindValue(bindName, bindValue);
+
+    if (!query.exec())
+        return failedLookup(query.lastError().text());
+
+    if (!query.next())
+    {
+        TransactionLookupResult result;
+        result.status = TransactionLookupResult::Status::NotFound;
+        return result;
+    }
+
+    std::optional<Transaction> transaction;
+    QString parseError;
+
+    if (!transactionFromQuery(query, &transaction, &parseError))
+        return failedLookup(parseError);
+
+    TransactionLookupResult result;
+    result.status = TransactionLookupResult::Status::Found;
+    result.transaction = transaction;
+    return result;
+}
+
+} // namespace
+
+TransactionRepository::TransactionRepository(const QSqlDatabase& database)
     : db(database)
 {
 }
 
-qint64 TransactionRepository::create(
-    const Transaction& transaction
-)
+bool TransactionRepository::acquireApiIdempotencyLock(
+    const QString& idempotencyKey,
+    QString* error)
 {
     QSqlQuery query(db);
-
     query.prepare(
-        "INSERT INTO transaction ("
-        "    transaction_number, "
-        "    transaction_type, "
-        "    status, "
-        "    channel, "
-        "    amount, "
-        "    currency_id, "
-        "    reverses_transaction_id, "
-        "    initiated_at, "
-        "    completed_at, "
-        "    description, "
-        "    reference_number "
-        ") VALUES ("
-        "    :transaction_number, "
-        "    :transaction_type, "
-        "    :status, "
-        "    :channel, "
-        "    :amount, "
-        "    :currency_id, "
-        "    :reverses_transaction_id, "
-        "    :initiated_at, "
-        "    :completed_at, "
-        "    :description, "
-        "    :reference_number"
-        ") "
-        "RETURNING id"
-    );
+        QStringLiteral(
+            "SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"));
+    query.bindValue(":key", QStringLiteral("API:") + idempotencyKey);
+
+    if (!query.exec() || !query.next())
+    {
+        setError(error, query.lastError().text());
+        return false;
+    }
+
+    return true;
+}
+
+TransactionLookupResult TransactionRepository::findByIdempotencyKeyForUpdate(
+    const QString& idempotencyKey)
+{
+    return findTransaction(
+        db,
+        QStringLiteral(
+            "SELECT id, transaction_number, transaction_type, status, channel, "
+            "       amount, currency_id, reverses_transaction_id, initiated_at, "
+            "       completed_at, description, reference_number, created_at, "
+            "       updated_at, idempotency_key, request_fingerprint, "
+            "       result_code, result_message "
+            "FROM transaction "
+            "WHERE channel = 'API' AND idempotency_key = :key "
+            "FOR UPDATE"),
+        QStringLiteral(":key"),
+        idempotencyKey);
+}
+
+TransactionLookupResult TransactionRepository::findById(qint64 transactionId)
+{
+    return findTransaction(
+        db,
+        QStringLiteral(
+            "SELECT id, transaction_number, transaction_type, status, channel, "
+            "       amount, currency_id, reverses_transaction_id, initiated_at, "
+            "       completed_at, description, reference_number, created_at, "
+            "       updated_at, idempotency_key, request_fingerprint, "
+            "       result_code, result_message "
+            "FROM transaction "
+            "WHERE id = :id"),
+        QStringLiteral(":id"),
+        transactionId);
+}
+
+qint64 TransactionRepository::createInitiated(
+    const Transaction& transaction,
+    QString* error)
+{
+    const QString type = typeToString(transaction.getType());
+    const QString status = statusToString(transaction.getStatus());
+    const QString channel = channelToString(transaction.getChannel());
+
+    if (type.isEmpty() || status.isEmpty() || channel.isEmpty())
+    {
+        setError(error, QStringLiteral("Transaction enum value is not supported"));
+        return 0;
+    }
+
+    QSqlQuery query(db);
+    query.prepare(
+        QStringLiteral(
+            "INSERT INTO transaction ("
+            "    transaction_number, "
+            "    transaction_type, "
+            "    status, "
+            "    channel, "
+            "    amount, "
+            "    currency_id, "
+            "    reverses_transaction_id, "
+            "    description, "
+            "    reference_number, "
+            "    idempotency_key, "
+            "    request_fingerprint"
+            ") VALUES ("
+            "    :transaction_number, "
+            "    :transaction_type, "
+            "    :status, "
+            "    :channel, "
+            "    :amount, "
+            "    :currency_id, "
+            "    :reverses_transaction_id, "
+            "    :description, "
+            "    :reference_number, "
+            "    :idempotency_key, "
+            "    :request_fingerprint"
+            ") RETURNING id"));
 
     query.bindValue(
-        ":transaction_number",
-        transaction.getTransactionNumber()
-    );
-
+        QStringLiteral(":transaction_number"),
+        transaction.getTransactionNumber());
+    query.bindValue(QStringLiteral(":transaction_type"), type);
+    query.bindValue(QStringLiteral(":status"), status);
+    query.bindValue(QStringLiteral(":channel"), channel);
+    query.bindValue(QStringLiteral(":amount"), transaction.getAmount());
     query.bindValue(
-        ":transaction_type",
-        typeToString(transaction.getType())
-    );
-
-    query.bindValue(
-        ":status",
-        statusToString(transaction.getStatus())
-    );
-
-    query.bindValue(
-        ":channel",
-        channelToString(transaction.getChannel())
-    );
-
-    query.bindValue(
-        ":amount",
-        transaction.getAmount()
-    );
-
-    query.bindValue(
-        ":currency_id",
-        transaction.getCurrencyId()
-    );
+        QStringLiteral(":currency_id"),
+        transaction.getCurrencyId());
 
     if (transaction.getReversesTransactionId() > 0)
     {
         query.bindValue(
-            ":reverses_transaction_id",
-            transaction.getReversesTransactionId()
-        );
+            QStringLiteral(":reverses_transaction_id"),
+            transaction.getReversesTransactionId());
     }
     else
     {
         query.bindValue(
-            ":reverses_transaction_id",
-            QVariant(QVariant::LongLong)
-        );
+            QStringLiteral(":reverses_transaction_id"),
+            QVariant());
     }
 
-    query.bindValue(
-        ":initiated_at",
-        transaction.getInitiatedAt()
-    );
-
-    if (transaction.getCompletedAt().isValid())
-    {
-        query.bindValue(
-            ":completed_at",
-            transaction.getCompletedAt()
-        );
-    }
+    if (transaction.getDescription().isEmpty())
+        query.bindValue(QStringLiteral(":description"), QVariant());
     else
-    {
         query.bindValue(
-            ":completed_at",
-            QVariant(QVariant::DateTime)
-        );
-    }
+            QStringLiteral(":description"),
+            transaction.getDescription());
 
-    query.bindValue(
-        ":description",
-        transaction.getDescription()
-    );
+    if (transaction.getReferenceNumber().isEmpty())
+        query.bindValue(QStringLiteral(":reference_number"), QVariant());
+    else
+        query.bindValue(
+            QStringLiteral(":reference_number"),
+            transaction.getReferenceNumber());
 
-    query.bindValue(
-        ":reference_number",
-        transaction.getReferenceNumber()
-    );
+    if (transaction.getIdempotencyKey().isEmpty())
+        query.bindValue(QStringLiteral(":idempotency_key"), QVariant());
+    else
+        query.bindValue(
+            QStringLiteral(":idempotency_key"),
+            transaction.getIdempotencyKey());
 
-    if (!query.exec())
-    {
-        return 0;
-    }
-
-    if (!query.next())
-    {
-        return 0;
-    }
-
-    return query.value(0).toLongLong();
-}
-
-Transaction* TransactionRepository::findById(
-    qint64 transactionId
-)
-{
-    QSqlQuery query(db);
-
-    query.prepare(
-        "SELECT "
-        "    id, "
-        "    transaction_number, "
-        "    transaction_type, "
-        "    status, "
-        "    channel, "
-        "    amount, "
-        "    currency_id, "
-        "    reverses_transaction_id, "
-        "    initiated_at, "
-        "    completed_at, "
-        "    description, "
-        "    reference_number, "
-        "    created_at, "
-        "    updated_at "
-        "FROM transaction "
-        "WHERE id = :id"
-    );
-
-    query.bindValue(":id", transactionId);
+    if (transaction.getRequestFingerprint().isEmpty())
+        query.bindValue(QStringLiteral(":request_fingerprint"), QVariant());
+    else
+        query.bindValue(
+            QStringLiteral(":request_fingerprint"),
+            transaction.getRequestFingerprint());
 
     if (!query.exec() || !query.next())
     {
-        return nullptr;
+        setError(error, query.lastError().text());
+        return 0;
     }
 
-    return new Transaction(
-        query.value("id").toLongLong(),
-        query.value("transaction_number").toString(),
-        typeFromString(
-            query.value("transaction_type").toString()
-        ),
-        statusFromString(
-            query.value("status").toString()
-        ),
-        channelFromString(
-            query.value("channel").toString()
-        ),
-        query.value("amount").toString(),
-        query.value("currency_id").toLongLong(),
-        query.value("reverses_transaction_id").toLongLong(),
-        query.value("initiated_at").toDateTime(),
-        query.value("completed_at").toDateTime(),
-        query.value("description").toString(),
-        query.value("reference_number").toString(),
-        query.value("created_at").toDateTime(),
-        query.value("updated_at").toDateTime()
-    );
+    const qint64 transactionId = query.value(0).toLongLong();
+
+    if (transactionId <= 0)
+    {
+        setError(error, QStringLiteral("Transaction insert did not return an id"));
+        return 0;
+    }
+
+    return transactionId;
 }
 
 bool TransactionRepository::updateStatus(
     qint64 transactionId,
-    Transaction::Status status,
-    const QDateTime& completedAt
-)
+    Transaction::Status expectedStatus,
+    Transaction::Status nextStatus,
+    const QString& resultCode,
+    const QString& resultMessage,
+    QString* error)
 {
-    QSqlQuery query(db);
+    const QString expected = statusToString(expectedStatus);
+    const QString next = statusToString(nextStatus);
 
-    query.prepare(
-        "UPDATE transaction "
-        "SET status = :status, "
-        "    completed_at = :completed_at, "
-        "    updated_at = CURRENT_TIMESTAMP "
-        "WHERE id = :id"
-    );
-
-    query.bindValue(
-        ":status",
-        statusToString(status)
-    );
-
-    if (completedAt.isValid())
+    if (expected.isEmpty() || next.isEmpty())
     {
-        query.bindValue(":completed_at", completedAt);
-    }
-    else
-    {
-        query.bindValue(
-            ":completed_at",
-            QVariant(QVariant::DateTime)
-        );
-    }
-
-    query.bindValue(":id", transactionId);
-
-    if (!query.exec())
-    {
+        setError(error, QStringLiteral("Transaction status is not supported"));
         return false;
     }
 
-    return query.numRowsAffected() == 1;
+    const bool setResult =
+        nextStatus == Transaction::Status::COMPLETED ||
+        nextStatus == Transaction::Status::REJECTED ||
+        nextStatus == Transaction::Status::FAILED ||
+        nextStatus == Transaction::Status::CANCELLED ||
+        nextStatus == Transaction::Status::REVERSED;
+
+    const bool setCompletedAt =
+        nextStatus == Transaction::Status::COMPLETED ||
+        nextStatus == Transaction::Status::REJECTED ||
+        nextStatus == Transaction::Status::FAILED ||
+        nextStatus == Transaction::Status::CANCELLED;
+
+    QSqlQuery query(db);
+    query.prepare(
+        QStringLiteral(
+            "UPDATE transaction "
+            "SET status = :next_status, "
+            "    result_code = CASE WHEN :set_result "
+            "                        THEN :result_code ELSE result_code END, "
+            "    result_message = CASE WHEN :set_result "
+            "                           THEN :result_message ELSE result_message END, "
+            "    completed_at = CASE WHEN :set_completed_at "
+            "                         THEN CURRENT_TIMESTAMP ELSE completed_at END, "
+            "    updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = :id AND status = :expected_status"));
+
+    query.bindValue(QStringLiteral(":next_status"), next);
+    query.bindValue(QStringLiteral(":set_result"), setResult);
+    query.bindValue(
+        QStringLiteral(":result_code"),
+        resultCode.isEmpty() ? QVariant() : QVariant(resultCode));
+    query.bindValue(
+        QStringLiteral(":result_message"),
+        resultMessage.isEmpty() ? QVariant() : QVariant(resultMessage));
+    query.bindValue(QStringLiteral(":set_completed_at"), setCompletedAt);
+    query.bindValue(QStringLiteral(":id"), transactionId);
+    query.bindValue(QStringLiteral(":expected_status"), expected);
+
+    if (!query.exec())
+    {
+        setError(error, query.lastError().text());
+        return false;
+    }
+
+    if (query.numRowsAffected() != 1)
+    {
+        setError(
+            error,
+            QStringLiteral("Transaction status transition was rejected"));
+        return false;
+    }
+
+    return true;
 }

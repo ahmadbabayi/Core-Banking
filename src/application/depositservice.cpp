@@ -1,7 +1,12 @@
 #include "depositservice.h"
 
+#include "../infrastructure/repository/transactionrepository.h"
+#include "../infrastructure/unitofwork.h"
+#include "transactionservice.h"
+
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -83,29 +88,6 @@ QString fingerprintFor(qint64 accountId,
 
     return QString::fromLatin1(
         QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
-}
-
-bool persistRejection(QSqlDatabase& db, qint64 transactionId,
-                      const QString& code, const QString& message,
-                      QString* error)
-{
-    QSqlQuery query(db);
-    query.prepare(
-        "UPDATE transaction "
-        "SET status = 'REJECTED', result_code = :code, "
-        "    result_message = :message, completed_at = CURRENT_TIMESTAMP, "
-        "    updated_at = CURRENT_TIMESTAMP "
-        "WHERE id = :id AND status IN ('INITIATED', 'PROCESSING')");
-    query.bindValue(":code", code);
-    query.bindValue(":message", message);
-    query.bindValue(":id", transactionId);
-
-    if (!query.exec() || query.numRowsAffected() != 1) {
-        *error = query.lastError().text();
-        return false;
-    }
-
-    return true;
 }
 
 struct DepositAccountState
@@ -245,101 +227,104 @@ DepositResult DepositService::deposit(qint64 accountId,
         return failed(QStringLiteral("SETTLEMENT_LEDGER_NOT_CONFIGURED"),
                       QStringLiteral("Deposit settlement ledger account code is not configured"));
 
-    QSqlDatabase db = m_database;
-
-    if (!db.transaction())
-        return failed(QStringLiteral("TRANSACTION_START_FAILED"),
-                      db.lastError().text());
-
-    auto rollbackFailure = [&](const QString& code, const QString& message,
-                               qint64 id = 0, const QString& number = QString()) {
-        db.rollback();
-        return failed(code, message, id, number);
-    };
-
-    // Serialize same-key requests before creating a transaction row.
-    {
-        QSqlQuery lock(db);
-        lock.prepare(
-            "SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))");
-        lock.bindValue(":key", QStringLiteral("API:") + idempotencyKey);
-
-        if (!lock.exec() || !lock.next())
-            return rollbackFailure(
-                QStringLiteral("IDEMPOTENCY_LOCK_FAILED"),
-                lock.lastError().text());
-    }
-
     const QString fingerprint =
         fingerprintFor(accountId, amount, description);
 
-    // Return the stored result when the same request has already been handled.
-    {
-        QSqlQuery existing(db);
-        existing.prepare(
-            "SELECT id, transaction_number, transaction_type, status, "
-            "       request_fingerprint, result_code, result_message "
-            "FROM transaction "
-            "WHERE channel = 'API' AND idempotency_key = :key "
-            "FOR UPDATE");
-        existing.bindValue(":key", idempotencyKey);
+    UnitOfWork unitOfWork(m_database);
+    QString unitOfWorkError;
 
-        if (!existing.exec())
-            return rollbackFailure(
-                QStringLiteral("IDEMPOTENCY_LOOKUP_FAILED"),
-                existing.lastError().text());
+    if (!unitOfWork.begin(&unitOfWorkError))
+        return failed(QStringLiteral("TRANSACTION_START_FAILED"),
+                      unitOfWorkError);
 
-        if (existing.next()) {
-            const qint64 priorId = existing.value(0).toLongLong();
-            const QString priorNumber = existing.value(1).toString();
-            const QString priorType = existing.value(2).toString();
-            const QString priorStatus = existing.value(3).toString();
-            const QString priorFingerprint = existing.value(4).toString();
-            const QString priorCode = existing.value(5).toString();
-            const QString priorMessage = existing.value(6).toString();
+    QSqlDatabase& db = unitOfWork.database();
 
-            if (priorFingerprint != fingerprint ||
-                priorType != QStringLiteral("DEPOSIT")) {
-                db.rollback();
-                return rejected(
-                    QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
-                    QStringLiteral("This idempotencyKey was already used with a different request"),
-                    priorId, priorNumber);
-            }
+    TransactionRepository transactionRepository(db);
+    TransactionService transactionService(transactionRepository);
 
-            if (priorStatus == QStringLiteral("COMPLETED")) {
-                if (!db.commit())
-                    return failed(
-                        QStringLiteral("DATABASE_COMMIT_FAILED"),
-                        db.lastError().text(), priorId, priorNumber);
-
-                return completed(
-                    priorId, priorNumber,
-                    priorCode.isEmpty()
-                        ? QStringLiteral("DEPOSIT_COMPLETED") : priorCode,
-                    priorMessage.isEmpty()
-                        ? QStringLiteral("Deposit completed") : priorMessage);
-            }
-
-            if (priorStatus == QStringLiteral("REJECTED")) {
-                if (!db.commit())
-                    return failed(
-                        QStringLiteral("DATABASE_COMMIT_FAILED"),
-                        db.lastError().text(), priorId, priorNumber);
-
-                return rejected(
-                    priorCode.isEmpty()
-                        ? QStringLiteral("DEPOSIT_REJECTED") : priorCode,
-                    priorMessage.isEmpty()
-                        ? QStringLiteral("Deposit was rejected") : priorMessage,
-                    priorId, priorNumber);
-            }
-
-            return rollbackFailure(
-                QStringLiteral("IDEMPOTENCY_IN_PROGRESS"),
-                QStringLiteral("A request with this idempotencyKey is still in progress"),
-                priorId, priorNumber);
+    auto rollbackForError = [&](const QString& originalCode) {
+        QString rollbackError;
+        // Capture the rollback error before UnitOfWork's destructor closes the
+        // shared connection. Raw driver text is not logged.
+        if (!unitOfWork.rollback(&rollbackError)) {
+            qWarning()
+                << "Deposit rollback failed; original code:"
+                << originalCode
+                << "connection will be quarantined";
+            return false;
         }
+        return true;
+    };
+
+    auto rollbackFailure = [&](const QString& code, const QString& message,
+                               qint64 id = 0, const QString& number = QString()) {
+        if (!rollbackForError(code))
+            return failed(
+                QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                QStringLiteral("Database transaction could not be safely rolled back"),
+                id, number);
+
+        return failed(code, message, id, number);
+    };
+
+    // Idempotency is checked before variable account state is validated.
+    const ExistingTransactionResult existing =
+        transactionService.lockAndLookup(
+            idempotencyKey, Transaction::Type::DEPOSIT, fingerprint);
+
+    if (existing.status == ExistingTransactionResult::Status::Failed)
+        return rollbackFailure(existing.errorCode, existing.errorMessage);
+
+    if (existing.status == ExistingTransactionResult::Status::Conflict) {
+        if (!rollbackForError(QStringLiteral("IDEMPOTENCY_KEY_REUSED")))
+            return failed(
+                QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                QStringLiteral("Database transaction could not be safely rolled back"),
+                existing.transactionId, existing.transactionNumber);
+
+        return rejected(
+            QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
+            QStringLiteral("This idempotencyKey was already used with a different request"),
+            existing.transactionId, existing.transactionNumber);
+    }
+
+    if (existing.status == ExistingTransactionResult::Status::Completed) {
+        QString commitError;
+
+        if (!unitOfWork.commit(&commitError))
+            return failed(
+                QStringLiteral("DATABASE_COMMIT_FAILED"),
+                commitError, existing.transactionId, existing.transactionNumber);
+
+        return completed(
+            existing.transactionId, existing.transactionNumber,
+            existing.resultCode.isEmpty()
+                ? QStringLiteral("DEPOSIT_COMPLETED") : existing.resultCode,
+            existing.resultMessage.isEmpty()
+                ? QStringLiteral("Deposit completed") : existing.resultMessage);
+    }
+
+    if (existing.status == ExistingTransactionResult::Status::Rejected) {
+        QString commitError;
+
+        if (!unitOfWork.commit(&commitError))
+            return failed(
+                QStringLiteral("DATABASE_COMMIT_FAILED"),
+                commitError, existing.transactionId, existing.transactionNumber);
+
+        return rejected(
+            existing.resultCode.isEmpty()
+                ? QStringLiteral("DEPOSIT_REJECTED") : existing.resultCode,
+            existing.resultMessage.isEmpty()
+                ? QStringLiteral("Deposit was rejected") : existing.resultMessage,
+            existing.transactionId, existing.transactionNumber);
+    }
+
+    if (existing.status == ExistingTransactionResult::Status::InProgress) {
+        return rollbackFailure(
+            QStringLiteral("IDEMPOTENCY_IN_PROGRESS"),
+            QStringLiteral("A request with this idempotencyKey is still in progress"),
+            existing.transactionId, existing.transactionNumber);
     }
 
     qint64 currencyId = 0;
@@ -355,7 +340,11 @@ DepositResult DepositService::deposit(qint64 accountId,
                 currency.lastError().text());
 
         if (!currency.next()) {
-            db.rollback();
+            if (!rollbackForError(QStringLiteral("ACCOUNT_NOT_FOUND")))
+                return failed(
+                    QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                    QStringLiteral("Database transaction could not be safely rolled back"));
+
             return rejected(
                 QStringLiteral("ACCOUNT_NOT_FOUND"),
                 QStringLiteral("Customer account does not exist"));
@@ -371,48 +360,37 @@ DepositResult DepositService::deposit(qint64 accountId,
                      .toString(QUuid::WithoutBraces)
                      .left(8).toUpper());
 
-    qint64 transactionId = 0;
-    {
-        QSqlQuery insert(db);
-        insert.prepare(
-            "INSERT INTO transaction ("
-            " transaction_number, transaction_type, status, channel, amount, "
-            " currency_id, description, idempotency_key, request_fingerprint) "
-            "VALUES (:number, 'DEPOSIT', 'INITIATED', 'API', :amount, "
-            " :currency_id, :description, :key, :fingerprint) "
-            "RETURNING id");
+    QString transactionError;
+    qint64 transactionId = transactionService.createProcessing(
+        transactionNumber,
+        Transaction::Type::DEPOSIT,
+        amount,
+        currencyId,
+        description,
+        idempotencyKey,
+        fingerprint,
+        &transactionError);
 
-        insert.bindValue(":number", transactionNumber);
-        insert.bindValue(":amount", amount);
-        insert.bindValue(":currency_id", currencyId);
-        insert.bindValue(
-            ":description",
-            description.isEmpty() ? QVariant() : QVariant(description));
-        insert.bindValue(":key", idempotencyKey);
-        insert.bindValue(":fingerprint", fingerprint);
-
-        if (!insert.exec() || !insert.next())
-            return rollbackFailure(
-                QStringLiteral("TRANSACTION_CREATE_FAILED"),
-                insert.lastError().text());
-
-        transactionId = insert.value(0).toLongLong();
-    }
+    if (transactionId <= 0)
+        return rollbackFailure(
+            QStringLiteral("TRANSACTION_CREATE_FAILED"),
+            transactionError);
 
     auto rejectAndCommit = [&](const QString& code, const QString& message) {
         QString persistenceError;
 
-        if (!persistRejection(
-                db, transactionId, code, message, &persistenceError)) {
+        if (!transactionService.reject(
+                transactionId, code, message, &persistenceError)) {
             return rollbackFailure(
                 QStringLiteral("REJECTION_PERSIST_FAILED"),
                 persistenceError, transactionId, transactionNumber);
         }
 
-        if (!db.commit())
+        QString commitError;
+        if (!unitOfWork.commit(&commitError))
             return failed(
                 QStringLiteral("DATABASE_COMMIT_FAILED"),
-                db.lastError().text(), transactionId, transactionNumber);
+                commitError, transactionId, transactionNumber);
 
         return rejected(code, message, transactionId, transactionNumber);
     };
@@ -793,29 +771,21 @@ DepositResult DepositService::deposit(qint64 accountId,
                 transactionId, transactionNumber);
     }
 
-    {
-        QSqlQuery finish(db);
-        finish.prepare(
-            "UPDATE transaction "
-            "SET status = 'COMPLETED', "
-            "    result_code = 'DEPOSIT_COMPLETED', "
-            "    result_message = 'Deposit completed', "
-            "    completed_at = CURRENT_TIMESTAMP, "
-            "    updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = :id AND status = 'INITIATED'");
-
-        finish.bindValue(":id", transactionId);
-
-        if (!finish.exec() || finish.numRowsAffected() != 1)
-            return rollbackFailure(
-                QStringLiteral("TRANSACTION_COMPLETE_FAILED"),
-                finish.lastError().text(), transactionId, transactionNumber);
-    }
-
-    if (!db.commit())
+    QString completionError;
+    if (!transactionService.complete(
+            transactionId,
+            QStringLiteral("DEPOSIT_COMPLETED"),
+            QStringLiteral("Deposit completed"),
+            &completionError))
         return rollbackFailure(
+            QStringLiteral("TRANSACTION_COMPLETE_FAILED"),
+            completionError, transactionId, transactionNumber);
+
+    QString commitError;
+    if (!unitOfWork.commit(&commitError))
+        return failed(
             QStringLiteral("DATABASE_COMMIT_FAILED"),
-            db.lastError().text(), transactionId, transactionNumber);
+            commitError, transactionId, transactionNumber);
 
     return completed(transactionId, transactionNumber);
 }

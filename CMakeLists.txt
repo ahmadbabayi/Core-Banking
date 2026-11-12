@@ -45,6 +45,8 @@ add_executable(CoreBanking
     src/application/accountopeningservice.cpp
     src/application/depositservice.h
     src/application/depositservice.cpp
+    src/application/transactionservice.h
+    src/application/transactionservice.cpp
     src/application/holdservice.h
     src/application/holdservice.cpp
 
@@ -137,6 +139,8 @@ add_executable(CoreBanking
 
     src/infrastructure/database.h
     src/infrastructure/database.cpp
+    src/infrastructure/unitofwork.h
+    src/infrastructure/unitofwork.cpp
 
     src/web/httpserver.h
     src/web/httpserver.cpp

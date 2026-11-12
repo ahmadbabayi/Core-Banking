@@ -13,6 +13,10 @@ Transaction::Transaction(
     const QDateTime& completedAt,
     const QString& description,
     const QString& referenceNumber,
+    const QString& idempotencyKey,
+    const QString& requestFingerprint,
+    const QString& resultCode,
+    const QString& resultMessage,
     const QDateTime& createdAt,
     const QDateTime& updatedAt
 )
@@ -28,6 +32,10 @@ Transaction::Transaction(
       completedAt(completedAt),
       description(description),
       referenceNumber(referenceNumber),
+      idempotencyKey(idempotencyKey),
+      requestFingerprint(requestFingerprint),
+      resultCode(resultCode),
+      resultMessage(resultMessage),
       createdAt(createdAt),
       updatedAt(updatedAt)
 {
@@ -93,6 +101,26 @@ const QString& Transaction::getReferenceNumber() const
     return referenceNumber;
 }
 
+const QString& Transaction::getIdempotencyKey() const
+{
+    return idempotencyKey;
+}
+
+const QString& Transaction::getRequestFingerprint() const
+{
+    return requestFingerprint;
+}
+
+const QString& Transaction::getResultCode() const
+{
+    return resultCode;
+}
+
+const QString& Transaction::getResultMessage() const
+{
+    return resultMessage;
+}
+
 const QDateTime& Transaction::getCreatedAt() const
 {
     return createdAt;
@@ -101,4 +129,35 @@ const QDateTime& Transaction::getCreatedAt() const
 const QDateTime& Transaction::getUpdatedAt() const
 {
     return updatedAt;
+}
+
+bool Transaction::canTransitionTo(Status next) const
+{
+    return isAllowedTransition(status, next);
+}
+
+bool Transaction::isAllowedTransition(Status from, Status to)
+{
+    switch (from)
+    {
+    case Status::INITIATED:
+        return to == Status::PROCESSING || to == Status::CANCELLED;
+
+    case Status::PROCESSING:
+        return to == Status::COMPLETED ||
+               to == Status::REJECTED ||
+               to == Status::FAILED ||
+               to == Status::CANCELLED;
+
+    case Status::COMPLETED:
+        return to == Status::REVERSED;
+
+    case Status::REJECTED:
+    case Status::FAILED:
+    case Status::CANCELLED:
+    case Status::REVERSED:
+        return false;
+    }
+
+    return false;
 }

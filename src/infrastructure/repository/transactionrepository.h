@@ -10,14 +10,29 @@ class TransactionRepository : public ITransactionRepository
 public:
     explicit TransactionRepository(const QSqlDatabase& database);
 
-    qint64 create(const Transaction& transaction) override;
+    bool acquireApiIdempotencyLock(
+        const QString& idempotencyKey,
+        QString* error
+    ) override;
 
-    Transaction* findById(qint64 transactionId) override;
+    TransactionLookupResult findByIdempotencyKeyForUpdate(
+        const QString& idempotencyKey
+    ) override;
+
+    TransactionLookupResult findById(qint64 transactionId) override;
+
+    qint64 createInitiated(
+        const Transaction& transaction,
+        QString* error
+    ) override;
 
     bool updateStatus(
         qint64 transactionId,
-        Transaction::Status status,
-        const QDateTime& completedAt
+        Transaction::Status expectedStatus,
+        Transaction::Status nextStatus,
+        const QString& resultCode,
+        const QString& resultMessage,
+        QString* error
     ) override;
 
 private:
