@@ -1311,6 +1311,178 @@ All hold event fingerprint and validation tests passed
 
 - کار ضروری دیگری برای پایان API مسدودی باقی نمانده است. مرحله Hold API در دامنه مصوب خود بسته است.
 
+### 18.17 زیرمرحله 1A — Unit of Work و Transaction Slice در Deposit — 2026-11-11
+
+#### محدوده و فایل‌ها
+
+- ایجاد `src/infrastructure/unitofwork.h`
+- ایجاد `src/infrastructure/unitofwork.cpp`
+- بازنویسی `src/domain/transaction.h`
+- بازنویسی `src/domain/transaction.cpp`
+- بازنویسی `src/infrastructure/repository/itransactionrepository.h`
+- بازنویسی `src/infrastructure/repository/transactionrepository.h`
+- بازنویسی `src/infrastructure/repository/transactionrepository.cpp`
+- ایجاد `src/application/transactionservice.h`
+- ایجاد `src/application/transactionservice.cpp`
+- تغییر `src/application/depositservice.cpp` فقط برای Transaction و Idempotency
+- تغییر `CMakeLists.txt` فقط برای افزودن فایل‌های جدید
+- به‌روزرسانی `docs/PROJECT_CONTEXT.md` و همین سند
+
+انجام نشد: هیچ Migration، DDL/DML مستقیم، تغییر Schema یا `CURRENT_SCHEMA.sql`، تغییر Connection/Pool/Credential، تغییر Transfer/Hold/افتتاح/بستن حساب، Withdrawal، Reversal، تغییر قرارداد HTTP یا عملیات Git انجام نشد. SQL مربوط به Balance، Journal، TransactionEntry و LedgerBalance در Deposit بازنویسی نشد.
+
+#### بررسی مصرف‌کنندگان پیش از بازنویسی
+
+- `Transaction` و `ITransactionRepository` فقط در `TransactionRepository` قدیمی و فایل‌های خودشان استفاده می‌شدند.
+- هیچ سرویس فعال، Controller یا `main.cpp` از این مدل/Repository استفاده نمی‌کرد.
+- بنابراین بازنویسی آن‌ها نیازمند تغییر Transfer یا مسیرهای خارج از محدوده نبود.
+
+#### تصمیم‌های اجرایی
+
+- `UnitOfWork` مالک `begin/commit/rollback` است و به‌صورت RAII فقط Unit of Work فعال را Rollback می‌کند.
+- شکست Commit به وضعیت `CommitOutcomeUnknown` منتقل می‌شود؛ Destructor در این حالت Rollback انجام نمی‌دهد و نتیجه به‌عنوان Rollback قطعی گزارش نمی‌شود.
+- `TransactionService` و `TransactionRepository` هیچ Commit/Rollback مستقلی ندارند.
+- چرخه داخلی Deposit: `INITIATED -> PROCESSING -> COMPLETED/REJECTED` در همان تراکنش دیتابیس.
+- Idempotency Lookup پیش از اعتبارسنجی شرایط متغیر حساب انجام می‌شود.
+- الگوریتم Fingerprint، Canonicalization، دامنه Idempotency و قرارداد HTTP فعلی Deposit دقیقاً حفظ شد.
+
+#### Build
+
+دستور اجراشده:
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+نتیجه واقعی: موفق. تلاش اول به دلیل نبود Default Constructor در مدل `Transaction` خطای کامپایل داد؛ پس از اصلاح `transactionFromQuery` به `std::optional<Transaction>`، Build نهایی با `[100%] Built target CoreBanking` پایان یافت.
+
+#### آزمون‌های API واقعی
+
+سرور از باینری جدید روی `http://localhost:8080` اجرا شد. آزمون‌ها روی دیتابیس `corebanking` انجام شدند.
+
+| سناریو | نتیجه واقعی |
+|---|---|
+| Deposit موفق، حساب `1`، مبلغ `0.01`، کلید `stage1a-dep-success-20261111-a1` | `201`، `transactionId=2`، `DEP-1794428505308-3415EF73` |
+| Retry دقیق همان درخواست | `201`، همان `transactionId=2` و همان `transactionNumber` |
+| همان کلید با مبلغ `0.02` | `422 IDEMPOTENCY_KEY_REUSED` |
+| Retry کلید پیش از بازنویسی `deposit-main-20261026-a74c91` با Payload اصلی | `201`، همان `transactionId=1`، `DEP-1792961783964-C2534ABA` |
+| همان کلید قدیمی با مبلغ `2` | `422 IDEMPOTENCY_KEY_REUSED` |
+| Deposit به حساب `2` (CLOSED)، کلید `stage1a-dep-reject-20261111-a1` | `422 ACCOUNT_NOT_ACTIVE` |
+| Retry همان درخواست ردشده | `422 ACCOUNT_NOT_ACTIVE` |
+| همان کلید ردشده با مبلغ متفاوت | `422 IDEMPOTENCY_KEY_REUSED` |
+| مبلغ `"0"`، کلید `stage1a-dep-invalid-20261111-a1` | `422 INVALID_AMOUNT` |
+| درخواست بدون `idempotencyKey` | `400 INVALID_DEPOSIT_REQUEST` |
+
+دو درخواست HTTP پشت‌سرهم/هم‌زمان‌شده با کلید `stage1a-dep-concurrent-20261111-a1`:
+
+- هر دو `201` با همان `transactionId=4` و `DEP-1794428619566-4D11C33B` برگشتند.
+- فقط یک ردیف Transaction با این کلید ایجاد شد.
+
+محدودیت آزمون هم‌زمانی: سرور تک‌ریسمانی است و Connection مشترک دارد؛ بنابراین این نتیجه Replay منطقی همان کلید را نشان می‌دهد، نه اثبات هم‌پوشانی واقعی دو تراکنش دیتابیس.
+
+#### کنترل SQL فقط‌خواندنی
+
+- Transactionهای ایجادشده/موجود: `1` تا `4`.
+- `transaction 2` و `4`: `COMPLETED`، هر کدام یک Journal با وضعیت `POSTED`، دو سطر، Debit=`0.01` و Credit=`0.01`.
+- `transaction 3`: `REJECTED` با `result_code=ACCOUNT_NOT_ACTIVE`؛ بدون TransactionEntry و بدون Journal.
+- برای کلید `stage1a-dep-invalid-20261111-a1` هیچ ردیفی ایجاد نشد.
+- هیچ کلید Idempotency تکراری در `channel='API'` وجود ندارد.
+- `account_balance` حساب `1`: `ledger_balance=1.02`، `available_balance=0.50`؛ Active Holds برابر `0.52`، بنابراین `1.02 - 0.52 = 0.50`.
+- `account_balance` حساب `2` بدون تغییر: `ledger_balance=0`، `available_balance=0`.
+- `ledger_account_balance` سرفصل `1`: `credit_total=1.02`، `balance=-1.02`؛ سرفصل `4`: `debit_total=1.02`، `balance=1.02`.
+- تغییر `available_balance` ناشی از SQL فعلی Deposit است که در این مرحله بازنویسی نشد؛ مسئله Cache کهنه‌شونده همچنان برای مرحله Balance باقی است.
+
+#### داده‌های آزمایشی باقی‌مانده
+
+- Transaction `2`، حساب `1`، مبلغ `0.01`، کلید `stage1a-dep-success-20261111-a1`، وضعیت `COMPLETED`.
+- Transaction `3`، حساب `2`، مبلغ `0.01`، کلید `stage1a-dep-reject-20261111-a1`، وضعیت `REJECTED`.
+- Transaction `4`، حساب `1`، مبلغ `0.01`، کلید `stage1a-dep-concurrent-20261111-a1`، وضعیت `COMPLETED`.
+- Transaction `1` و Journal `1` بدون تغییر باقی ماندند.
+
+#### محدودیت‌ها و موارد باقی‌مانده
+
+- Rollback میانی پس از چند نوشتن و پیش از Commit آزمون نشد؛ هیچ Fault Injection یا Test Hook جدیدی اضافه نشد.
+- نتیجه نامعلوم Commit آزمون نشد. رفتار UnitOfWork برای این حالت در کد صریح است، اما شاهد اجرایی ندارد.
+- آزمون Retry با شرایط متغیر حساب (مثلاً تغییر وضعیت حساب بین درخواست اول و Retry) اجرا نشد؛ ترتیب کد Lookup پیش از اعتبارسنجی حساب حفظ شده است، اما اثبات سناریوی متغیر نیازمند داده/محیط کنترل‌شده است.
+- Transfer، Hold، افتتاح حساب و بستن حساب همچنان از مسیرهای قبلی استفاده می‌کنند.
+- شکاف قفل قاعده مؤثر ناموجود برای `FOR SHARE` حل نشده و برای پیش از Balance Slice ثبت شده است.
+- `available_balance` همچنان Cache کهنه‌شونده است؛ هیچ تصمیم مالی جدیدی در این مرحله بر آن بنا نشد.
+- سرویس جدید در پایان مرحله روی پورت `8080` در حال اجرا باقی ماند.
+
+### 18.18 پذیرش محدود زیرمرحله 1A — 2026-11-12
+
+#### دامنه پذیرش
+
+- 1A در دامنه محدود پذیرفته شد: UnitOfWork و مالکیت تراکنش در Deposit، TransactionService و قرارداد Repository، حفظ API/fingerprint/idempotency و Retry قدیمی، عدم تغییر SQL مالی و ترتیب Balance/Journal، و اصلاح محدود F1/F2 با گزینه 1.
+- گزارش پذیرش: [1A_ACCEPTANCE_WITH_LIMITATIONS.md](opencode-reports/1A_ACCEPTANCE_WITH_LIMITATIONS.md).
+
+#### شواهد
+
+- آزمون‌های API قبلی 1A (2026-11-11) در بخش 18.17 همین سند خلاصه شده‌اند: Deposit موفق، Retry دقیق، تعارض کلید، Retry کلید قدیمی، رد حساب CLOSED، مبلغ نامعتبر، درخواست بدون کلید و دو درخواست پشت‌سرهم با کلید یکسان. این نتایج در نوبت پذیرش دوباره اجرا نشدند.
+- Build پس از اصلاح F1/F2 در نوبت پیاده‌سازی موفق بود: `[100%] Built target CoreBanking`. در نوبت پذیرش، Build تکرار نشد.
+- Harness هدفمند F1/F2 با UnitOfWork واقعی و FakeDriver کنترل‌شده (Qt 5.15.8) اجرا شد؛ سناریوهای A/B/C/D/E1/E2/E3 PASS و `TOTAL FAILURES: 0`:
+  - A (commit ناموفق): begin=1 commit=1 rollback=0 close=1؛ open true→false.
+  - B (rollback صریح ناموفق): begin=1 commit=0 rollback=1 close=1؛ open true→false.
+  - C (rollback ناموفق در Destructor): begin=1 commit=0 rollback=1 close=1؛ open true→false.
+  - D (BEGIN ناموفق): begin=1 commit=0 rollback=0 close=1؛ open true→false.
+  - E1/E2/E3 (مسیرهای موفق): close=0 و open true→true.
+- آزمون QSQLITE برای shared-close PASS: close روی یک کپی، `isOpen()` کپی دیگر را false کرد و Query روی آن شکست خورد.
+- ثبت State از کدخوانی و رفتار متناظر از Harness تأیید شده است؛ دسترسی مستقیم به private انجام نشده است.
+- گزارش‌های بازبینی/پیاده‌سازی/Harness در `/tmp` بودند و پیش از این سند، گزارش دائمی 1A در `docs/opencode-reports/` وجود نداشت.
+
+#### محدودیت‌های پذیرش
+
+- رفتار واقعی QPSQL/PostgreSQL در قطع ارتباط و Retry پس از Commit نامعلوم آزموده نشده است؛ Harness فقط منطق UnitOfWork و قرارداد Qt SQL را می‌سنجد.
+- پس از شکست‌های مشخص‌شده، اتصال مشترک بسته می‌ماند و دسترسی دیتابیس تا restart متوقف می‌شود. restart نتیجه Commit قبلی را تعیین نمی‌کند؛ Retry باید با همان idempotency key باشد.
+- مسیرهای legacy (Transfer/Hold/AccountOpening/AccountService و چند Repository) خارج از این اصلاح‌اند و ریسک مشترک اتصال دارند.
+- مدیریت مرکزی اتصال/recovery (گزینه 2) مرحله مستقل آینده است و اجرا نشد.
+- پذیرش محدود 1A معادل آمادگی کامل برای بهره‌برداری بانکی نیست. 1B و Balance Slice شروع نشده‌اند؛ شکاف هم‌زمانی قواعد مؤثر و نبود Override باید پیش از Balance Slice تعیین تکلیف شود.
+
+### 18.19 بازآرایی مستندات — 2026-11-12
+
+### دامنه و فایل‌ها
+
+- تغییر `docs/PROJECT_CONTEXT.md` برای تبدیل آن به مرجع عملی وضعیت و قواعد جاری.
+- تغییر همین سند فقط برای افزودن این ورود تاریخی و حفظ سوابق قبلی.
+- ایجاد گزارش‌های دائمی زیر `docs/opencode-reports/`:
+  - `1A_CODE_REVIEW.md`
+  - `1A_F1_F2_IMPLEMENTATION.md`
+  - `1A_F1_F2_HARNESS_EVIDENCE.md`
+  - `DOCUMENTATION_REORGANIZATION.md`
+- هیچ فایل کد، CMake، Schema، Migration، تنظیم اتصال یا Credential تغییر نکرد. Build، HTTP، SQL، Fault Injection و restart اجرا نشد. Git فقط read-only بررسی شد و stage/commit/branch انجام نشد.
+
+### تغییر ساختار Context
+
+- یک «راهنمای سریع عامل» در ابتدای Context اضافه شد: وضعیت جاری 1A/1B/Balance Slice، سیاست fail-closed، ابهام Commit و Retry با همان idempotency key، ریسک legacy، هشدار `available_balance` کهنه و نقاط توقف نیازمند تأیید.
+- یک خلاصه «معماری جاری» اضافه شد: لایه‌ها، Connection مشترک و مالکیت آن، مالکیت تراکنش در 1A، Idempotency و ثبت مالی.
+- شرح‌های طولانی اجرای گذشته Hold که در Context تکرار شده بودند، با خلاصه قواعد جاری و ارجاع به `PROJECT_HISTORY.md` بخش‌های 18.7 تا 18.16 و گزارش‌های Hold جایگزین شدند.
+- جزئیات تاریخی 1A در Context خلاصه شد و به بخش‌های 18.17 و 18.18 همین سند و گزارش‌های `1A_*` ارجاع داده شد.
+- شماره بخش‌های اصلی 1 تا 20 حفظ شد. بخش‌های جدید ابتدای Context بدون شماره هستند تا ارجاعات موجود شکسته نشوند.
+
+### حفظ شواهد و انتقال به گزارش‌های دائمی
+
+- اجرای اولیه 1A و آزمون‌های API تاریخ 2026-11-11 از قبل در بخش 18.17 همین سند نگهداری می‌شوند و دوباره اجرا نشدند.
+- گزارش بازبینی کد از `/tmp/core-banking-1a-review.md` به `docs/opencode-reports/1A_CODE_REVIEW.md` منتقل شد؛ متن اصلی حفظ شد و به‌عنوان شاهد تاریخی، نه اجرای جدید، علامت‌گذاری شد.
+- گزارش پیاده‌سازی F1/F2 از `/tmp/core-banking-1a-f1-f2-implementation.md` به `docs/opencode-reports/1A_F1_F2_IMPLEMENTATION.md` منتقل شد.
+- گزارش Harness و خروجی خام `/tmp/core-banking-f1-f2-test/run.log` در `docs/opencode-reports/1A_F1_F2_HARNESS_EVIDENCE.md` نگهداری شد.
+- فایل حجیم `/tmp/core-banking-1a-review-code.txt` (شامل متن کامل کد و diff) کپی دائمی نشد؛ محتوای آن با کد جاری و گزارش بازبینی هم‌پوشانی دارد و به‌عنوان منبع موقت در گزارش بازآرایی ثبت شد.
+- طرح `/tmp/core-banking-1a-failure-handling-plan.md` کپی دائمی نشد چون یک سند طراحی پیش از پیاده‌سازی است و گزارش پیاده‌سازی F1/F2 تصمیم اجراشده را ثبت می‌کند.
+- پاسخ `/tmp/core-banking-1a-acceptance-response.md` کپی نشد چون با گزارش دائمی `1A_ACCEPTANCE_WITH_LIMITATIONS.md` و بخش 18.18 همین سند هم‌پوشانی دارد.
+- هیچ اطلاعات حساسی در منابع منتقل‌شده یافت نشد؛ بنابراین موردی برای `[REDACTED]` وجود نداشت.
+
+### تناقض‌ها و لینک‌ها
+
+- تناقض مستندی درباره وضعیت جاری یافت نشد: 1A پذیرفته‌شده محدود، 1B شروع‌نشده و Balance Slice شروع‌نشده در Context و History هم‌راستا هستند.
+- یک ابهام مستنداتی درباره جدول انتقال Transaction رفع شد: مسیر Deposit فقط `INITIATED -> PROCESSING -> COMPLETED/REJECTED` را استفاده می‌کند، اما مدل Domain جدول انتقال بخش 10 (شامل `INITIATED -> CANCELLED`) را حفظ می‌کند. این تفکیک در Context بخش 18.5 ثبت شد و رفتار جدیدی ایجاد نکرد.
+- لینک Context به گزارش پذیرش و گزارش‌های `1A_*` و لینک History به گزارش پذیرش بررسی شدند و مسیر نسبی آن‌ها معتبر است.
+- ارجاعات به بخش‌های 18.7 تا 18.18 و بخش‌های 16.1، 16.4 و 3 History حفظ شدند.
+
+### محدودیت‌ها
+
+- گزارش دائمی مستقل برای «اجرای اولیه 1A» وجود نداشت؛ شاهد اصلی همان بخش 18.17 History است.
+- خروجی خام کامل HTTP آزمون‌های 2026-11-11 در مخزن موجود نیست و بازسازی نشد.
+- رفتار واقعی QPSQL/PostgreSQL در قطع ارتباط و Retry پس از Commit نامعلوم همچنان اثبات‌نشده است.
+- هیچ تصمیم معماری یا رفتاری جدیدی در این بازآرایی ایجاد نشد.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

@@ -1,16 +1,59 @@
 # Core Banking — Project Context
 
-> مرجع قواعد کسب‌وکار، تصمیم‌های معماری، قراردادهای فنی و وضعیت قابلیت‌های پروژه.
+> مرجع قواعد کسب‌وکار، تصمیم‌های معماری، قراردادهای فنی و وضعیت جاری قابلیت‌های پروژه.
 >
 > مخزن رسمی: https://github.com/ahmadbabayi/Core-Banking
 >
 > Schema مرجع: `database/CURRENT_SCHEMA.sql`
 >
-> تاریخچه آزمون‌ها و تغییرات: `docs/PROJECT_HISTORY.md`
+> تاریخچه و شواهد اجرا: `docs/PROJECT_HISTORY.md`
 >
-> این سند باید برای فهم قواعد فعلی پروژه کافی باشد و نباید برای شناخت تصمیم‌های مصوب به تاریخچه گفتگوها وابسته باشد.
+> این سند باید برای فهم قواعد جاری و وضعیت فعلی پروژه کافی باشد. شرح اجراهای گذشته و خروجی‌های طولانی در History و گزارش‌های `docs/opencode-reports/` نگهداری می‌شوند.
 
-## 1. هدف و وضعیت پروژه
+## راهنمای سریع عامل
+
+### وضعیت جاری — 2026-11-12
+
+- **1A:** در دامنه محدود پذیرفته شده است. جزئیات و محدودیت‌ها: [1A_ACCEPTANCE_WITH_LIMITATIONS.md](opencode-reports/1A_ACCEPTANCE_WITH_LIMITATIONS.md).
+- **1B:** شروع نشده و نیازمند تأیید جداگانه است.
+- **Balance Slice:** شروع نشده است. شکاف هم‌زمانی قواعد مؤثر و نبود Override باید پیش از آن تعیین تکلیف شود.
+- **Hold API:** در دامنه مصوب خود بسته شده است؛ Migration 018 اجرا شده و `CURRENT_SCHEMA.sql` به‌روز است.
+- **وضعیت fail-closed 1A:** پس از `CommitOutcomeUnknown`، `RollbackFailed` یا شکست BEGIN روی اتصال باز، اتصال مشترک بسته می‌ماند و بدون بازگشایی خودکار بسته است؛ دسترسی دیتابیس سرویس تا restart متوقف می‌شود. این مصالحه موقت ایمنی است، نه معماری نهایی مدیریت اتصال.
+- **ابهام Commit:** restart یا بستن اتصال، نتیجه Commit قبلی را تعیین نمی‌کند. Retry باید با همان `idempotencyKey` انجام شود و نتیجه پایدار را از دیتابیس بازیابی کند؛ عملیات مالی خودکار با کلید جدید مجاز نیست.
+- **ریسک legacy:** Transfer، Hold، AccountOpening، AccountService و چند Repository همچنان مستقیماً روی Connection مشترک تراکنش مدیریت می‌کنند و خارج از اصلاح 1A هستند.
+- **مانده قابل برداشت:** `available_balance` یک Cache کهنه‌شونده است و برای تصمیم مالی جدید قابل اتکا نیست؛ فرمول مفهومی باید در مرحله Balance تعیین تکلیف شود.
+- **اضافه‌برداشت:** مسیر نیازمند تسویه همچنان با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود؛ اضافه‌برداشت فعال نشده است.
+
+### نقاط توقف نیازمند تأیید
+
+- شروع 1B.
+- طراحی یا اجرای Balance Slice.
+- هر Migration، DDL، تغییر Schema، تغییر Credential یا تنظیم اتصال.
+- هر تغییر رفتار مالی، قرارداد API یا تصمیم معماری جدید.
+- Git stage/commit/branch/push.
+- Build/HTTP/SQL/Fault Injection فقط در محدوده تأییدشده هر مرحله.
+
+### ترتیب اعتبار و مطالعه
+
+1. تصمیم‌های کسب‌وکار تأییدشده در همین سند.
+2. `database/CURRENT_SCHEMA.sql` برای ساختار واقعی دیتابیس.
+3. کد جاری و Router/Controllerها برای رفتار پیاده‌سازی‌شده.
+4. Migrationها برای تاریخچه ساختار.
+5. `PROJECT_HISTORY.md` و گزارش‌های `docs/opencode-reports/` برای شواهد تاریخی.
+
+در صورت اختلاف، قاعده مصوب، ساختار دیتابیس و رفتار برنامه باید جداگانه بررسی شوند. وجود قید، Trigger، Migration یا کد قدیمی مجوز تغییر تصمیم کسب‌وکار نیست.
+
+### گزارش‌های مرتبط
+
+- [PROJECT_HISTORY.md](PROJECT_HISTORY.md) — سیر تاریخی تصمیم‌ها، آزمون‌ها، Buildها، Migrationها و Commitها.
+- [1A_ACCEPTANCE_WITH_LIMITATIONS.md](opencode-reports/1A_ACCEPTANCE_WITH_LIMITATIONS.md) — پذیرش محدود 1A و محدودیت‌ها.
+- [1A_CODE_REVIEW.md](opencode-reports/1A_CODE_REVIEW.md) — بازبینی کد و ریسک‌های 1A (شاهد تاریخی، نه اجرای جدید).
+- [1A_F1_F2_IMPLEMENTATION.md](opencode-reports/1A_F1_F2_IMPLEMENTATION.md) — گزارش پیاده‌سازی اصلاح F1/F2.
+- [1A_F1_F2_HARNESS_EVIDENCE.md](opencode-reports/1A_F1_F2_HARNESS_EVIDENCE.md) — گزارش Harness و خروجی خام آن.
+- [DOCUMENTATION_REORGANIZATION.md](opencode-reports/DOCUMENTATION_REORGANIZATION.md) — گزارش همین بازآرایی مستندات.
+- گزارش‌های Hold: [HOLD_SERVICE_IMPLEMENTATION.md](opencode-reports/HOLD_SERVICE_IMPLEMENTATION.md)، [HOLD_CONTROLLER_IMPLEMENTATION.md](opencode-reports/HOLD_CONTROLLER_IMPLEMENTATION.md)، [HOLD_018_COREBANKING_TEST_PLAN.md](opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md) و [HOLD_EVENT_FINAL_CLOSURE.md](opencode-reports/HOLD_EVENT_FINAL_CLOSURE.md).
+
+## 1. هدف، وضعیت و معماری جاری
 
 Core Banking یک سامانه بانکداری هسته‌ای با backend مبتنی بر C++، Qt، PostgreSQL و HTTP/JSON است.
 
@@ -18,18 +61,22 @@ Core Banking یک سامانه بانکداری هسته‌ای با backend م�
 
 پروژه در حال توسعه است و نباید آماده بهره‌برداری واقعی بانکی فرض شود. وجود Schema، Trigger، سرویس یا API به‌تنهایی به معنای تکمیل و صحت تمام قابلیت‌های مالی نیست.
 
-### وضعیت بازبینی و اصلاح مستندات در 2026-10-28
+### 1.1 معماری جاری
 
-- آخرین وضعیت Git که کاربر گزارش کرده: شاخه `main`، وضعیت clean و هر دو مقدار `HEAD` و `origin/main` برابر `038638e76a89012e1d94275b192514b4afb4696d` بوده‌اند. این مقدار، گزارش کاربر در آن زمان است و پیش از تغییر بعدی باید دوباره بررسی شود.
-- در بازبینی مستندات 2026-10-28، فایل Router، سیم‌کشی Controllerها، فهرست Build، Schema و Migrationهای مرتبط از نسخه منتشرشده در همان Commit بررسی شدند. این بازبینی مستنداتی بود؛ در همین نوبت Build پروژه یا آزمون HTTP جدید اجرا نشده است.
-- نسخه‌های قابل دانلود این دو سند در این نوبت اصلاح شده‌اند؛ هنوز در مخزن محلی کاربر جایگزین یا Commit/Push نشده‌اند. پس از جایگزینی، `git diff` و سپس Commit باید توسط کاربر بررسی شود.
-- فایل `src/web/httprouter.cpp` در نسخه بررسی‌شده مسیرهای HTTP واقعی را ثبت می‌کند؛ قراردادهای بخش 16 بر اساس همین Router تهیه شده‌اند.
-- کاربر صریحاً تأیید کرده APIهای Health، Country، Currency، City، Branch، Customer، Product، Ledger Account، افتتاح حساب، تغییر وضعیت حساب، Deposit و Transfer پیاده‌سازی و تست شده‌اند. این تأیید، وضعیت آزمون خود APIها را اصلاح می‌کند؛ اما به‌تنهایی محیط هر تست، خروجی دقیق و پوشش همه حالت‌های مرزی را مشخص نمی‌کند.
-- Router علاوه بر موارد بالا، مسیرهای Province، Account Type و Product–Ledger Mapping را هم دارد. چون شواهد آزمون مستقیم این سه گروه در History ثبت نشده، در این سند بین «مسیر موجود» و «تست مستندشده» تمایز گذاشته شده است.
-- Migrationهای 015 و 016 طبق گزارش تاریخی روی دیتابیس اصلی محلی اجرا شده‌اند. این موضوع به‌تنهایی وجود APIهای C++ برای Hold یا تکمیل چرخه اضافه‌برداشت را اثبات نمی‌کند.
-- یادداشت‌های 2026-10-26 درباره تست‌نشدن Transfer در دیتابیس اصلی، snapshot تاریخی‌اند. تأیید جدید کاربر درباره تکمیل و تست API لحاظ شده، ولی تا وقتی خروجی و محیط آن تست ثبت نشود نباید آن را مشخصاً «تست موفق روی دیتابیس اصلی» نامید.
+- لایه‌ها: Domain، Application/Service، Infrastructure/Repository و Web/HTTP.
+- اتصال دیتابیس: یک Connection مشترک Qt SQL با نام `CoreBankingConnection` که مالک ساخت/بازکردن/بستن آن `Database` است. سرویس‌ها و Repositoryها کپی همان Connection را برای طول عمر پروسه نگه می‌دارند.
+- مالکیت تراکنش: در مسیر 1A (Deposit) مالک `begin/commit/rollback` لایه Use Case از طریق `UnitOfWork` است. `TransactionService` و `TransactionRepository` Commit/Rollback مستقل ندارند. سایر سرویس‌های legacy هنوز مستقیماً روی Connection مشترک تراکنش مدیریت می‌کنند.
+- Idempotency: Transaction با `idempotency_key` و `request_fingerprint`؛ Hold و Eventهای Hold قواعد جداگانه دارند.
+- ثبت مالی: Transaction، Journal و تغییر مانده‌ها باید در یک تراکنش دیتابیس و با کنترل توازن Debit/Credit انجام شوند.
+- HTTP: Router مسیرها را به Controllerها متصل می‌کند؛ خطاهای سرویس به کدهای پایدار HTTP نگاشت می‌شوند.
 
-قبل از هر کار جدید، SHA محلی و ریموت، وضعیت Git، Schema جاری، Router و نتیجه واقعی آزمون‌های مرتبط مجدداً بررسی شوند.
+### 1.2 وضعیت توسعه و اعتبارسنجی
+
+- آخرین وضعیت Git و Schema باید پیش از هر کار جدید read-only بررسی شود.
+- آزمون یکپارچه‌سازی از طریق HTTP API واقعی انجام می‌شود؛ SQL مستقیم جایگزین آزمون مسیر کسب‌وکار نیست.
+- نتیجه‌ای که اجرا یا مشاهده نشده، موفق اعلام نمی‌شود.
+- وجود route به‌تنهایی اثبات‌کننده صحت Service/Repository یا پوشش همه سناریوها نیست.
+- شرح تاریخی بازبینی 2026-10-28 و جزئیات Router/API در `PROJECT_HISTORY.md` بخش 16 نگهداری می‌شود.
 
 ## 2. منابع معتبر
 
@@ -40,6 +87,7 @@ Core Banking یک سامانه بانکداری هسته‌ای با backend م�
 - Migrationها: `database/schema/*.sql`
 - قواعد و تصمیم‌های پروژه: `docs/PROJECT_CONTEXT.md`
 - تاریخچه آزمون و تغییرات: `docs/PROJECT_HISTORY.md`
+- گزارش‌های تفصیلی: `docs/opencode-reports/`
 
 ### ترتیب اعتبار منابع
 
@@ -47,7 +95,7 @@ Core Banking یک سامانه بانکداری هسته‌ای با backend م�
 2. Schema جاری برای تشخیص ساختار واقعی دیتابیس.
 3. کد جاری و قراردادهای API برای تشخیص رفتار پیاده‌سازی‌شده.
 4. Migrationها برای شناخت تاریخچه ساختار.
-5. History برای شواهد تاریخی آزمون‌ها و تغییرات.
+5. History و گزارش‌ها برای شواهد تاریخی آزمون‌ها و تغییرات.
 
 در صورت اختلاف، قاعده مصوب، ساختار دیتابیس و رفتار برنامه باید جداگانه بررسی شوند. وجود یک قید یا پیاده‌سازی قدیمی مجوز تغییر تصمیم کسب‌وکار نیست.
 
@@ -82,6 +130,7 @@ psql -U corebanking -h localhost -d corebanking -W
 در روند عادی، از دیتابیس اصلی `corebanking` استفاده شود. کاربر استفاده از دیتابیس `corebanking_test` را به‌عنوان روند معمول نمی‌خواهد و ترجیح می‌دهد پیش از تغییرات مهم از دیتابیس اصلی نسخه پشتیبان تهیه شود.
 
 پیش از تغییر Schema:
+
 1. وضعیت Git و Schema واقعی بررسی شود.
 2. از دیتابیس اصلی نسخه پشتیبان تهیه و موفقیت آن بررسی شود.
 3. Migration افزایشی و سازگار طراحی شود.
@@ -205,6 +254,7 @@ pg_dump -U corebanking -h localhost -d corebanking -W \
 کد سرفصل دفتر کل دقیقاً هشت‌رقمی است.
 
 دسته‌بندی‌ها:
+
 - `ASSET`
 - `LIABILITY`
 - `EQUITY`
@@ -214,6 +264,7 @@ pg_dump -U corebanking -h localhost -d corebanking -W \
 وضعیت‌های سرفصل `ACTIVE` و `INACTIVE` هستند. سرفصل می‌تواند سرفصل والد داشته باشد.
 
 نمونه‌های تاریخی:
+
 - `10100101`: سرفصل دارایی مرتبط با تسویه یا وجه نقد.
 - `20100101`: سرفصل بدهی سپرده مشتری.
 
@@ -248,19 +299,21 @@ Schema جاری ستون `ledger_balance` را در `account_balance` نگهدا
 `available_balance = ledger_balance - active_holds + remaining_overdraft_limit`
 
 در این رابطه:
+
 - `ledger_balance`: مانده سپرده ثبت‌شده.
 - `active_holds`: مجموع مبالغ مسدود فعال در زمان محاسبه.
 - `remaining_overdraft_limit`: اعتبار مجاز اضافه‌برداشت که هنوز مصرف نشده است.
 
 این فرمول باید با حداقل مانده، قواعد فعال محصول، Override معتبر حساب، وضعیت حساب و سیاست اضافه‌برداشت سازگار باشد.
 
-Schema جاری `available_balance` را ذخیره می‌کند و فرمول فوق به‌صورت ستون محاسباتی یا قید پایگاه داده تضمین نشده است. بنابراین ذخیره این ستون به‌تنهایی تضمین‌کننده صحت آن نیست.
+Schema جاری `available_balance` را ذخیره می‌کند و فرمول فوق به‌صورت ستون محاسباتی یا قید پایگاه داده تضمین نشده است. بنابراین ذخیره این ستون به‌تنهایی تضمین‌کننده صحت آن نیست. `available_balance` یک Cache کهنه‌شونده است و برای تصمیم مالی جدید نباید بدون بازمحاسبه معتبر مبنا قرار گیرد.
 
 موجودی قابل برداشت می‌تواند منفی باشد؛ این موضوع با منفی‌شدن مانده سپرده متفاوت است.
 
 ### قواعد مانده محصول
 
 ساختارهای اصلی:
+
 - `product_balance_rule`
 - `account_balance_rule_override`
 
@@ -271,6 +324,8 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 - Override حساب نباید ممنوعیت پایه محصول برای اضافه‌برداشت را دور بزند.
 - نباید ادعا شود تمام بازه‌های Override با یک قید واحد از هم‌پوشانی منع شده‌اند؛ محدودیت واقعی به ستون‌ها و قیود تعریف‌شده در Schema بستگی دارد.
 
+**شکاف باز پیش از Balance Slice:** `FOR SHARE` فقط ردیف موجود را قفل می‌کند. اگر Override یا قاعده مؤثر موجود نباشد، Exclusion Constraint به‌تنهایی مانع درج قاعده جدید مؤثر نمی‌شود. این شکاف هم‌زمانی پیش از Balance Slice باید تعیین تکلیف شود.
+
 ### سیاست اضافه‌برداشت
 
 اضافه‌برداشت در این پروژه به معنای مجوز استفاده از اعتبار است، نه اجازه منفی‌شدن مانده سپرده.
@@ -278,6 +333,7 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 بدهی مشتری و مطالبات بانک ناشی از اضافه‌برداشت باید جداگانه ثبت و حسابداری شوند. نمای کلی وضعیت مشتری می‌تواند شامل مانده سپرده، بدهی اضافه‌برداشت، مبلغ استفاده‌شده، اعتبار باقی‌مانده و مانده قابل برداشت باشد؛ اما این اعداد نباید با یکدیگر اشتباه شوند.
 
 چرخه زیر باید مستقل پیاده‌سازی و آزمون شود:
+
 - تعیین و کنترل سقف.
 - ثبت مصرف اعتبار.
 - ایجاد بدهی مشتری و مطالبات بانک.
@@ -285,7 +341,7 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 - بازپرداخت و تسویه.
 - برگشت تراکنش مربوط به اضافه‌برداشت.
 
-طبق آخرین وضعیت ثبت‌شده، انتقالی که به تسویه اضافه‌برداشت نیاز داشته باشد با خطای `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود. این مسیر تا پیاده‌سازی و آزمون کامل نباید قابلیت تکمیل‌شده محسوب شود.
+طبق آخرین وضعیت ثبت‌شده، انتقالی که به تسویه اضافه‌برداشت نیاز داشته باشد با خطای `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود. این مسیر تا پیاده‌سازی و آزمون کامل نباید قابلیت تکمیل‌شده محسوب شود. فعال‌سازی اضافه‌برداشت بدون تصمیم و آزمون مستقل مجاز نیست.
 
 ### مانده دفتر کل
 
@@ -312,6 +368,7 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 - `REVERSED`
 
 چرخه عمر:
+
 - `INITIATED` می‌تواند به `PROCESSING` یا `CANCELLED` برود.
 - `PROCESSING` می‌تواند به وضعیت نهایی مناسب، از جمله `COMPLETED`، `REJECTED`، `FAILED` یا `CANCELLED` برود.
 - `COMPLETED` فقط پس از ثبت موفق عملیات معکوس می‌تواند `REVERSED` شود.
@@ -346,6 +403,7 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 انتقال داخلی در مرحله فعلی باید بین حساب‌های هم‌ارز انجام شود. تبدیل ارز نیازمند مسیر مستقل FX، قواعد نرخ تبدیل، گردکردن و ثبت‌های حسابداری مربوط است.
 
 در انتقال:
+
 - حساب مبدأ و مقصد، وضعیت، ارز و محدودیت‌های آن‌ها بررسی شوند.
 - قواعد موجودی، مسدودی، حداقل مانده و اضافه‌برداشت رعایت شوند.
 - وجه قابل برداشت باید برای اصل مبلغ و کارمزد کافی باشد.
@@ -362,15 +420,18 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 تکرار درخواست مالی، برای مثال در اثر Timeout شبکه، نباید عملیات مالی را دوباره اجرا کند.
 
 فیلدهای ثبت‌شده در تراکنش:
+
 - `idempotency_key`
 - `request_fingerprint`
 - `result_code`
 - `result_message`
 
 نام شاخص ثبت‌شده:
+
 - `uq_transaction_api_idempotency`
 
 قرارداد درخواست تکراری:
+
 - همان کلید و همان محتوا باید نتیجه عملیات اولیه را بازگرداند.
 - همان کلید با محتوای متفاوت باید رد شود.
 - نتیجه نهایی عملیات باید قابل بازیابی باشد.
@@ -382,9 +443,12 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 
 آزمون هم‌زمانی باید علاوه بر پاسخ HTTP، مانده نهایی حساب‌ها، تعداد تراکنش‌ها و Journalهای ایجادشده را بررسی کند.
 
-## 13. مسدودی وجه
+**قاعده 1A برای نتیجه نامعلوم:** بستن اتصال یا restart نتیجه Commit قبلی را تعیین نمی‌کند. Retry باید با همان `idempotencyKey` انجام شود و نتیجه پایدار را از دیتابیس بازیابی کند؛ عملیات مالی خودکار با کلید جدید مجاز نیست.
+
+## 13. مسدودی وجه (Hold)
 
 ساختارهای ثبت‌شده:
+
 - `account_hold`
 - `account_hold_events`
 - `account_hold_status`
@@ -396,12 +460,14 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 اطلاعات اصلی مسدودی و رویدادهای ثبت‌شده باید تاریخچه قابل اتکا داشته باشند.
 
 انواع ثبت‌شده آزادسازی:
+
 - `PARTIAL_RELEASE`
 - `FULL_RELEASE`
 - `EXPIRY_RELEASE`
 - `CANCELLATION_RELEASE`
 
 قواعد:
+
 - مجموع آزادسازی از مبلغ اولیه بیشتر نشود.
 - آزادسازی جزئی، فقط مبلغ باقی‌مانده را کاهش دهد.
 - آزادسازی کامل، انقضا و لغو از یکدیگر قابل تشخیص باشند.
@@ -411,117 +477,26 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 - رویدادهای تاریخی آزادسازی تغییرناپذیر باشند.
 - بستن حساب دارای مسدودی حل‌نشده طبق قواعد کسب‌وکار کنترل شود.
 
-Migration شماره 015 این ساختارها و Triggerهای مربوط را تعریف می‌کند. سرویس C++ و API کامل مسدودی و آزادسازی باید جداگانه بررسی و آزمون شوند؛ وجود ساختار دیتابیس به معنای کامل‌بودن آن‌ها نیست.
+### قواعد جاری پیاده‌سازی Hold
 
-اگر Trigger درج یک رویداد کاملاً تکراری را با `RETURN NULL` متوقف کند، سرویس باید رویداد قبلی را با `(hold_id, idempotency_key)` بازیابی و نتیجه قبلی را بازگرداند.
-
-### وضعیت پیاده‌سازی HoldService — 2026-11-01
-
-- `HoldService` در `src/application/holdservice.h` و `src/application/holdservice.cpp` پیاده‌سازی شده است؛ در این مرحله فقط `createHold` و `createEvent`.
-- این سرویس مستقیماً SQL اجرا می‌کند و Repository جدیدی اضافه نشده است؛ سبک آن هم‌راستا با `DepositService` و `TransferService` است.
-- ترتیب قفل در هر دو عملیات: Account → Account Balance → Account Hold؛ این ترتیب با Deposit و Transfer یکسان است.
-- Idempotency ایجاد Hold روی `account_hold` با `idempotency_key` و `request_fingerprint` انجام می‌شود. Migration 017 این ستون‌ها، قیدهای سازگاری و ایندکس یکتای `uq_hold_api_idempotency` را اضافه کرده است.
-- Idempotency رویداد روی `(hold_id, idempotency_key)` و پیش از اعتبارسنجی وضعیت/مبلغ بررسی می‌شود؛ بنابراین Retry پس از `FULL_RELEASE` نیز نتیجه قبلی را برمی‌گرداند.
+- `HoldService` در `src/application/holdservice.*` شامل `createHold`، `createEvent`، `getHoldById`، `getHoldsByAccount` و `getHoldEvents` است.
+- ترتیب قفل: Account → Account Balance → Account Hold؛ هم‌راستا با Deposit و Transfer.
 - `AvailableForHold = ledger_balance - active holds` است و از اضافه‌برداشت برای Hold استفاده نمی‌شود.
-- `createHold` و `createEvent` هیچ تغییری در `ledger_balance` یا `available_balance` نمی‌دهند.
-- نتیجه سرویس شامل فیلد `replayed` است تا لایه Controller بعدی بتواند بین ایجاد جدید (201) و Retry (200) تمایز بدهد.
-- در این مرحله هیچ Controller، Route یا Endpoint برای Hold ایجاد نشده است؛ بنابراین هنوز آزمون HTTP یا نوشتن داده از طریق API برای این سرویس انجام‌شدنی نیست.
+- Hold و Event هیچ تغییری در `ledger_balance` یا `available_balance` نمی‌دهند.
+- Idempotency Hold روی `account_hold` با `idempotency_key` و `request_fingerprint` و ایندکس `uq_hold_api_idempotency` انجام می‌شود.
+- Idempotency Event روی `(hold_id, idempotency_key)` است و پیش از اعتبارسنجی وضعیت/مبلغ بررسی می‌شود؛ بنابراین Retry پس از `FULL_RELEASE` نیز نتیجه قبلی را برمی‌گرداند.
+- زمان پیش‌فرض از `CURRENT_TIMESTAMP` دیتابیس داخل همان تراکنش خوانده و به میلی‌ثانیه Truncate می‌شود؛ زمان پیش‌فرض سرور وارد Fingerprint نمی‌شود.
+- `HoldResult` و `HoldEventResult` فیلد `replayed` و Snapshot دارند؛ Snapshot پیش از Commit و داخل همان تراکنش خوانده می‌شود.
+- مسیرهای Replay، Conflict، Unique Conflict با Savepoint و Trigger RETURN NULL حفظ شده‌اند. شکست `ROLLBACK TO SAVEPOINT` باعث پایان امن تراکنش می‌شود.
+- اگر Trigger درج رویداد کاملاً تکراری را با `RETURN NULL` متوقف کند، سرویس باید رویداد قبلی را با `(hold_id, idempotency_key)` بازیابی و نتیجه قبلی را برگرداند.
+- نگاشت خطا با SQLSTATE، `databaseText()`/`text()` و نام Constraint/Index انجام می‌شود؛ خطاهای Trigger اعتبارسنجی به `Rejected` و Immutability/ناشناخته به `Failed` نگاشت می‌شوند.
+- Canonicalizer نسخه ۱ در `src/application/holdeventfingerprint.h` شامل Trim با Unicode White_Space، UTF-8 byte length، Canonical Amount، Timestamp به UTC با دقت میلی‌ثانیه و Payload با Length-Prefix است.
+- `request_fingerprint`، `fingerprint_version = 1` و `effective_at_provided` در Event ذخیره می‌شوند. Metadata ناقص و Version ناشناخته Fail-Closed هستند؛ Legacy Fallback با مقایسه فیلد‌به‌فیلد حفظ شده است.
+- Timestamp صریح باید Timezone داشته باشد؛ Timestamp بدون Timezone یا نامعتبر رد می‌شود. U+0000 در ورودی‌های متنی Hold و Event رد می‌شود.
+- تفکیک `IDEMPOTENCY_CONFLICT` و `IDEMPOTENCY_KEY_REUSED` مطابق رفتار ثبت‌شده حفظ می‌شود.
+- Hold API در دامنه مصوب خود بسته است. آزمون SQL مستقیم بخش ۸ برنامه آزمون Hold، آزمون بار، مرزهای اضافه و رویه Restore/Rollback اجرا نشده‌اند و موفق اعلام نمی‌شوند.
 
-### تکمیل HoldService — 2026-11-02
-
-- زمان پیش‌فرض `createHold` و `createEvent` اکنون از `CURRENT_TIMESTAMP` دیتابیس و داخل همان تراکنش خوانده می‌شود. مقدار خوانده‌شده به میلی‌ثانیه Truncate می‌شود و همان مقدار نرمال‌شده در INSERT بایند می‌شود.
-- Fingerprint تغییری نکرده است: زمان پیش‌فرض سرور وارد Fingerprint نمی‌شود و درخواست بدون زمان همچنان مقدار خالی را در Fingerprint دارد. زمان ارسالی کلاینت مانند قبل نرمال‌شده وارد Fingerprint می‌شود.
-- Idempotency Lookup در هر دو عملیات پیش از همه اعتبارسنجی‌های وابسته به وضعیت فعلی Hold انجام می‌شود.
-- `getHoldById`، `getHoldsByAccount` و `getHoldEvents` اضافه شده‌اند. مبالغ به‌صورت `QString` از `NUMERIC` خوانده می‌شوند و از VIEW `account_hold_status` یا جدول رویدادها می‌آیند.
-- `HoldResult` و `HoldEventResult` دارای `HoldStatusData snapshot` و `hasSnapshot` هستند. Snapshot در همه مسیرهای `Completed`، شامل Retry، Unique Conflict و Trigger RETURN NULL، پیش از Commit و داخل همان تراکنش خوانده می‌شود.
-- نگاشت خطاهای PostgreSQL با SQLSTATE، ترکیب `databaseText()` و `text()` و تشخیص نام Constraint/Index مقاوم‌تر شده است. کدهای اعتبارسنجی Trigger به `Rejected` و کدهای immutability یا خطاهای ناشناخته به `Failed` نگاشت می‌شوند.
-- برای INSERT رویداد نیز `SAVEPOINT hold_event_insert` اضافه شده است. در صورت تعارض Unique Idempotency، پس از `ROLLBACK TO SAVEPOINT` نتیجه قبلی بازیابی می‌شود؛ اگر Rollback به Savepoint شکست بخورد، تراکنش ادامه پیدا نمی‌کند.
-- هیچ تغییر Schema، Migration، Controller، Route، Endpoint، `CMakeLists.txt`، `DepositService` یا `TransferService` انجام نشده است.
-- آزمون HTTP همچنان انجام‌شدنی نیست. Build موفق و مسیرهای خواندن با یک Harness موقت read-only روی نقش `corebanking_reader` بررسی شده‌اند؛ آزمون نوشتن و سناریوهای کامل Idempotency/Trigger به مرحله Controller موکول است.
-
-### Hold HTTP API — 2026-11-02
-
-- `HoldController` در `src/web/holdcontroller.h` و `src/web/holdcontroller.cpp` پیاده‌سازی شده و در `HttpRouter` و `main.cpp` متصل است.
-- Endpointها:
-  - `POST /api/v1/holds`
-  - `GET /api/v1/holds/{id}`
-  - `GET /api/v1/holds?accountId={id}`
-  - `POST /api/v1/holds/{id}/events`
-  - `GET /api/v1/holds/{id}/events`
-- Controller فقط اعتبارسنجی ساختار JSON، نوع فیلدها، شناسه مثبت و حضور فیلدهای الزامی را انجام می‌دهد؛ قواعد کسب‌وکار، Idempotency و اعتبارسنجی Trigger در `HoldService` باقی مانده‌اند.
-- `amount` در Hold و Event فقط به‌صورت JSON string پذیرفته می‌شود. ورودی عددی JSON، صفر، منفی، رشته خالی، فاصله ابتدا/انتها، قالب علمی، جداکننده نامعتبر و بیش از ۸ رقم اعشار رد می‌شوند. هیچ تبدیل یا گردکردن بی‌صدایی انجام نمی‌شود.
-- `HoldService` مبلغ معتبر را قبل از ساخت Fingerprint نرمال می‌کند (حذف صفرهای انتهایی)؛ بنابراین `"0.10"` و `"0.1"` برای Idempotency یک مقدار canonical دارند. دقت ستون‌های `account_hold.amount` و `account_hold_events.amount` در Schema فعلی `numeric` بدون precision/scale ثابت است و محدودیت ۸ رقم اعشار یک قاعده سرویس است، نه فرض دقت ارز.
-- پاسخ `POST /api/v1/holds` برای ایجاد جدید `201 Created` و برای Retry دقیق `200 OK` است و از `HoldResult.snapshot` ساخته می‌شود.
-- پاسخ `POST /api/v1/holds/{id}/events` برای ایجاد جدید `201 Created` و برای Retry دقیق `200 OK` است و وضعیت Hold را از `HoldEventResult.snapshot` می‌آورد.
-- `HoldEventResult` علاوه بر `eventId`، فیلدهای واقعی Event ثبت‌شده شامل `holdId`، `eventType`، `amount`، `effectiveAt` و `reasonCode` را نیز برمی‌گرداند. این مقادیر داخل همان تراکنش و پیش از Commit از `account_hold_events` خوانده می‌شوند.
-- در مسیر Retry و بازیابی Unique Conflict نیز اطلاعات همان Event قبلی از دیتابیس خوانده و بازگردانده می‌شود.
-- Controller پس از Commit هیچ Query جدیدی اجرا نمی‌کند و پاسخ Create رویداد را از فیلدهای واقعی `HoldEventResult` می‌سازد، نه از ورودی درخواست.
-- نگاشت خطا: خطاهای اعتبارسنجی ورودی و سرویس به `400`، Hold/Account ناموجود به `404`، تعارض Idempotency به `409`، رد کسب‌وکاری Hold/Trigger به `422` و خطاهای داخلی به `500` نگاشت می‌شوند. نبود Controller در Router نیز `503 HOLD_SERVICE_UNAVAILABLE` می‌دهد.
-- آزمون پایه API محلی در 2026-11-02 انجام شد: ایجاد Hold، Retry Hold، تعارض کلید، دریافت جزئیات/فهرست، آزادسازی PARTIAL و FULL، Retry رویداد، تاریخچه رویدادها، خطاهای `400/404/409/422` و عدم تغییر `ledger_balance`. آزمون هم‌زمانی و پوشش کامل همه حالت‌های Expiry/Cancellation در آن تاریخ انجام نشده بود؛ این دو مورد در 2026-11-11 تکمیل و در بخش‌های بعدی همین سند ثبت شدند.
-
-### اصلاح Idempotency مربوط به `effectiveAt` رویداد — 2026-11-03
-
-- حضور یا عدم حضور `effectiveAt` اکنون بخشی از هویت Idempotency رویداد است: درخواست اولیه با زمان صریح و Retry بدون زمان (و برعکس) با `409 IDEMPOTENCY_CONFLICT` رد می‌شود. دو زمان صریح متفاوت نیز همین کد را برمی‌گردانند.
-- تفاوت سایر فیلدهای Event همچنان با `409 IDEMPOTENCY_KEY_REUSED` پاسخ داده می‌شود؛ رفتار قبلی آن‌ها تغییر نکرده است.
-- `fingerprintForEvent` این فیلدها را شامل می‌شود: `holdId`، `eventType`، `amount` فقط برای `PARTIAL_RELEASE`، `effectiveAt` (مقدار نرمال‌شده یا رشته خالی در صورت عدم ارسال)، `reasonCode`، `referenceType` و `referenceId`. نتیجه این Fingerprint برای رویداد در دیتابیس ذخیره نمی‌شود؛ جدول `account_hold_events` ستون Fingerprint ندارد و Idempotency رویداد با مقایسه فیلدبه‌فیلد انجام می‌شود.
-- `lookupEventByKey` اکنون Presence زمان را نیز بررسی می‌کند. چون Service برای درخواست بدون `effectiveAt` مقدار پیش‌فرض را به‌صورت `date_trunc('milliseconds', CURRENT_TIMESTAMP)` ذخیره می‌کند و `created_at` زمان کامل تراکنش را دارد، ردیف بدون زمان با `effective_at = date_trunc('milliseconds', created_at)` تشخیص داده می‌شود. ردیف با زمان صریح باید هم با مقدار کلاینت برابر باشد و هم این شرط پیش‌فرض را نداشته باشد.
-- هیچ Migration یا تغییر Schema انجام نشد. محدودیت مرزی: اگر زمان صریح درخواست اولیه دقیقاً برابر `date_trunc('milliseconds', created_at)` همان ردیف باشد، ممکن است به‌صورت «بدون زمان» تفسیر شود. رفع قطعی این ابهام نیازمند ذخیره Presence/Fingerprint در جدول رویداد و Migration است.
-- آزمون API محلی در 2026-11-03 شامل شش سناریوی Idempotency زمان (Retry صریح، Retry بدون زمان، دو حالت ترکیبی، دو زمان متفاوت و تفاوت فیلد دیگر) موفق بود؛ جزئیات در `docs/opencode-reports/HOLD_EVENT_EFFECTIVE_AT_IDEMPOTENCY_FIX.md` و History ثبت شده است.
-
-### پیاده‌سازی Versioned Idempotency رویداد Hold — 2026-11-09
-
-- Canonicalizer نسخه ۱ در `src/application/holdeventfingerprint.h` پیاده‌سازی شد: Trim با مجموعه ثابت Unicode White_Space، UTF-8 byte length، Canonical Amount، Timestamp به UTC با دقت میلی‌ثانیه، و Payload با Length-Prefix و Trailing Newline مطابق `hold_event_fingerprint_v1`.
-- هر دو Test Vector تأییدشده Migration 018 در آزمون Unit بازتولید شدند: `f541ed0f9447fc6e41b03dae6cef34e49d95e2f6978ba96a6b52c625c73bb1d1` و `5e7271fc717f758194af0a0a66247da6a65e34d669359d084876397a3fa5ea8f`.
-- `HoldService::createEvent` اکنون `request_fingerprint`، `fingerprint_version = 1` و `effective_at_provided` را در INSERT می‌فرستد و Fingerprint محاسبه‌شده واقعاً استفاده می‌شود.
-- `lookupEventByKey` سه ستون Metadata را می‌خواند. هر سه NULL به Legacy Fallback با مقایسه فیلد‌به‌فیلد و heuristic قبلی می‌رود؛ Metadata ناقص و Version ناشناخته Fail-Closed هستند؛ Version 1 فقط Fingerprint را مقایسه می‌کند.
-- مسیرهای Replay، Conflict، Unique Conflict با Savepoint و Trigger RETURN NULL حفظ شده‌اند. تفکیک `IDEMPOTENCY_CONFLICT` و `IDEMPOTENCY_KEY_REUSED` مانند قبل انجام می‌شود.
-- Timestamp صریح در Hold و Event باید Timezone داشته باشد؛ Timestamp بدون Timezone یا نامعتبر رد می‌شود. کسر ثانیه به میلی‌ثانیه Truncate می‌شود، نه Round.
-- U+0000 در همه ورودی‌های متنی Hold و Event هم در Controller و هم در Service رد می‌شود.
-- کدهای جدید Trigger به `triggerErrorInfo` و نگاشت HTTP اضافه شدند. کدهای Metadata/Fingerprint به‌صورت Fail-Closed و `500` نگاشت می‌شوند؛ کدهای اعتبارسنجی Event به `422` و کدهای متن به `400` نگاشت می‌شوند.
-- Build پروژه موفق و آزمون Unit بدون دیتابیس موفق بود. در تاریخ ثبت این بخش، آزمون یکپارچه‌سازی دیتابیس، استقرار Service و اجرای Migration 018 هنوز انجام نشده بودند؛ وضعیت به‌روز در بخش «استقرار Migration 018 و آزمون یکپارچه‌سازی روی `corebanking` — 2026-11-11» آمده است.
-- جزئیات در `docs/opencode-reports/HOLD_EVENT_VERSIONED_IDEMPOTENCY_IMPLEMENTATION.md` ثبت شده است.
-
-### جمع‌بندی نهایی Hold Event Versioned Idempotency — 2026-11-11
-
-- پاسخ عمومی خطاهای Trigger با کد `ACCOUNT_HOLD_EVENT_FINGERPRINT_*` دیگر متن خام دیتابیس را نمایش نمی‌دهد؛ پیام ثابت برگردانده می‌شود و جزئیات فقط با `qWarning` موجود ثبت می‌شود.
-- تشخیص ترکیب‌های Metadata به تابع Production در `holdeventfingerprint.h` منتقل شد و Lookup سرویس از همان تابع استفاده می‌کند؛ آزمون‌های Unit همه ترکیب‌های ناقص، نسخه‌های نامعتبر، Fingerprint بدفرمت، یکسانی `0.10`/`0.1`، نادیده‌گرفتن مبلغ در آزادسازی کامل و Timestamp دارای Offset/Truncate را پوشش می‌دهند.
-- تفاوت تاریخی مقایسه `amount` برای آزادسازی کامل بین Legacy Trigger و Lookup سرویس حفظ شد. در مسیر عادی API سرویس پیش از INSERT همان رویداد را Replay می‌کند؛ فقط یک رقابت باریک Legacy می‌تواند به `409` منجر شود.
-- برای Retry Holdهای Legacy با Timestamp دارای بیش از سه رقم اعشار، سازگاری صرفاً در کد اضافه شد: Fingerprint فعلی با Truncate و یک Fingerprint کاندید Legacy با Round قبلی Qt محاسبه می‌شود و Replay فقط با برابری Fingerprint ذخیره‌شده با یکی از آن دو انجام می‌شود.
-- در 2026-11-11 کاربر حفظ پاسخ `400` برای Timestamp بدون Timezone را پذیرفت. این رفتار به‌عنوان محدودیت شناخته‌شده باقی می‌ماند و پشتیبانی از Retry قدیمی برای Timestamp بدون Timezone ارائه نمی‌شود.
-- کدهای `ACCOUNT_HOLD_EVENT_INVALID_*` از مسیر عادی API قابل‌دسترس نیستند و منشأ آن‌ها ناسازگاری داخلی یا INSERT مستقیم است؛ نگاشت فعلی `422` به‌عنوان قرارداد API تغییر نکرد و تصمیم درباره تبدیل به `500` باقی است.
-- Build و آزمون Unit موفق‌اند. در تاریخ ثبت این بخش، Migration 018 و آزمون یکپارچه‌سازی هنوز اجرا نشده بودند؛ وضعیت به‌روز در بخش «استقرار Migration 018 و آزمون یکپارچه‌سازی روی `corebanking` — 2026-11-11» آمده است. جزئیات مرحله قبل در `docs/opencode-reports/HOLD_EVENT_FINAL_CLOSURE.md` است.
-
-### استقرار Migration 018 و آزمون یکپارچه‌سازی روی `corebanking` — 2026-11-11
-
-- کاربر دامپ کامل پیش از 018 را در `database/backups` تهیه کرد، Migration 018 را با COMMIT بدون خطا اجرا کرد و `database/CURRENT_SCHEMA.sql` را با pg_dump از دیتابیس واقعی به‌روز کرد.
-- بررسی read-only با `corebanking_reader` تأیید کرد سه ستون `request_fingerprint`، `fingerprint_version` و `effective_at_provided`، Constraintهای `ck_account_hold_event_fingerprint_format`، `ck_account_hold_event_fingerprint_version` و `ck_account_hold_event_idempotency_metadata`، توابع `hold_event_fp_trim`، `hold_event_canonical_amount`، `hold_event_fingerprint_v1` و `hold_event_fingerprint` و Triggerهای `trg_validate_account_hold_event` و `trg_account_hold_event_immutable` مطابق 018 هستند. `CURRENT_SCHEMA.sql` نیز همین اشیای مرتبط با 018 را منعکس می‌کند.
-- پیش از هر نوشتن جدید، هر ۱۳ رویداد موجود Legacy بودند (`legacy_events = 13`، `non_legacy_events = 0`). پس از آزمون، ۴ رویداد جدید با Metadata کامل و `fingerprint_version = 1` ثبت شد و هیچ ترکیب Metadata ناقصی وجود ندارد.
-- باینری جدید `/home/ahmad/projects/build-CoreBanking-Desktop-Debug/CoreBanking` (زمان 2026-11-11 16:51) اجرا شد؛ باینری قدیمی اجرا نشد.
-- تطابق Fingerprint C++ و SQL برای Test Vector A (`f541ed0f...bb1d1`) و یک ورودی با `reasonCode` فارسی `سلام` (`3ece7c69...56ee2`) دقیقاً برابر بود.
-- آزمون API پس از 018 موفق بود: Create/Replay/Conflict رویداد (`201`، `200 replayed=true`، `409 IDEMPOTENCY_CONFLICT` و `409 IDEMPOTENCY_KEY_REUSED`)؛ Legacy Event Retry با زمان صریح و بدون زمان (`200 replayed=true`) و زمان متفاوت (`409`)؛ Legacy Hold Round/Truncate با `.123Z` و Retry `.1229Z` (`200 replayed=true`، همان `holdId=9`)؛ و هم‌زمانی: کلید یکسان یک Event و کلیدهای متفاوت دو Event مستقل.
-- Timestamp بدون Timezone همچنان `400 HOLD_INVALID_EFFECTIVE_AT` است و هیچ ردیفی ایجاد نکرد.
-- آزمون‌های SQL کنترل‌شده بخش ۸ برنامه آزمون (رد Metadata ناقص/Version نامعتبر/Fingerprint بدفرمت و Trigger RETURN NULL روی ردیف Legacy) بخشی از دامنه آزمون API این مرحله نیستند و اجرای آن‌ها به تصمیم کاربر خارج از این دامنه واگذار شده است؛ اجرا نشده‌اند و موفق اعلام نمی‌شوند.
-- داده‌های ایجادشده: Holdهای `8` و `9` روی حساب `1` و Eventهای `14` تا `17` روی Hold `8`. هیچ Hold یا Event موجود قبلی تغییر نکرد و کنترل مجموع سازگار است.
-- جزئیات و دستورهای SQL باقی‌مانده در `docs/opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md` بخش ۱۲ ثبت شده است.
-
-### تکمیل آزمون Expiry/Cancellation API — 2026-11-11
-
-- بررسی کد نشان داد مسیرهای `CANCELLATION_RELEASE` و `EXPIRY_RELEASE` در `HoldService::createEvent` و Endpoint عمومی `POST /api/v1/holds/{id}/events` از قبل پیاده‌سازی شده‌اند؛ برای این موارد هیچ تغییر کد، Schema یا Endpoint جدید لازم نبود و ایجاد نشد.
-- `CANCELLATION_RELEASE` روی Hold فعال: Hold `10` (حساب `1`، مبلغ `0.03`، کلید `hold018-cancel-20261111-h1`) با Event `18` و کلید `hold018-cancel-20261111-e1` → `201`، وضعیت `CANCELLED`، باقی‌مانده `0`؛ Retry → `200 replayed=true` با همان `eventId=18`.
-- `FULL_RELEASE` جدید روی همان Hold لغوشده → `422 ACCOUNT_HOLD_ALREADY_FULLY_RELEASED`.
-- `EXPIRY_RELEASE` روی Hold منقضی: Hold `11` (حساب `1`، مبلغ `0.03`، `effectiveAt=2026-11-01T00:00:00Z`، `expiresAt=2026-11-02T00:00:00Z`، کلید `hold018-exp-20261111-h1`) در ایجاد `201` با وضعیت `EXPIRED` و `currentlyBlockedAmount=0`؛ Event `19` با کلید `hold018-exp-20261111-e1` → `201`، وضعیت `EXPIRED`، باقی‌مانده `0`؛ Retry → `200 replayed=true` با همان `eventId=19`.
-- `CANCELLATION_RELEASE` روی Hold منقضی → `422 EXPIRED_HOLD_REQUIRES_EXPIRY_RELEASE` و بدون ایجاد Event.
-- `EXPIRY_RELEASE` روی Hold غیرمنقضی (Hold `8`) → `422 ACCOUNT_HOLD_NOT_EXPIRED` و بدون ایجاد Event.
-- کنترل read-only: `holds=11`، `events=19`، `legacy_events=13`، `versioned_events=6`؛ وضعیت Holdهای `10` و `11` به‌ترتیب `CANCELLED` و `EXPIRED` با باقی‌مانده `0`؛ `ledger_balance` حساب‌ها بدون تغییر.
-- داده‌های آزمایشی باقی‌مانده از این مرحله: Holdهای `8`، `9`، `10` و `11` و Eventهای `14` تا `19` روی حساب `1`؛ هیچ‌کدام حذف یا بازگردانی نشدند.
-- آزمون SQL مستقیم بخش ۸ شرط پایان این مرحله نیست و به تصمیم کاربر خارج از دامنه آزمون API واگذار شده است. آزمون بار، مرزهای اضافه Expiry/Cancellation و رویه Restore/Rollback صرفاً آزموده‌نشده‌اند و شرط جدید پایان مرحله محسوب نمی‌شوند.
-
-### پایان مرحله Hold API — 2026-11-11
-
-- کار ضروری دیگری برای پایان API مسدودی باقی نمانده است. Migration 018 اجرا شده، `CURRENT_SCHEMA.sql` پس از آن از دیتابیس واقعی به‌روز و تطابق read-only آن بررسی شده است؛ چون پس از آن تغییر جدید Schema رخ نداده، فایل دوباره تولید نشده است.
-- نتایج واقعی API شامل Create/Replay/Conflict، Legacy Retry، هم‌زمانی، Cancellation و Expiry و داده‌های آزمایشی باقی‌مانده در `PROJECT_HISTORY.md` بخش‌های 18.14 و 18.15 و گزارش `HOLD_018_COREBANKING_TEST_PLAN.md` بخش‌های ۱۲ و ۱۳ ثبت شده‌اند.
-- آزمون‌های SQL مستقیم بخش ۸ تصمیم کاربر خارج از دامنه آزمون API این مرحله‌اند؛ آزمون بار، مرزهای اضافه و Restore/Rollback فقط آزموده‌نشده‌اند و شرط پایان مرحله نیستند.
-- مرحله Hold API در دامنه مصوب خود بسته است.
+شرح تفصیلی اجراها، Buildها، آزمون‌های API، داده‌های آزمایشی و محدودیت‌های تاریخی در `PROJECT_HISTORY.md` بخش‌های 18.7 تا 18.16 و گزارش‌های Hold در `docs/opencode-reports/` نگهداری می‌شود.
 
 ## 14. محدودیت‌های عملیاتی حساب
 
@@ -543,6 +518,7 @@ Migration شماره 015 این ساختارها و Triggerهای مربوط ر�
 ## 15. وضعیت حساب
 
 وضعیت‌های حساب:
+
 - `ACTIVE`
 - `DORMANT`
 - `BLOCKED`
@@ -577,30 +553,33 @@ Migration شماره 015 این ساختارها و Triggerهای مربوط ر�
 
 **محدودیت شواهد:** History حاوی گزارش جزئی برخی تست‌ها است، اما خروجی کامل همه تست‌های مورد تأیید کاربر، مخصوصاً گروه‌های جغرافیا و شعب و آخرین تست Transfer، در این فایل ثبت نشده است. هنگام اجرای دوباره تست‌ها، تاریخ، SHA، دیتابیس، درخواست، پاسخ و کنترل مانده/Journal به History اضافه شود. از این کمبود مستندات نباید نتیجه گرفت APIها تست نشده‌اند؛ وضعیت تکمیل و تست آن‌ها طبق تأیید کاربر پذیرفته شده است.
 
-### 16.1.1 Hold API — پیاده‌سازی و آزمون محلی 2026-11-02
+### 16.1.1 Hold API
 
 | گروه API | مسیرهای ثبت‌شده در Router | وضعیت |
 |---|---|---|
-| Holds | `POST /api/v1/holds`؛ `GET /api/v1/holds/{id}`؛ `GET /api/v1/holds?accountId={id}`؛ `POST /api/v1/holds/{id}/events`؛ `GET /api/v1/holds/{id}/events` | پیاده‌سازی و آزمون پایه API محلی |
+| Holds | `POST /api/v1/holds`؛ `GET /api/v1/holds/{id}`؛ `GET /api/v1/holds?accountId={id}`؛ `POST /api/v1/holds/{id}/events`؛ `GET /api/v1/holds/{id}/events` | پیاده‌سازی و آزمون API در دامنه مصوب؛ بسته‌شده |
 
-این آزمون شامل ایجاد Hold، Retry، تعارض کلید، دریافت جزئیات و فهرست، آزادسازی جزئی و کامل، Retry رویداد، تاریخچه رویدادها، چند مسیر خطا و کنترل عدم تغییر مانده سپرده بود. آزمون هم‌زمانی و مسیرهای Expiry/Cancellation در 2026-11-11 تکمیل شدند. آزمون بار و برخی مرزهای اضافه صرفاً آزموده‌نشده‌اند و شرط پایان دامنه API این مرحله نیستند.
+جزئیات آزمون‌های Hold، هم‌زمانی، Legacy Retry، Expiry/Cancellation و داده‌های آزمایشی در `PROJECT_HISTORY.md` بخش‌های 18.14 و 18.15 و `opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md` نگهداری می‌شود.
 
 ### 16.2 مسیرهای موجود در Router که تست مستقیمشان در History ثبت نشده است
 
 این مسیرها در Router متصل به Controller هستند، اما سند تاریخچه فعلی شواهد کافی از اجرای تست HTTP مستقیم و کامل آن‌ها ندارد. بنابراین آن‌ها را «API مفقود» نمی‌دانیم؛ فقط لازم است شواهد آزمونشان ثبت یا تأیید شود.
 
 **Provinces**
+
 - `POST /api/v1/provinces`
 - `GET /api/v1/provinces`
 - `GET /api/v1/provinces/{id}`
 
 **Account Types**
+
 - `POST /api/v1/account-types`
 - `GET /api/v1/account-types` با فیلترهای `status` و `currencyId`
 - `GET /api/v1/account-types/{id}`
 - `PATCH /api/v1/account-types/{id}/status`
 
 **Product–Ledger Mappings**
+
 - `POST /api/v1/product-ledger-mappings`
 - `GET /api/v1/product-ledger-mappings` با فیلترهای `status`، `productId` و `ledgerAccountId`
 - `GET /api/v1/product-ledger-mappings/{id}`
@@ -670,15 +649,12 @@ Migrationهای تاریخی شناخته‌شده:
 - `017_hold_idempotency.sql`
 - `018_hold_event_fingerprint.sql`
 
-فهرست بالا سابقه تغییرات است؛ وضعیت اعمال Migration در هر محیط باید جداگانه تأیید شود.
+این فهرست سابقه تغییرات است؛ وضعیت اعمال Migration در هر محیط باید جداگانه تأیید شود. جزئیات اجرا، تاریخ و اشیای هر Migration در `PROJECT_HISTORY.md` بخش 3 و گزارش‌های Hold نگهداری می‌شود.
 
-Migration شماره 015 برای مسدودی وجه و رویدادهای آزادسازی است. طبق سابقه، در تاریخ 2026-10-24 روی دیتابیس اصلی محلی اجرا شده است.
-
-Migration شماره 016 طبق سابقه در دیتابیس اصلی محلی اجرا شده و شامل تغییرات مربوط به مانده قابل برداشت و Idempotency تراکنش است؛ جزئیات قطعی هر تغییر باید با فایل Migration و Schema جاری تطبیق داده شود.
-
-Migration شماره 017 (`017_hold_idempotency.sql`) ستون‌های `idempotency_key` و `request_fingerprint`، سه Check Constraint مرتبط و ایندکس یکتای `uq_hold_api_idempotency` را به `account_hold` اضافه می‌کند. کاربر اجرای موفق آن را در 2026-11-01 تأیید کرده و وجود ستون‌ها، قیدها و ایندکس با بررسی read-only دیتابیس `corebanking` تأیید شده است.
-
-Migration شماره 018 (`018_hold_event_fingerprint.sql`) اکنون اجرا شده است. کاربر اجرای موفق آن را با COMMIT در 2026-11-11 تأیید کرد و بررسی read-only با `corebanking_reader` وجود سه ستون Metadata، Constraintها، توابع Canonicalization نسخه ۱ و Trigger جدید را در دیتابیس `corebanking` تأیید کرد. دامپ پیش از 018 در `database/backups` موجود است و `CURRENT_SCHEMA.sql` از دیتابیس واقعی به‌روز شده است.
+- Migration 015 ساختار مسدودی و Triggerهای مربوط را تعریف می‌کند. طبق سابقه در 2026-10-24 روی دیتابیس اصلی محلی اجرا شده است.
+- Migration 016 تغییرات مانده قابل برداشت و Idempotency تراکنش را تعریف می‌کند؛ طبق سابقه اجرا شده است. جزئیات قطعی باید با فایل Migration و Schema جاری تطبیق داده شود.
+- Migration 017 ستون‌های Idempotency Hold و ایندکس `uq_hold_api_idempotency` را اضافه می‌کند؛ اجرای موفق در 2026-11-01 تأیید شده است.
+- Migration 018 ستون‌های Metadata، Constraintها، توابع Canonicalization و Trigger جدید Event را اضافه می‌کند؛ اجرای موفق با COMMIT در 2026-11-11 تأیید شده، `CURRENT_SCHEMA.sql` از دیتابیس واقعی به‌روز شده و دامپ پیش از 018 در `database/backups` موجود است.
 
 ## 18. وضعیت قابلیت‌ها و کارهای باقی‌مانده
 
@@ -686,7 +662,7 @@ Migration شماره 018 (`018_hold_event_fingerprint.sql`) اکنون اجرا 
 
 طبق تأیید صریح کاربر در 2026-10-28: Health، Countries، Currencies، Cities، Branches، Customers، Products، Ledger Accounts، Account Opening، Account Status، Deposits و Internal Transfers پیاده‌سازی و تست شده‌اند. مسیرهای HTTP آن‌ها در بخش 16.1 فهرست شده‌اند. این تأیید، انجام تست API را مشخص می‌کند، نه تکمیل همه تست‌های هم‌زمانی/بار و نه آماده‌بودن برای بانکداری واقعی.
 
-Hold API نیز پس از اجرای Migration 018 و آزمون یکپارچه‌سازی API در 2026-11-11 در دامنه مصوب خود بسته شد؛ جزئیات در بخش‌های «استقرار Migration 018 و آزمون یکپارچه‌سازی روی `corebanking`»، «تکمیل آزمون Expiry/Cancellation API» و History بخش‌های 18.14 و 18.15 آمده است.
+Hold API نیز پس از اجرای Migration 018 و آزمون یکپارچه‌سازی API در 2026-11-11 در دامنه مصوب خود بسته شد؛ جزئیات در History بخش‌های 18.14 و 18.15 و گزارش‌های Hold آمده است.
 
 ### 18.2 مسیرهای پیاده‌سازی‌شده با شواهد آزمون ناکافی در سند
 
@@ -701,10 +677,10 @@ Hold API نیز پس از اجرای Migration 018 و آزمون یکپارچه�
 1. **Withdrawal API:** endpoint برداشت در Router بررسی‌شده وجود ندارد؛ باید قرارداد و ثبت حسابداری آن، در صورت ورود به دامنه فعلی، طراحی و پیاده‌سازی شود.
 2. **Reversal API:** مسیر مستقل برگشت وجود ندارد. برگشت باید تراکنش جدید و Journal معکوس ایجاد کند، نه اینکه تراکنش قبلی را حذف یا ویرایش کند.
 3. **Balance/Transaction/Journal read APIs:** endpoint اختصاصی برای دریافت مانده یا پرس‌وجوی تراکنش‌ها و Journalها در Router فعلی دیده نشده است؛ مشخص شود برای کلاینت/عملیات لازم‌اند یا خیر.
-4. **چرخه اضافه‌برداشت:** تسویه اضافه‌برداشت و ثبت هم‌زمان بدهی مشتری و مطالبات بانک تکمیل/تأیید نشده است. سابقه کد خطای `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` را برای مسیر نیازمند تسویه گزارش می‌کند.
-5. **مانده قابل برداشت:** حفظ فرمول مفهومی `ledger_balance - active_holds + remaining_overdraft_limit` در تمام مسیرهای مالی لازم است؛ صرف ذخیره شدن `available_balance` کافی نیست.
+4. **چرخه اضافه‌برداشت:** تسویه اضافه‌برداشت و ثبت هم‌زمان بدهی مشتری و مطالبات بانک تکمیل/تأیید نشده است. مسیر نیازمند تسویه همچنان با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود.
+5. **مانده قابل برداشت:** حفظ فرمول مفهومی `ledger_balance - active_holds + remaining_overdraft_limit` در تمام مسیرهای مالی لازم است؛ صرف ذخیره شدن `available_balance` کافی نیست و این Cache برای تصمیم مالی جدید قابل اتکا نیست.
 6. **Reconciliation:** تطبیق `account_balance`، تراکنش، Journal و `ledger_account_balance` و بررسی ناورداهای مالی باید پوشش جامع داشته باشد.
-7. **بازنویسی/هم‌ترازی سرویس‌های مالی قدیمی:** سرویس‌ها و Repositoryهای قدیمی مربوط به مانده حساب، تراکنش و ثبت دفتر کل را با Schema و قواعد بازطراحی‌شده هماهنگ یا در صورت لزوم بازنویسی کنید. کد قدیمی نباید مرجع معماری جدید فرض شود؛ سازگاری آن باید با `database/CURRENT_SCHEMA.sql`، قواعد Hold، Idempotency، Journal و اضافه‌برداشت اثبات شود.
+7. **بازنویسی/هم‌ترازی سرویس‌های مالی قدیمی:** سرویس‌ها و Repositoryهای قدیمی مربوط به مانده حساب، تراکنش و ثبت دفتر کل را با Schema و قواعد بازطراحی‌شده هماهنگ یا در صورت لزوم بازنویسی کنید. کد قدیمی نباید مرجع معماری جدید فرض شود؛ سازگاری آن باید با `database/CURRENT_SCHEMA.sql`، قواعد Hold، Idempotency، Journal و اضافه‌برداشت اثبات شود. زیرمرحله 1A فقط مسیر Transaction/Idempotency در Deposit را به زیرساخت جدید منتقل کرده است؛ Balance، Journal، Transfer، Hold و سایر سرویس‌ها هنوز در دامنه این بازنویسی باقی‌مانده‌اند.
 8. **تست‌های تکمیلی مالی:** آزمون رقابت هم‌زمان، کلید Idempotency تکراری با محتوای متفاوت، rollback در نقاط شکست، موجودی ناکافی، و اطمینان از عدم ایجاد Transaction/Journal تکراری.
 9. **قواعد دسترسی و محدودیت‌ها:** بررسی شود وضعیت حساب، رابطه مالکیت/اختیار و محدودیت عملیاتی در تمام عملیات مالی اثر می‌گذارند؛ API مستقل برخی تنظیمات در Router دیده نمی‌شود.
 10. **شواهد تست‌ها:** تاریخ، SHA، دیتابیس، درخواست/پاسخ و نتیجه بررسی مانده/Journal برای APIهای تأییدشده و به‌خصوص آخرین تست Transfer در History کامل شود.
@@ -718,9 +694,30 @@ Hold API نیز پس از اجرای Migration 018 و آزمون یکپارچه�
 - **آزمون جامع مالی:** سناریوهای شکست، هم‌زمانی، Idempotency و تطبیق دفتر کل نیز پوشش داده شده‌اند.
 - **آماده بهره‌برداری:** فقط پس از بررسی جامع مالی، امنیتی، عملیاتی، هم‌زمانی و آزمون‌های مرتبط؛ API تست‌شده لزوماً آماده بهره‌برداری نیست.
 
+### 18.5 وضعیت و پذیرش محدود 1A
+
+- `UnitOfWork` در `src/infrastructure/unitofwork.h` و `.cpp` اضافه شده است. مالک `begin/commit/rollback` لایه Use Case است؛ `TransactionService` و Repositoryها Commit مستقل ندارند.
+- شکست `commit` به‌صورت `CommitOutcomeUnknown` نگهداری می‌شود. پس از آن هیچ Rollback خودکاری انجام نمی‌شود. شکست Rollback به وضعیت مستقل `RollbackFailed` می‌رود و Retry خودکار ندارد.
+- `RolledBack` فقط پس از موفقیت واقعی rollback ثبت می‌شود.
+- پس از `CommitOutcomeUnknown`، `RollbackFailed` یا شکست BEGIN روی اتصال باز، اتصال مشترک در مرز امن بسته می‌شود و بدون بازگشایی خودکار بسته می‌ماند؛ دسترسی دیتابیس سرویس تا restart متوقف می‌شود. این fail-closed موقت است، نه معماری نهایی.
+- مدل `Transaction` در `src/domain/transaction.*` بازنویسی شد: `REJECTED`، فیلدهای Idempotency/نتیجه و جدول انتقال مجاز `INITIATED -> PROCESSING -> COMPLETED/REJECTED`.
+- در مسیر Deposit فقط زنجیره `INITIATED -> PROCESSING -> COMPLETED/REJECTED` استفاده می‌شود؛ مدل Domain همچنان جدول انتقال بخش 10 (شامل `INITIATED -> CANCELLED`) را حفظ می‌کند. این تفکیک برای رفع ابهام مستنداتی است و رفتار جدیدی ایجاد نمی‌کند.
+- `TransactionRepository` و `ITransactionRepository` بازنویسی شدند: Lookup و Find با نتیجه Typed، تبدیل وضعیت/نوع/کانال به‌صورت Fail-Closed و Update وضعیت با Expected Status.
+- `TransactionService` در `src/application/transactionservice.*` اضافه شد: Advisory Lock روی کلید API، Lookup پیش از اعتبارسنجی شرایط متغیر حساب، ایجاد `INITIATED` و انتقال به `PROCESSING`، تکمیل و رد.
+- `DepositService` فقط برای Transaction و Idempotency از زیرساخت جدید استفاده می‌کند. SQL مربوط به Balance، Journal، TransactionEntry، LedgerBalance و بررسی توازن در این مرحله بازنویسی نشد.
+- الگوریتم Fingerprint، Canonicalization، دامنه Idempotency و قرارداد HTTP فعلی Deposit تغییر نکرد. Retry کلیدهای ثبت‌شده پیش از این مرحله نیز آزموده شد.
+- 1A در دامنه محدود پذیرفته شده است. گزارش: [1A_ACCEPTANCE_WITH_LIMITATIONS.md](opencode-reports/1A_ACCEPTANCE_WITH_LIMITATIONS.md).
+- محدودیت‌های باز: رفتار واقعی QPSQL/PostgreSQL در قطع ارتباط و Retry پس از Commit نامعلوم آزموده نشده؛ آزمون قطعی Rollback میانی بدون Fault Injection انجام نشد؛ آزمون «هم‌زمانی» به دلیل سرور تک‌ریسمانی و Connection مشترک، هم‌پوشانی واقعی دو تراکنش دیتابیس را اثبات نمی‌کند.
+- مسیرهای legacy (Transfer/Hold/AccountOpening/AccountService و چند Repository) خارج از اصلاح 1A هستند و ریسک مشترک اتصال دارند.
+- `available_balance` همچنان Cache کهنه‌شونده است و در 1A تصمیم مالی جدیدی بر آن بنا نشد.
+- شکاف قفل قواعد مؤثر ناموجود برای مرحله Balance باز باقی است: `FOR SHARE` فقط ردیف موجود را قفل می‌کند و اگر Override یا قاعده مؤثر موجود نباشد، Exclusion Constraint به‌تنهایی مانع درج قاعده جدید مؤثر نمی‌شود. این موضوع پیش از Balance Slice باید تعیین تکلیف شود.
+- پذیرش محدود 1A معادل آمادگی کامل برای بهره‌برداری بانکی نیست. 1B و Balance Slice شروع نشده‌اند.
+
+شرح تفصیلی اجرای 1A و شواهد آن در `PROJECT_HISTORY.md` بخش‌های 18.17 و 18.18 و گزارش‌های `1A_*` نگهداری می‌شود.
+
 ## 19. قواعد نگهداری مستندات
 
-`PROJECT_CONTEXT.md` باید تمام قواعد کسب‌وکار و تصمیم‌های معماری تثبیت‌شده را در خود داشته باشد.
+`PROJECT_CONTEXT.md` باید قواعد کسب‌وکار، تصمیم‌های معماری تثبیت‌شده، وضعیت جاری و ریسک‌های باز را در خود داشته باشد. شرح اجراهای گذشته و خروجی‌های طولانی باید در `PROJECT_HISTORY.md` یا گزارش‌های `docs/opencode-reports/` نگهداری شود و Context فقط خلاصه و لینک داشته باشد.
 
 `PROJECT_HISTORY.md` باید نتایج دقیق آزمون‌ها، درخواست‌ها و پاسخ‌های HTTP، خروجی‌های SQL و Build، اشکالات گذشته، Migrationها و Commitها را نگهداری کند.
 
@@ -731,6 +728,7 @@ Hold API نیز پس از اجرای Migration 018 و آزمون یکپارچه�
 ## 20. دستور ادامه کار
 
 در ادامه پروژه:
+
 1. Git، Schema و فایل‌های کد مرتبط با مرحله فعلی بررسی شوند.
 2. قواعد قطعی دوباره از ابتدا مطرح نشوند، مگر اینکه تناقض واقعی پیدا شود.
 3. قبل از تغییر مالی، منطق حسابداری و آثار آن مشخص شوند.
