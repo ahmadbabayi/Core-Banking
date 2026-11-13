@@ -47,6 +47,13 @@ add_executable(CoreBanking
     src/application/depositservice.cpp
     src/application/transactionservice.h
     src/application/transactionservice.cpp
+    src/application/contracts/operationerror.h
+    src/application/contracts/iaccountstaterepository.h
+    src/application/contracts/ibalancerepository.h
+    src/application/contracts/iholdrepository.h
+    src/application/contracts/ijournalrepository.h
+    src/application/contracts/itransactionrepository.h
+    src/application/contracts/itransactionunitofwork.h
     src/application/holdservice.h
     src/application/holdservice.cpp
 
@@ -85,6 +92,12 @@ add_executable(CoreBanking
 
     src/infrastructure/repository/accountbalancerepository.h
     src/infrastructure/repository/accountbalancerepository.cpp
+    src/infrastructure/repository/accountstaterepository.h
+    src/infrastructure/repository/accountstaterepository.cpp
+    src/infrastructure/repository/balancerepository.h
+    src/infrastructure/repository/balancerepository.cpp
+    src/infrastructure/repository/holdrepository.h
+    src/infrastructure/repository/holdrepository.cpp
     src/infrastructure/repository/accountrepository.h
     src/infrastructure/repository/accountrepository.cpp
     src/infrastructure/repository/iaccountbalancerepository.h
@@ -95,9 +108,7 @@ add_executable(CoreBanking
     src/infrastructure/repository/icurrencyrepository.h
     src/infrastructure/repository/icountryrepository.h
     src/infrastructure/repository/itransferrepository.h
-    src/infrastructure/repository/itransactionrepository.h
     src/infrastructure/repository/itransactionentryrepository.h
-    src/infrastructure/repository/ijournalrepository.h
     src/infrastructure/repository/ijournalentryrepository.h
     src/infrastructure/repository/iprovincerepository.h
     src/infrastructure/repository/iaccounttyperepository.h

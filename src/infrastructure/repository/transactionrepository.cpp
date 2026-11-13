@@ -7,10 +7,33 @@
 namespace
 {
 
-void setError(QString* error, const QString& message)
+void setError(
+    OperationError* error,
+    PersistenceErrorCode code,
+    const QString& message)
 {
     if (error != nullptr)
-        *error = message;
+    {
+        error->code = code;
+        error->message = message;
+    }
+}
+
+PersistenceErrorCode classifySqlError(const QSqlError& error)
+{
+    const QString nativeCode = error.nativeErrorCode();
+
+    if (nativeCode.startsWith(QStringLiteral("23505")))
+        return PersistenceErrorCode::Conflict;
+
+    if (nativeCode.startsWith(QStringLiteral("23503")) ||
+        nativeCode.startsWith(QStringLiteral("23514")) ||
+        nativeCode.startsWith(QStringLiteral("23502")))
+    {
+        return PersistenceErrorCode::ConstraintViolation;
+    }
+
+    return PersistenceErrorCode::QueryFailed;
 }
 
 QString typeToString(Transaction::Type type)
@@ -168,18 +191,20 @@ bool channelFromString(const QString& value, Transaction::Channel* channel)
 bool transactionFromQuery(
     const QSqlQuery& query,
     std::optional<Transaction>* transaction,
-    QString* error)
+    OperationError* error)
 {
     if (transaction == nullptr)
     {
-        setError(error, QStringLiteral("Transaction destination is null"));
+        setError(error, PersistenceErrorCode::InvalidState,
+              QStringLiteral("Transaction destination is null"));
         return false;
     }
 
     const qint64 id = query.value(QStringLiteral("id")).toLongLong();
     if (id <= 0)
     {
-        setError(error, QStringLiteral("Transaction row has an invalid id"));
+        setError(error, PersistenceErrorCode::InvalidState,
+              QStringLiteral("Transaction row has an invalid id"));
         return false;
     }
 
@@ -188,7 +213,8 @@ bool transactionFromQuery(
             query.value(QStringLiteral("transaction_type")).toString(),
             &type))
     {
-        setError(error, QStringLiteral("Transaction row has an unknown type"));
+        setError(error, PersistenceErrorCode::InvalidState,
+              QStringLiteral("Transaction row has an unknown type"));
         return false;
     }
 
@@ -197,7 +223,8 @@ bool transactionFromQuery(
             query.value(QStringLiteral("status")).toString(),
             &status))
     {
-        setError(error, QStringLiteral("Transaction row has an unknown status"));
+        setError(error, PersistenceErrorCode::InvalidState,
+              QStringLiteral("Transaction row has an unknown status"));
         return false;
     }
 
@@ -206,7 +233,8 @@ bool transactionFromQuery(
             query.value(QStringLiteral("channel")).toString(),
             &channel))
     {
-        setError(error, QStringLiteral("Transaction row has an unknown channel"));
+        setError(error, PersistenceErrorCode::InvalidState,
+              QStringLiteral("Transaction row has an unknown channel"));
         return false;
     }
 
@@ -239,11 +267,14 @@ bool transactionFromQuery(
     return true;
 }
 
-TransactionLookupResult failedLookup(const QString& message)
+TransactionLookupResult failedLookup(
+    PersistenceErrorCode code,
+    const QString& message)
 {
     TransactionLookupResult result;
     result.status = TransactionLookupResult::Status::Failed;
-    result.error = message;
+    result.error.code = code;
+    result.error.message = message;
     return result;
 }
 
@@ -258,7 +289,9 @@ TransactionLookupResult findTransaction(
     query.bindValue(bindName, bindValue);
 
     if (!query.exec())
-        return failedLookup(query.lastError().text());
+        return failedLookup(
+            classifySqlError(query.lastError()),
+            QStringLiteral("Transaction lookup failed"));
 
     if (!query.next())
     {
@@ -268,10 +301,10 @@ TransactionLookupResult findTransaction(
     }
 
     std::optional<Transaction> transaction;
-    QString parseError;
+    OperationError parseError;
 
     if (!transactionFromQuery(query, &transaction, &parseError))
-        return failedLookup(parseError);
+        return failedLookup(parseError.code, parseError.message);
 
     TransactionLookupResult result;
     result.status = TransactionLookupResult::Status::Found;
@@ -288,7 +321,7 @@ TransactionRepository::TransactionRepository(const QSqlDatabase& database)
 
 bool TransactionRepository::acquireApiIdempotencyLock(
     const QString& idempotencyKey,
-    QString* error)
+    OperationError* error)
 {
     QSqlQuery query(db);
     query.prepare(
@@ -298,7 +331,10 @@ bool TransactionRepository::acquireApiIdempotencyLock(
 
     if (!query.exec() || !query.next())
     {
-        setError(error, query.lastError().text());
+        setError(
+            error,
+            classifySqlError(query.lastError()),
+            QStringLiteral("Idempotency lock could not be acquired"));
         return false;
     }
 
@@ -341,7 +377,7 @@ TransactionLookupResult TransactionRepository::findById(qint64 transactionId)
 
 qint64 TransactionRepository::createInitiated(
     const Transaction& transaction,
-    QString* error)
+    OperationError* error)
 {
     const QString type = typeToString(transaction.getType());
     const QString status = statusToString(transaction.getStatus());
@@ -349,7 +385,10 @@ qint64 TransactionRepository::createInitiated(
 
     if (type.isEmpty() || status.isEmpty() || channel.isEmpty())
     {
-        setError(error, QStringLiteral("Transaction enum value is not supported"));
+        setError(
+            error,
+            PersistenceErrorCode::InvalidState,
+            QStringLiteral("Transaction enum value is not supported"));
         return 0;
     }
 
@@ -436,7 +475,10 @@ qint64 TransactionRepository::createInitiated(
 
     if (!query.exec() || !query.next())
     {
-        setError(error, query.lastError().text());
+        setError(
+            error,
+            classifySqlError(query.lastError()),
+            QStringLiteral("Transaction insert failed"));
         return 0;
     }
 
@@ -444,11 +486,52 @@ qint64 TransactionRepository::createInitiated(
 
     if (transactionId <= 0)
     {
-        setError(error, QStringLiteral("Transaction insert did not return an id"));
+        setError(
+            error,
+            PersistenceErrorCode::InvalidState,
+            QStringLiteral("Transaction insert did not return an id"));
         return 0;
     }
 
     return transactionId;
+}
+
+bool TransactionRepository::appendDestinationEntry(
+    qint64 transactionId,
+    qint64 accountId,
+    const QString& amount,
+    qint64 currencyId,
+    const QString& description,
+    OperationError* error)
+{
+    QSqlQuery query(db);
+    query.prepare(
+        "INSERT INTO transaction_entry "
+        " (transaction_id, account_id, entry_type, amount, currency_id, "
+        "  sequence_no, description) "
+        "VALUES (:transaction_id, :account_id, 'DESTINATION', :amount, "
+        " :currency_id, 1, :description)");
+
+    query.bindValue(":transaction_id", transactionId);
+    query.bindValue(":account_id", accountId);
+    query.bindValue(":amount", amount);
+    query.bindValue(":currency_id", currencyId);
+    query.bindValue(
+        ":description",
+        description.isEmpty()
+            ? QVariant(QStringLiteral("Customer deposit"))
+            : QVariant(description));
+
+    if (!query.exec())
+    {
+        setError(
+            error,
+            classifySqlError(query.lastError()),
+            QStringLiteral("Transaction entry insert failed"));
+        return false;
+    }
+
+    return true;
 }
 
 bool TransactionRepository::updateStatus(
@@ -457,14 +540,17 @@ bool TransactionRepository::updateStatus(
     Transaction::Status nextStatus,
     const QString& resultCode,
     const QString& resultMessage,
-    QString* error)
+    OperationError* error)
 {
     const QString expected = statusToString(expectedStatus);
     const QString next = statusToString(nextStatus);
 
     if (expected.isEmpty() || next.isEmpty())
     {
-        setError(error, QStringLiteral("Transaction status is not supported"));
+        setError(
+            error,
+            PersistenceErrorCode::InvalidState,
+            QStringLiteral("Transaction status is not supported"));
         return false;
     }
 
@@ -509,7 +595,10 @@ bool TransactionRepository::updateStatus(
 
     if (!query.exec())
     {
-        setError(error, query.lastError().text());
+        setError(
+            error,
+            classifySqlError(query.lastError()),
+            QStringLiteral("Transaction status update failed"));
         return false;
     }
 
@@ -517,6 +606,7 @@ bool TransactionRepository::updateStatus(
     {
         setError(
             error,
+            PersistenceErrorCode::InvalidState,
             QStringLiteral("Transaction status transition was rejected"));
         return false;
     }

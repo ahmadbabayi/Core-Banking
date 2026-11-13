@@ -2,7 +2,7 @@
 #define TRANSACTIONSERVICE_H
 
 #include "../domain/transaction.h"
-#include "../infrastructure/repository/itransactionrepository.h"
+#include "contracts/itransactionrepository.h"
 
 #include <QString>
 #include <QtGlobal>

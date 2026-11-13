@@ -12,21 +12,27 @@
 
 ## راهنمای سریع عامل
 
-### وضعیت جاری — 2026-11-12
+### وضعیت جاری — 2026-11-13
 
 - **1A:** در دامنه محدود پذیرفته شده است. جزئیات و محدودیت‌ها: [1A_ACCEPTANCE_WITH_LIMITATIONS.md](opencode-reports/1A_ACCEPTANCE_WITH_LIMITATIONS.md).
-- **1B:** شروع نشده و نیازمند تأیید جداگانه است.
+- **1A.1:** انتقال قرارداد Transaction/UoW به Application و UoW per-request انجام شده است. در زمان آن مرحله، Balance/Journal SQL و `QSqlDatabase` به‌صورت انتقالی در Deposit باقی ماندند.
+- **1B.1:** استخراج ساختاری Balance از Deposit انجام شده است: قرارداد `IBalanceRepository` در Application، پیاده‌سازی `BalanceRepository` در Infrastructure و `balances()` در قرارداد/پیاده‌سازی UoW با همان Connection و تراکنش. SQLها، bindها، ترتیب Queryها/قفل‌ها، زمان مرجع و فرمول محاسبه فعلی حفظ شده‌اند. این مرحله فقط استخراج ساختاری است؛ تکمیل 1B، رفع شکاف هم‌زمانی قواعد مؤثر یا اصلاح `available_balance` را ادعا نمی‌کند.
+- **1C.1:** استخراج ساختاری Journal/Ledger از Deposit انجام شده است: قرارداد `IJournalRepository` در Application، پیاده‌سازی `JournalRepository` در Infrastructure و `journals()` در قرارداد/پیاده‌سازی UoW با همان Connection و تراکنش. SQLها، bindها، ترتیب عملیات/قفل‌ها و زمان‌ها حفظ شده‌اند.
+- **1C.2:** بسته نهایی استخراج persistence از Deposit انجام شده است: Account currency lookup، Account row lock و Hold row lock به `IAccountStateRepository`/`IHoldRepository` در Application و پیاده‌سازی‌های Infrastructure منتقل شدند و از `accounts()`/`holds()` همان UoW استفاده می‌کنند. `DepositService` دیگر هیچ SQL، `QSqlDatabase`، `QSqlQuery` یا include مستقیم Infrastructure ندارد. این مرحله تکمیل Domain rules، رفع race یا آمادگی عملیاتی بانکی نیست.
+- **1B:** در جریان است. فقط 1B.1 انجام شده و ادامه آن نیازمند تأیید جداگانه است.
+- **1C:** در جریان است. استخراج ساختاری 1C.1 و 1C.2 انجام شده؛ ادامه آن نیازمند تأیید جداگانه است.
 - **Balance Slice:** شروع نشده است. شکاف هم‌زمانی قواعد مؤثر و نبود Override باید پیش از آن تعیین تکلیف شود.
 - **Hold API:** در دامنه مصوب خود بسته شده است؛ Migration 018 اجرا شده و `CURRENT_SCHEMA.sql` به‌روز است.
 - **وضعیت fail-closed 1A:** پس از `CommitOutcomeUnknown`، `RollbackFailed` یا شکست BEGIN روی اتصال باز، اتصال مشترک بسته می‌ماند و بدون بازگشایی خودکار بسته است؛ دسترسی دیتابیس سرویس تا restart متوقف می‌شود. این مصالحه موقت ایمنی است، نه معماری نهایی مدیریت اتصال.
 - **ابهام Commit:** restart یا بستن اتصال، نتیجه Commit قبلی را تعیین نمی‌کند. Retry باید با همان `idempotencyKey` انجام شود و نتیجه پایدار را از دیتابیس بازیابی کند؛ عملیات مالی خودکار با کلید جدید مجاز نیست.
-- **ریسک legacy:** Transfer، Hold، AccountOpening، AccountService و چند Repository همچنان مستقیماً روی Connection مشترک تراکنش مدیریت می‌کنند و خارج از اصلاح 1A هستند.
+- **ریسک legacy:** Transfer، Hold، AccountOpening، AccountService و چند Repository همچنان مستقیماً روی Connection مشترک تراکنش مدیریت می‌کنند و خارج از استخراج persistence مسیر Deposit هستند. HoldService همچنان نویسنده مستقل Hold است.
 - **مانده قابل برداشت:** `available_balance` یک Cache کهنه‌شونده است و برای تصمیم مالی جدید قابل اتکا نیست؛ فرمول مفهومی باید در مرحله Balance تعیین تکلیف شود.
 - **اضافه‌برداشت:** مسیر نیازمند تسویه همچنان با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود؛ اضافه‌برداشت فعال نشده است.
 
 ### نقاط توقف نیازمند تأیید
 
-- شروع 1B.
+- ادامه 1B پس از 1B.1.
+- ادامه 1C پس از 1C.2.
 - طراحی یا اجرای Balance Slice.
 - هر Migration، DDL، تغییر Schema، تغییر Credential یا تنظیم اتصال.
 - هر تغییر رفتار مالی، قرارداد API یا تصمیم معماری جدید.
@@ -65,7 +71,7 @@ Core Banking یک سامانه بانکداری هسته‌ای با backend م�
 
 - لایه‌ها: Domain، Application/Service، Infrastructure/Repository و Web/HTTP.
 - اتصال دیتابیس: یک Connection مشترک Qt SQL با نام `CoreBankingConnection` که مالک ساخت/بازکردن/بستن آن `Database` است. سرویس‌ها و Repositoryها کپی همان Connection را برای طول عمر پروسه نگه می‌دارند.
-- مالکیت تراکنش: در مسیر 1A (Deposit) مالک `begin/commit/rollback` لایه Use Case از طریق `UnitOfWork` است. `TransactionService` و `TransactionRepository` Commit/Rollback مستقل ندارند. سایر سرویس‌های legacy هنوز مستقیماً روی Connection مشترک تراکنش مدیریت می‌کنند.
+- مالکیت تراکنش: در مسیر 1A (Deposit) مالک `begin/commit/rollback` لایه Use Case از طریق `UnitOfWork` است. `TransactionService`، `TransactionRepository`، `BalanceRepository`، `JournalRepository`، `AccountStateRepository` و `HoldRepository` Commit/Rollback مستقل ندارند. سایر سرویس‌های legacy هنوز مستقیماً روی Connection مشترک تراکنش مدیریت می‌کنند.
 - Idempotency: Transaction با `idempotency_key` و `request_fingerprint`؛ Hold و Eventهای Hold قواعد جداگانه دارند.
 - ثبت مالی: Transaction، Journal و تغییر مانده‌ها باید در یک تراکنش دیتابیس و با کنترل توازن Debit/Credit انجام شوند.
 - HTTP: Router مسیرها را به Controllerها متصل می‌کند؛ خطاهای سرویس به کدهای پایدار HTTP نگاشت می‌شوند.
@@ -680,7 +686,7 @@ Hold API نیز پس از اجرای Migration 018 و آزمون یکپارچه�
 4. **چرخه اضافه‌برداشت:** تسویه اضافه‌برداشت و ثبت هم‌زمان بدهی مشتری و مطالبات بانک تکمیل/تأیید نشده است. مسیر نیازمند تسویه همچنان با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود.
 5. **مانده قابل برداشت:** حفظ فرمول مفهومی `ledger_balance - active_holds + remaining_overdraft_limit` در تمام مسیرهای مالی لازم است؛ صرف ذخیره شدن `available_balance` کافی نیست و این Cache برای تصمیم مالی جدید قابل اتکا نیست.
 6. **Reconciliation:** تطبیق `account_balance`، تراکنش، Journal و `ledger_account_balance` و بررسی ناورداهای مالی باید پوشش جامع داشته باشد.
-7. **بازنویسی/هم‌ترازی سرویس‌های مالی قدیمی:** سرویس‌ها و Repositoryهای قدیمی مربوط به مانده حساب، تراکنش و ثبت دفتر کل را با Schema و قواعد بازطراحی‌شده هماهنگ یا در صورت لزوم بازنویسی کنید. کد قدیمی نباید مرجع معماری جدید فرض شود؛ سازگاری آن باید با `database/CURRENT_SCHEMA.sql`، قواعد Hold، Idempotency، Journal و اضافه‌برداشت اثبات شود. زیرمرحله 1A فقط مسیر Transaction/Idempotency در Deposit را به زیرساخت جدید منتقل کرده است؛ Balance، Journal، Transfer، Hold و سایر سرویس‌ها هنوز در دامنه این بازنویسی باقی‌مانده‌اند.
+7. **بازنویسی/هم‌ترازی سرویس‌های مالی قدیمی:** سرویس‌ها و Repositoryهای قدیمی مربوط به مانده حساب، تراکنش و ثبت دفتر کل را با Schema و قواعد بازطراحی‌شده هماهنگ یا در صورت لزوم بازنویسی کنید. کد قدیمی نباید مرجع معماری جدید فرض شود؛ سازگاری آن باید با `database/CURRENT_SCHEMA.sql`، قواعد Hold، Idempotency، Journal و اضافه‌برداشت اثبات شود. زیرمرحله‌های 1A، 1B.1، 1C.1 و 1C.2 مسیر Transaction/Idempotency، Balance، Journal/Ledger، Account currency lookup/row lock و Hold row lock در Deposit را به زیرساخت جدید منتقل کرده‌اند؛ Transfer، HoldService و سایر سرویس‌ها هنوز در دامنه این بازنویسی باقی مانده‌اند.
 8. **تست‌های تکمیلی مالی:** آزمون رقابت هم‌زمان، کلید Idempotency تکراری با محتوای متفاوت، rollback در نقاط شکست، موجودی ناکافی، و اطمینان از عدم ایجاد Transaction/Journal تکراری.
 9. **قواعد دسترسی و محدودیت‌ها:** بررسی شود وضعیت حساب، رابطه مالکیت/اختیار و محدودیت عملیاتی در تمام عملیات مالی اثر می‌گذارند؛ API مستقل برخی تنظیمات در Router دیده نمی‌شود.
 10. **شواهد تست‌ها:** تاریخ، SHA، دیتابیس، درخواست/پاسخ و نتیجه بررسی مانده/Journal برای APIهای تأییدشده و به‌خصوص آخرین تست Transfer در History کامل شود.
@@ -713,7 +719,51 @@ Hold API نیز پس از اجرای Migration 018 و آزمون یکپارچه�
 - شکاف قفل قواعد مؤثر ناموجود برای مرحله Balance باز باقی است: `FOR SHARE` فقط ردیف موجود را قفل می‌کند و اگر Override یا قاعده مؤثر موجود نباشد، Exclusion Constraint به‌تنهایی مانع درج قاعده جدید مؤثر نمی‌شود. این موضوع پیش از Balance Slice باید تعیین تکلیف شود.
 - پذیرش محدود 1A معادل آمادگی کامل برای بهره‌برداری بانکی نیست. 1B و Balance Slice شروع نشده‌اند.
 
-شرح تفصیلی اجرای 1A و شواهد آن در `PROJECT_HISTORY.md` بخش‌های 18.17 و 18.18 و گزارش‌های `1A_*` نگهداری می‌شود.
+#### 1A.1 — انتقال قرارداد Transaction/UoW — 2026-11-12
+
+- `ITransactionRepository` به `src/application/contracts/` منتقل شد و `TransactionService` به همان قرارداد Application وابسته است.
+- `ITransactionUnitOfWork` و `ITransactionUnitOfWorkFactory` در Application تعریف شدند؛ `UnitOfWork` و `UnitOfWorkFactory` پیاده‌سازی Infrastructure هستند.
+- هر فراخوانی Deposit یک UnitOfWork مستقل از factory می‌گیرد؛ `TransactionRepository` همان scope و همان Connection/تراکنش را استفاده می‌کند.
+- `DepositService` دیگر `UnitOfWork` یا `TransactionRepository` concrete نمی‌سازد و `database()` از قرارداد UoW حذف شده است.
+- SQL مربوط به `transaction_entry` با همان SQL، پارامترها و ترتیب قبلی به `TransactionRepository` منتقل شد.
+- قرارداد جدید Transaction/UoW از `OperationError` امن استفاده می‌کند؛ کدهای API حفظ شده‌اند و متن خام SQL در این قراردادها نشت نمی‌کند.
+- رفتار F1/F2 حفظ شده است: `CommitOutcomeUnknown` و `RollbackFailed` جدا، بدون rollback خودکار پس از commit ناموفق، و fail-closed فعلی.
+- انتقالی تا 1C: `QSqlDatabase` تزریق‌شده و SQLهای Balance/Journal در آن مرحله در `DepositService` باقی ماندند. در 1B.1 بخش Balance و در 1C.1 بخش Journal/Ledger خارج شدند؛ `QSqlDatabase` انتقالی فقط برای Account/Hold/currency SQL باقی است.
+
+#### 1B.1 — استخراج ساختاری Balance از Deposit — 2026-11-13
+
+- `IBalanceRepository` و مدل‌های `BalanceAccountSnapshot`/`BalanceSnapshotResult` در `src/application/contracts/ibalancerepository.h` تعریف شدند. قرارداد هیچ `QSqlDatabase`، `QSqlQuery`، SQL یا متن خام خطای دیتابیس منتشر نمی‌کند.
+- `BalanceRepository` در `src/infrastructure/repository/balancerepository.*` سه عملیات موردنیاز Deposit را پیاده‌سازی می‌کند: قفل ردیف `account_balance`، خواندن Snapshot قفل‌شده ورودی‌های محاسبه موجودی، و اعمال افزایش واریز روی `account_balance`.
+- `balances()` به `ITransactionUnitOfWork` اضافه شد. `UnitOfWork` همان `QSqlDatabase` و همان scope را به `BalanceRepository` می‌دهد؛ Connection یا تراکنش مستقل ایجاد نشد.
+- `DepositService` فقط از `IBalanceRepository` استفاده می‌کند و SQLهای Balance از آن خارج شدند. اعتبارسنجی‌ها و شاخه‌های تصمیم Use Case در Deposit باقی ماندند.
+- SQL، bindها، ترتیب Queryها و قفل‌ها، `CURRENT_TIMESTAMP`/`CURRENT_DATE`، precision رشته‌ای NUMERIC و فرمول فعلی `available_balance` تغییر نکردند. `available_balance` کش‌شده جایگزین منبع محاسبه نشد.
+- متن خام خطاهای Balance با پیام‌های امن ثابت جایگزین شد؛ کدهای API مانند `ACCOUNT_BALANCE_LOCK_FAILED`، `ACCOUNT_LOCK_OR_READ_FAILED` و `ACCOUNT_BALANCE_UPDATE_FAILED` حفظ شدند.
+- خارج از دامنه و بدون تغییر: Journal، Transfer، HoldService و مسیرهای نوشتن Hold، Schema/Migration/داده، معیارهای Domain و شکاف هم‌زمانی قواعد مؤثر.
+- این مرحله تکمیل 1B، رفع race یا تکمیل معماری Deposit نیست. جزئیات آزمون‌ها و محدودیت‌ها در `PROJECT_HISTORY.md` بخش 18.21 آمده است.
+
+#### 1C.1 — استخراج ساختاری Journal/Ledger از Deposit — 2026-11-13
+
+- `IJournalRepository` و مدل‌های نتیجه آن در `src/application/contracts/ijournalrepository.h` تعریف شدند. قرارداد هیچ `QSqlDatabase`، `QSqlQuery`، SQL یا متن خام خطای دیتابیس منتشر نمی‌کند.
+- `JournalRepository` در `src/infrastructure/repository/journalrepository.*` عملیات واقعی Deposit را پیاده‌سازی می‌کند: lookup سرفصل تسویه با `FOR SHARE`، مقداردهی اولیه `ledger_account_balance`، قفل ردیف‌های Ledger، ایجاد Journal پیش‌نویس، درج دو سطر Journal، خواندن توازن، به‌روزرسانی تجمعی Ledger و posting مشروط.
+- `journals()` به `ITransactionUnitOfWork` اضافه شد. `UnitOfWork` همان `QSqlDatabase` و همان scope را به `JournalRepository` می‌دهد؛ Connection یا تراکنش مستقل ایجاد نشد.
+- SQL، bindها، ترتیب عملیات و قفل‌ها، `CURRENT_DATE`/`CURRENT_TIMESTAMP`، ترتیب debit/credit و precision NUMERIC حفظ شدند.
+- شاخه‌های تصمیم Use Case در Deposit باقی ماندند: رد حساب/سرفصل، بررسی تعداد ردیف‌های قفل‌شده، توازن دو سطری و نگاشت کدهای خطا.
+- متن خام خطاهای Journal/Ledger با پیام‌های امن ثابت جایگزین شد؛ کدهای API حفظ شدند. جزئیات نگاشت در `PROJECT_HISTORY.md` بخش 18.22 آمده است.
+- SQLهای باقی‌مانده در آن مرحله: Account currency lookup، Account row lock و Hold row lock. این سه مورد در 1C.2 منتقل شدند و `QSqlDatabase`/Qt SQL از Deposit حذف شد.
+- خارج از دامنه و بدون تغییر: Domain invariants جدید، Transfer، HoldService و مسیرهای نوشتن Hold، Schema/Migration/داده، زمان مرجع، isolation و شکاف هم‌زمانی قواعد مؤثر.
+- این مرحله تکمیل کل 1B/1C، رفع race یا آمادگی عملیاتی بانکی نیست.
+
+#### 1C.2 — بسته نهایی استخراج persistence از Deposit — 2026-11-13
+
+- `IAccountStateRepository` در Application برای Account currency lookup و Account row lock و `IHoldRepository` برای Hold row lock تعریف شدند. قراردادها SQL، `QSqlDatabase`، `QSqlQuery` یا خطای خام دیتابیس منتشر نمی‌کنند.
+- `AccountStateRepository` و `HoldRepository` در Infrastructure همان SQL، bindها، ترتیب و طول عمر قفل‌های قبلی را حفظ می‌کنند.
+- `accounts()` و `holds()` به `ITransactionUnitOfWork` اضافه شدند؛ هر دو Repository متعلق به همان UoW و همان Connection هستند. `begin/commit/rollback` فقط تحت UoW باقی ماند.
+- `DepositService` دیگر هیچ SQL اجرایی، `QSqlDatabase`، `QSqlQuery`، `QSqlError` یا include مستقیم Infrastructure ندارد. تشخیص `DATABASE_UNAVAILABLE` از طریق `ITransactionUnitOfWorkFactory::isConnectionAvailable()` انجام می‌شود تا کد API و ترتیب کنترل قبلی حفظ شود.
+- ترتیب کامل عملیات و قفل‌ها، fingerprint/canonicalization/replay/conflict/retry، F1/F2، `CommitOutcomeUnknown`، عدم rollback پس از commit نامعلوم و fail-closed حفظ شدند.
+- متن خام خطاهای Account/Hold با پیام‌های امن ثابت جایگزین شد؛ کدهای API حفظ شدند. جزئیات نگاشت در `PROJECT_HISTORY.md` بخش 18.23 آمده است.
+- این مرحله استخراج ساختاری است و Domain rules، رفع race، زمان مرجع، محاسبات دقیق یا آمادگی عملیاتی بانکی را تکمیل نمی‌کند.
+
+شرح تفصیلی اجرای 1A، 1A.1، 1B.1، 1C.1 و 1C.2 و شواهد آن در `PROJECT_HISTORY.md` بخش‌های 18.17، 18.18، 18.20، 18.21، 18.22 و 18.23 نگهداری می‌شود.
 
 ## 19. قواعد نگهداری مستندات
 

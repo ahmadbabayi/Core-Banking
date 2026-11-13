@@ -1483,6 +1483,511 @@ cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
 - رفتار واقعی QPSQL/PostgreSQL در قطع ارتباط و Retry پس از Commit نامعلوم همچنان اثبات‌نشده است.
 - هیچ تصمیم معماری یا رفتاری جدیدی در این بازآرایی ایجاد نشد.
 
+### 18.20 زیرمرحله 1A.1 — انتقال قرارداد Transaction/UoW — 2026-11-12
+
+#### محدوده و فایل‌ها
+
+- ایجاد `src/application/contracts/operationerror.h`
+- ایجاد `src/application/contracts/itransactionrepository.h`
+- ایجاد `src/application/contracts/itransactionunitofwork.h`
+- حذف `src/infrastructure/repository/itransactionrepository.h` (منتقل‌شده به Application)
+- تغییر `src/application/transactionservice.h`/`.cpp`
+- تغییر `src/application/depositservice.h`/`.cpp`
+- تغییر `src/infrastructure/repository/transactionrepository.h`/`.cpp`
+- تغییر `src/infrastructure/unitofwork.h`/`.cpp`
+- تغییر `src/main.cpp`
+- تغییر `CMakeLists.txt` فقط برای مسیر قراردادهای جدید و حذف مسیر قدیمی
+
+انجام نشد: هیچ Schema، Migration، DDL/DML، داده، HTTP، SQL روی دیتابیس واقعی، Integration/Concurrency واقعی، Fault Injection واقعی، restart، نصب ابزار یا عملیات Git انجام نشد. Balance/Journal SQL و `QSqlDatabase` تزریق‌شده در Deposit به‌صورت انتقالی باقی ماندند.
+
+#### تغییرات
+
+- `ITransactionRepository` و `TransactionLookupResult` در `src/application/contracts/` قرار گرفتند؛ `TransactionService` فقط به این قرارداد Application وابسته است.
+- `ITransactionUnitOfWork` و `ITransactionUnitOfWorkFactory` در Application تعریف شدند؛ `UnitOfWork` و `UnitOfWorkFactory` در Infrastructure پیاده‌سازی شدند.
+- `UnitOfWork` اکنون `transactions()` را برمی‌گرداند و `database()` از API عمومی آن حذف شد. state machine و رفتار F1/F2 بدون تغییر منطقی حفظ شد.
+- `DepositService` در هر فراخوانی یک UoW مستقل از factory می‌سازد؛ دیگر `UnitOfWork` یا `TransactionRepository` concrete نمی‌سازد. `TransactionService` با repository همان scope ساخته می‌شود.
+- SQL `transaction_entry` با همان INSERT، همان پارامترها و همان جای ترتیب قبلی به `ITransactionRepository::appendDestinationEntry` منتقل شد.
+- خطاهای Transaction/UoW با `OperationError` امن منتقل می‌شوند؛ کدهای API (`TRANSACTION_START_FAILED`، `DATABASE_COMMIT_FAILED`، `DATABASE_ROLLBACK_FAILED`، `TRANSACTION_ENTRY_CREATE_FAILED`، `IDEMPOTENCY_*`) حفظ شدند و متن خام SQL از این قراردادها حذف شد.
+- `main.cpp` به‌عنوان Composition Root همان `QSqlDatabase` را به `UnitOfWorkFactory` و `DepositService` می‌دهد تا scope و SQLهای انتقالی Balance/Journal از یک Connection/تراکنش استفاده کنند.
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+نتیجه واقعی: موفق. CMake به‌دلیل تغییر فهرست فایل‌ها یک بار خودکار Reconfigure شد و سپس:
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/depositservice.cpp.o
+[  4%] Building CXX object CMakeFiles/CoreBanking.dir/src/infrastructure/unitofwork.cpp.o
+[ 12%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+#### آزمون Harness (بدون دیتابیس واقعی)
+
+Harness قبلی F1/F2 با FakeDriver و UnitOfWork واقعی برای APIهای جدید سازگار شد و اجرا شد. نتیجه: `TOTAL FAILURES: 0` و `EXIT_CODE=0`.
+
+| سناریو | نتیجه | begin | commit | rollback | close | openBefore | openAfter |
+|---|---|---|---|---|---|---|---|
+| A: commit ناموفق | PASS | 1 | 1 | 0 | 1 | true | false |
+| B: rollback صریح ناموفق | PASS | 1 | 0 | 1 | 1 | true | false |
+| C: rollback ناموفق در Destructor | PASS | 1 | 0 | 1 | 1 | true | false |
+| D: BEGIN ناموفق | PASS | 1 | 0 | 0 | 1 | true | false |
+| E1: commit موفق | PASS | 1 | 1 | 0 | 0 | true | true |
+| E2: rollback صریح موفق | PASS | 1 | 0 | 1 | 0 | true | true |
+| E3: rollback خودکار موفق | PASS | 1 | 0 | 1 | 0 | true | true |
+
+آزمون QSQLITE برای shared-close نیز PASS بود: close روی یک کپی، `isOpen()` کپی دیگر را false کرد و Query روی آن شکست خورد.
+
+#### حفظ رفتار
+
+- API، fingerprint، canonicalization، replay، conflict و retry کلیدهای قدیمی تغییر نکردند.
+- SQL و ترتیب Balance/Journal تغییر نکردند.
+- commit ناموفق همچنان `CommitOutcomeUnknown` است و هیچ rollback خودکاری پس از آن انجام نمی‌شود.
+- شکست rollback و fail-closed فعلی حفظ شدند.
+- هیچ اتصال فیزیکی جدید، reconnect، pool یا recovery مرکزی اضافه نشد.
+
+#### بدهی انتقالی و محدودیت‌ها
+
+- `DepositService` هنوز `QSqlDatabase` تزریق‌شده و SQLهای Balance/Journal را تا 1C نگه می‌دارد؛ تکمیل معماری Deposit ادعا نمی‌شود.
+- `Balances()`/`Journals()` یا stub مراحل بعد اضافه نشد.
+- آزمون HTTP، SQL واقعی، Integration/Concurrency و Fault Injection واقعی اجرا نشد.
+- پیام‌های خطای داخلی Transaction/UoW از متن خام دیتابیس به پیام ثابت/ایمن تغییر کردند؛ کدهای API حفظ شدند.
+- `UnitOfWork` همچنان با Connection مشترک کار می‌کند؛ هم‌زمانی واقعی با اتصال‌های مستقل همچنان آزموده‌نشده است.
+
+### 18.21 زیرمرحله 1B.1 — استخراج ساختاری Balance از Deposit — 2026-11-13
+
+#### محدوده و فایل‌ها
+
+- ایجاد `src/application/contracts/ibalancerepository.h`
+- ایجاد `src/infrastructure/repository/balancerepository.h`
+- ایجاد `src/infrastructure/repository/balancerepository.cpp`
+- ایجاد `tests/balance_repository_unitofwork_test.cpp`
+- تغییر `src/application/contracts/itransactionunitofwork.h`
+- تغییر `src/infrastructure/unitofwork.h`/`.cpp`
+- تغییر `src/application/depositservice.h`/`.cpp`
+- تغییر `CMakeLists.txt` برای افزودن قرارداد و Repository جدید
+- تغییر `docs/PROJECT_CONTEXT.md` و همین سند
+
+انجام نشد: هیچ Schema، Migration، DDL/DML، تغییر داده، HTTP، SQL روی PostgreSQL واقعی، Integration/Concurrency واقعی، Fault Injection واقعی، restart، نصب ابزار یا عملیات Git انجام نشد. Journal، Transfer، HoldService و مسیرهای نوشتن Hold تغییر نکردند.
+
+#### تغییرات
+
+- `IBalanceRepository` با سه عملیات موردنیاز واقعی Deposit تعریف شد:
+  - قفل ردیف `account_balance`
+  - خواندن Snapshot قفل‌شده ورودی‌های محاسبه موجودی
+  - اعمال افزایش واریز روی `account_balance`
+- قرارداد از `OperationError` امن استفاده می‌کند و هیچ `QSqlDatabase`، `QSqlQuery`، SQL یا متن خام خطای دیتابیس را منتشر نمی‌کند.
+- `BalanceRepository` در Infrastructure پیاده‌سازی شد. SQL، bindها، ترتیب Queryها، `FOR UPDATE`، `FOR UPDATE OF a, b`، `CURRENT_TIMESTAMP`/`CURRENT_DATE`، تبدیل `NUMERIC` به رشته و فرمول فعلی `available_balance` دقیقاً حفظ شدند.
+- `balances()` به `ITransactionUnitOfWork` اضافه شد. `UnitOfWork` همان `QSqlDatabase` خود را به `BalanceRepository` می‌دهد؛ Connection یا تراکنش مستقل ساخته نشد.
+- `DepositService` قفل Balance، خواندن ورودی‌های محاسبه و UPDATE موجودی را از `IBalanceRepository` انجام می‌دهد. منطق تصمیم‌گیری و اعتبارسنجی Use Case در Deposit باقی ماند.
+- قفل Account، قفل Hold، SQLهای Journal/Ledger/TransactionEntry و `QSqlDatabase` انتقالی در Deposit باقی ماندند. ترتیب کلی Account Lock → Balance Lock → Hold Lock → Snapshot → ... حفظ شد.
+- `available_balance` همچنان همان Cache فعلی است و جایگزین منبع محاسبه نشد.
+
+#### تغییر پیام‌های خطا
+
+کدهای API تغییر نکردند، اما متن خطای این سه مسیر Balance از `QSqlError::text()` خام به پیام امن ثابت تغییر کرد:
+
+| کد API | متن قبلی | متن فعلی |
+|---|---|---|
+| `ACCOUNT_BALANCE_LOCK_FAILED` | متن خام درایور/دیتابیس | `Account balance row lock failed` |
+| `ACCOUNT_LOCK_OR_READ_FAILED` | متن خام درایور/دیتابیس | `Account balance state could not be loaded` |
+| `ACCOUNT_BALANCE_UPDATE_FAILED` | متن خام درایور/دیتابیس | `Account balance update failed` |
+
+#### حفظ SQL
+
+مقایسه خودکار رشته‌های SQL با نسخه پیش از تغییر انجام شد و نتیجه برای هر سه بخش `True` بود:
+
+- Snapshot: طول ۲۴۴۷ کاراکتر، یکسان.
+- قفل `account_balance`: طول ۸۰ کاراکتر، یکسان.
+- `UPDATE account_balance`: طول ۲۹۶ کاراکتر، یکسان.
+
+فایل مقایسه دائمی ایجاد نشد؛ این بررسی بخشی از شواهد همین مرحله است.
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+نتیجه واقعی: موفق. CMake به‌دلیل تغییر فهرست فایل‌ها یک بار خودکار Reconfigure شد:
+
+```text
+-- Configuring done
+-- Generating done
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/depositservice.cpp.o
+[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/main.cpp.o
+[  4%] Building CXX object CMakeFiles/CoreBanking.dir/src/infrastructure/repository/balancerepository.cpp.o
+[  5%] Building CXX object CMakeFiles/CoreBanking.dir/src/infrastructure/unitofwork.cpp.o
+[  6%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httpserver.cpp.o
+[  8%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httprouter.cpp.o
+[  9%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/depositcontroller.cpp.o
+[ 10%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+#### آزمون هدفمند بدون PostgreSQL
+
+```bash
+g++ -std=c++17 -fPIC -I. tests/balance_repository_unitofwork_test.cpp \
+  src/infrastructure/unitofwork.cpp \
+  src/infrastructure/repository/balancerepository.cpp \
+  src/infrastructure/repository/transactionrepository.cpp \
+  src/domain/transaction.cpp \
+  $(pkg-config --cflags --libs Qt5Core Qt5Sql) \
+  -o /tmp/balance_repository_unitofwork_test
+
+/tmp/balance_repository_unitofwork_test
+```
+
+خروجی واقعی:
+
+```text
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+All balance repository and unit-of-work tests passed
+```
+
+دو هشدار `database not open` مربوط به آزمون عمدی اتصال بسته برای بررسی پیام امن است؛ assertionها موفق بودند.
+
+پوشش آزمون:
+
+- `UnitOfWorkFactory`/`UnitOfWork` واقعی با `QSQLITE` حافظه‌ای.
+- `balances()` از همان scope و همان Connection استفاده می‌کند.
+- اعمال افزایش واریز داخل تراکنش، خواندن مقدار، و بازگشت مقدار پس از `rollback`.
+- اعمال دوم و `commit`، سپس خواندن مقدار پایدارشده.
+- Account ناموجود: شکست امن `Account balance update failed` بدون نشت نام جدول یا SQL.
+- اتصال بسته: قفل و Snapshot با پیام‌های امن ثابت شکست می‌خورند و متن خام `not open` نشت نمی‌کند.
+
+این آزمون جایگزین آزمون PostgreSQL نیست. رفتار `FOR UPDATE`/`FOR UPDATE OF`، `NUMERIC` واقعی PostgreSQL، قواعد مؤثر Override/Product و هم‌زمانی واقعی آزموده نشدند.
+
+#### داده‌های آزمایشی
+
+هیچ داده‌ای در دیتابیس `corebanking` ایجاد یا تغییر نکرد. آزمون فقط از دیتابیس حافظه‌ای `QSQLITE` استفاده کرد و هیچ شناسه کسب‌وکاری تولید نشد.
+
+#### بدهی و محدودیت‌های باقی‌مانده
+
+- Journal، Ledger Balance، TransactionEntry و `QSqlDatabase` انتقالی هنوز در `DepositService` هستند.
+- شکاف هم‌زمانی قواعد مؤثر و نبود Override حل نشده و برای Balance Slice باز است.
+- زمان مرجع و روش محاسبه دقیق Domain، انتخاب `CURRENT_TIMESTAMP`/`CURRENT_DATE` و معنای `available_balance` تغییر نکرده و تکمیل نشده‌اند.
+- `available_balance` همچنان Cache کهنه‌شونده است.
+- HoldService و مسیرهای نوشتن Hold تغییر نکردند.
+- آزمون HTTP، PostgreSQL واقعی، Integration/Concurrency واقعی و Fault Injection واقعی اجرا نشد.
+- این مرحله تکمیل 1B، رفع race یا تکمیل معماری Deposit نیست.
+
+### 18.22 زیرمرحله 1C.1 — استخراج ساختاری Journal/Ledger از Deposit — 2026-11-13
+
+#### محدوده و فایل‌ها
+
+- ایجاد `src/application/contracts/ijournalrepository.h`
+- حذف `src/infrastructure/repository/ijournalrepository.h` (قرارداد به Application منتقل شد)
+- تغییر `src/infrastructure/repository/journalrepository.h`/`.cpp` (پیاده‌سازی قرارداد جدید Application)
+- ایجاد `tests/journal_repository_unitofwork_test.cpp`
+- تغییر `src/application/contracts/itransactionunitofwork.h`
+- تغییر `src/infrastructure/unitofwork.h`/`.cpp`
+- تغییر `src/application/depositservice.h`/`.cpp`
+- تغییر `CMakeLists.txt` برای مسیر قرارداد جدید و حذف مسیر قدیمی
+- تغییر `docs/PROJECT_CONTEXT.md` و همین سند
+
+انجام نشد: هیچ Schema، Migration، DDL/DML، تغییر داده، HTTP، SQL روی PostgreSQL واقعی، Integration/Concurrency واقعی، Fault Injection واقعی، restart، نصب ابزار یا عملیات Git انجام نشد. Balance، Transfer، HoldService و مسیرهای نوشتن Hold تغییر نکردند.
+
+#### تغییرات
+
+- `IJournalRepository` در Application با عملیات واقعی Deposit تعریف شد:
+  - lookup سرفصل تسویه با `FOR SHARE`
+  - مقداردهی اولیه `ledger_account_balance`
+  - قفل ردیف‌های `ledger_account_balance`
+  - ایجاد Journal پیش‌نویس
+  - درج دو سطر Journal واریز
+  - خواندن تعداد و توازن سطرها
+  - به‌روزرسانی تجمعی Ledger
+  - posting مشروط Journal
+- قرارداد از `OperationError` امن استفاده می‌کند و هیچ `QSqlDatabase`، `QSqlQuery`، SQL یا متن خام خطای دیتابیس را منتشر نمی‌کند.
+- `JournalRepository` موجود Infrastructure برای پیاده‌سازی قرارداد جدید استفاده شد. متدهای CRUD عمومی قبلی آن هیچ مصرف‌کننده‌ای نداشتند و با عملیات واقعی Deposit جایگزین شدند؛ رفتار آن‌ها در مسیر فعال پروژه استفاده نمی‌شد.
+- `journals()` به `ITransactionUnitOfWork` اضافه شد. `UnitOfWork` همان `QSqlDatabase` خود را به `JournalRepository` می‌دهد؛ Connection یا تراکنش مستقل ساخته نشد.
+- `DepositService` Journal/Ledger SQL را از `IJournalRepository` انجام می‌دهد. تصمیم‌ها و اعتبارسنجی‌های Use Case در Deposit باقی ماندند.
+- ترتیب کلی حفظ شد: Transaction create → Account/Balance/Hold locks → Snapshot → Settlement lookup → Ledger init/lock → TransactionEntry → Journal create/entries/check → Balance update → Ledger update → Journal post → Transaction complete.
+- `QSqlDatabase` انتقالی در Deposit حذف نشد، چون سه SQL دیگر باقی‌اند: Account currency lookup، Account row lock و Hold row lock.
+
+#### SQLهای باقی‌مانده در Deposit
+
+- `SELECT currency_id FROM account WHERE id = :id`
+- `SELECT id FROM account WHERE id = :account_id FOR UPDATE`
+- `SELECT id FROM account_hold WHERE account_id = :account_id ORDER BY id FOR UPDATE`
+
+این SQLها عمداً پنهان یا به Repository نامرتبط منتقل نشدند.
+
+#### حفظ SQL و bindها
+
+مقایسه خودکار SQL و ترتیب bindها با نسخه پیش از تغییر انجام شد. نتیجه برای هر هشت بخش `sql=True` و `bind_order=True` بود:
+
+| بخش | طول SQL | bindها |
+|---|---|---|
+| Settlement ledger lookup | ۱۶۹ | `:code`, `:currency_id` |
+| Ledger balance init | ۳۶۱ | `:customer_ledger`, `:settlement_ledger` |
+| Ledger balance lock | ۱۹۰ | `:customer_ledger`, `:settlement_ledger` |
+| Journal create | ۱۷۴ | `:transaction_id`, `:description` |
+| Journal entries | ۳۵۲ | `:journal_id`, `:settlement_ledger`, `:customer_ledger`, `:currency_id`, `:debit_amount`, `:credit_amount`, `:account_id`, `:cash_description`, `:customer_description` |
+| Journal balance read | ۱۴۵ | `:journal_id` |
+| Ledger update | ۹۷۷ | `:settlement_ledger`, `:customer_ledger`, `:cash_debit`, `:customer_credit` |
+| Journal post | ۴۰۲ | `:journal_id` |
+
+فایل مقایسه دائمی ایجاد نشد؛ این بررسی بخشی از شواهد همین مرحله است.
+
+#### تغییر پیام‌های خطا
+
+کدهای API و شاخه‌های کنترل حفظ شدند. متن خام جایگزین‌شده:
+
+| کد API | متن قبلی | متن فعلی |
+|---|---|---|
+| `SETTLEMENT_LEDGER_LOOKUP_FAILED` | متن خام `QSqlError::text()` | `Settlement ledger lookup failed` |
+| `LEDGER_BALANCE_INIT_FAILED` | متن خام `QSqlError::text()` | `Ledger balance initialization failed` |
+| `LEDGER_BALANCE_LOCK_FAILED` | متن خام `QSqlError::text()` | `Ledger balance rows could not be locked` |
+| `LEDGER_BALANCE_LOCK_FAILED` (تعداد ناکافی) | `Could not lock all ledger balance rows` | بدون تغییر |
+| `JOURNAL_CREATE_FAILED` | متن خام `QSqlError::text()` | `Journal could not be created` |
+| `JOURNAL_ENTRY_CREATE_FAILED` | متن خام `QSqlError::text()` | `Journal entries could not be created` |
+| `JOURNAL_BALANCE_CHECK_FAILED` | متن خام `QSqlError::text()` | `Journal balance check failed` |
+| `JOURNAL_NOT_BALANCED` | `Journal debit and credit totals do not match` | بدون تغییر |
+| `LEDGER_BALANCE_PREPARE_FAILED` | متن خام `QSqlError::text()` | `Ledger balance update could not be prepared` |
+| `LEDGER_BALANCE_UPDATE_FAILED` | متن خام `QSqlError::text()` | `Ledger balance update failed` |
+| `JOURNAL_POST_FAILED` (خطای اجرا) | متن خام `QSqlError::text()` | `Journal could not be posted` |
+| `JOURNAL_POST_FAILED` (رد شدن) | متن خام یا fallback | `Journal is unbalanced or could not be posted` |
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+نتیجه واقعی: موفق.
+
+```text
+-- Configuring done
+-- Generating done
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/depositservice.cpp.o
+[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/main.cpp.o
+[  4%] Building CXX object CMakeFiles/CoreBanking.dir/src/infrastructure/repository/journalrepository.cpp.o
+[  5%] Building CXX object CMakeFiles/CoreBanking.dir/src/infrastructure/unitofwork.cpp.o
+[  6%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httpserver.cpp.o
+[  8%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httprouter.cpp.o
+[  9%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/depositcontroller.cpp.o
+[ 10%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+CMake به‌دلیل تغییر فهرست فایل‌ها یک بار خودکار Reconfigure شد. دستور `cmake -S` جداگانه اجرا نشد.
+
+#### آزمون هدفمند بدون PostgreSQL
+
+```bash
+g++ -std=c++17 -fPIC -I. tests/journal_repository_unitofwork_test.cpp \
+  src/infrastructure/unitofwork.cpp \
+  src/infrastructure/repository/journalrepository.cpp \
+  src/infrastructure/repository/balancerepository.cpp \
+  src/infrastructure/repository/transactionrepository.cpp \
+  src/domain/transaction.cpp \
+  $(pkg-config --cflags --libs Qt5Core Qt5Sql) \
+  -o /tmp/journal_repository_unitofwork_test
+
+/tmp/journal_repository_unitofwork_test
+```
+
+خروجی واقعی:
+
+```text
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+All journal repository and unit-of-work tests passed
+```
+
+هشدارهای `database not open` مربوط به آزمون عمدی اتصال بسته برای بررسی پیام امن هستند؛ assertionها موفق بودند.
+
+#### پوشش و محدودیت آزمون
+
+- `UnitOfWorkFactory`/`UnitOfWork` واقعی با `QSQLITE` حافظه‌ای.
+- `journals()` از همان scope و Connection است و از `transactions()`/`balances()` جداست.
+- ایجاد Journal پیش‌نویس، درج دو سطر، خواندن تعداد/توازن و rollback بدون باقی‌ماندن ردیف.
+- ایجاد و commit دومین Journal و دو سطر آن.
+- اتصال بسته و بررسی پیام‌های امن برای lookup، init، lock، create، entries، balance read، ledger update و post.
+- موفقیت `postIfBalanced` و موفقیت `ensureLedgerBalanceRows`/`applyLedgerDeltas` روی `QSQLITE` اجرا نشد، چون SQL آن‌ها PostgreSQL-specific است (`UPDATE ... alias`، `unnest(ARRAY[...])`، CTE/ON CONFLICT). فقط مسیرهای خطای امن آن‌ها آزموده شد.
+- آزمون PostgreSQL واقعی، HTTP، Integration/Concurrency واقعی و Fault Injection واقعی اجرا نشد. `QSQLITE` اثبات سازگاری PostgreSQL نیست.
+
+#### داده‌ها
+
+هیچ داده‌ای در دیتابیس `corebanking` ایجاد یا تغییر نکرد و هیچ شناسه کسب‌وکاری تولید نشد. آزمون فقط از دیتابیس حافظه‌ای `QSQLITE` استفاده کرد.
+
+#### بدهی و محدودیت‌های باقی‌مانده
+
+- Account currency lookup، Account row lock و Hold row lock همچنان در `DepositService` و روی `QSqlDatabase` انتقالی هستند.
+- Journal invariants جدید، بازطراحی قواعد Journal و رفع race قواعد مؤثر Balance انجام نشد.
+- زمان مرجع، isolation، advisory locks و روش محاسبات پولی تغییر نکردند.
+- Transfer، HoldService و مسیرهای نوشتن Hold تغییر نکردند.
+- آزمون PostgreSQL واقعی، HTTP، Integration/Concurrency واقعی و Fault Injection واقعی اجرا نشد.
+- این مرحله تکمیل کل 1B/1C، رفع race یا آمادگی عملیاتی بانکی نیست.
+
+### 18.23 زیرمرحله 1C.2 — بسته نهایی استخراج persistence از Deposit — 2026-11-13
+
+#### محدوده و فایل‌ها
+
+- ایجاد `src/application/contracts/iaccountstaterepository.h`
+- ایجاد `src/application/contracts/iholdrepository.h`
+- ایجاد `src/infrastructure/repository/accountstaterepository.h`/`.cpp`
+- ایجاد `src/infrastructure/repository/holdrepository.h`/`.cpp`
+- ایجاد `tests/deposit_orchestration_test.cpp`
+- ایجاد `tests/account_hold_persistence_test.cpp`
+- تغییر `src/application/contracts/itransactionunitofwork.h`
+- تغییر `src/infrastructure/unitofwork.h`/`.cpp`
+- تغییر `src/application/depositservice.h`/`.cpp`
+- تغییر `src/main.cpp` برای wiring جدید Composition Root
+- تغییر `CMakeLists.txt` برای قراردادها و Repositoryهای جدید
+- تغییر `docs/PROJECT_CONTEXT.md` و همین سند
+
+انجام نشد: هیچ Schema، Migration، DDL/DML، تغییر داده، HTTP، SQL روی PostgreSQL واقعی، Integration/Concurrency واقعی، Fault Injection واقعی، restart، نصب ابزار یا عملیات Git انجام نشد.
+
+#### تغییرات
+
+- Account currency lookup و Account row lock در قرارداد `IAccountStateRepository` Application و پیاده‌سازی `AccountStateRepository` Infrastructure قرار گرفتند.
+- Hold row lock در قرارداد `IHoldRepository` Application و پیاده‌سازی `HoldRepository` Infrastructure قرار گرفت.
+- `accounts()` و `holds()` به `ITransactionUnitOfWork` اضافه شدند. `UnitOfWork` هر دو Repository را با همان `QSqlDatabase` و همان scope می‌سازد؛ Connection یا transaction مستقل اضافه نشد.
+- `DepositService` تمام persistence را از قراردادهای Application و UoW انجام می‌دهد. SQL اجرایی، `QSqlDatabase`، `QSqlQuery`، `QSqlError` و include مستقیم Infrastructure از آن حذف شدند.
+- برای حفظ `DATABASE_UNAVAILABLE` و ترتیب کنترل قبلی، `ITransactionUnitOfWorkFactory::isConnectionAvailable()` اضافه شد. این متد فقط وضعیت Connection مشترک را گزارش می‌کند و در Deposit وابستگی Qt SQL ایجاد نمی‌کند.
+- `main.cpp` فقط factory و کد سرفصل تسویه را به `DepositService` می‌دهد؛ `QSqlDatabase` دیگر به constructor آن پاس نمی‌شود.
+- ترتیب کامل Account/Balance/Hold lock و تمام مراحل Transaction/Balance/Journal حفظ شد. طول عمر قفل‌ها تا پایان همان UoW/تراکنش تغییر نکرد.
+- HoldService و مسیرهای نویسنده Hold تغییر نکردند.
+
+#### حفظ SQL و bindها
+
+سه SQL منتقل‌شده با نسخه قبل مقایسه شدند:
+
+| بخش | SQL | bind | طول |
+|---|---|---|---|
+| Account currency lookup | یکسان | `:id` | ۴۶ |
+| Account row lock | یکسان | `:account_id` | ۵۶ |
+| Hold row lock | یکسان | `:account_id` | ۸۱ |
+
+ترتیب فراخوانی و ترتیب قفل‌ها نیز در آزمون orchestration بررسی شد: Account lock → Balance lock → Hold lock و سپس Snapshot و ادامه Journal/Balance.
+
+#### تغییر پیام‌های خطا
+
+کدهای API و شاخه‌های کنترل حفظ شدند. متن خام جایگزین‌شده:
+
+| کد API | متن قبلی | متن فعلی |
+|---|---|---|
+| `ACCOUNT_LOOKUP_FAILED` | متن خام `QSqlError::text()` | `Account currency lookup failed` |
+| `ACCOUNT_LOCK_FAILED` | متن خام `QSqlError::text()` | `Account row lock failed` |
+| `HOLD_LOCK_FAILED` | متن خام `QSqlError::text()` | `Account hold rows could not be locked` |
+
+وضعیت «ردیف پیدا نشد» در Account currency lookup با `Found`/`NotFound`/`Failed` از خطای persistence جدا ماند و مسیر `ACCOUNT_NOT_FOUND` بدون تغییر حفظ شد.
+
+#### Build
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+نتیجه واقعی: موفق.
+
+```text
+-- Configuring done
+-- Generating done
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/depositservice.cpp.o
+[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/main.cpp.o
+[  4%] Building CXX object CMakeFiles/CoreBanking.dir/src/infrastructure/repository/accountstaterepository.cpp.o
+[  5%] Building CXX object CMakeFiles/CoreBanking.dir/src/infrastructure/repository/holdrepository.cpp.o
+[  6%] Building CXX object CMakeFiles/CoreBanking.dir/src/infrastructure/unitofwork.cpp.o
+[  8%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httpserver.cpp.o
+[  9%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/httprouter.cpp.o
+[ 10%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/depositcontroller.cpp.o
+[ 12%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+#### آزمون orchestration Deposit بدون Qt SQL
+
+این آزمون فقط با Qt5Core کامپایل شد و هیچ فایل Infrastructure یا Qt5Sql را لینک نکرد؛ بنابراین fakeها و خود `DepositService` به اتصال Qt SQL نیاز ندارند.
+
+```bash
+g++ -std=c++17 -fPIC -I. tests/deposit_orchestration_test.cpp \
+  src/application/depositservice.cpp \
+  src/application/transactionservice.cpp \
+  src/domain/transaction.cpp \
+  $(pkg-config --cflags --libs Qt5Core) \
+  -o /tmp/deposit_orchestration_test
+
+/tmp/deposit_orchestration_test
+```
+
+خروجی واقعی:
+
+```text
+All deposit orchestration tests passed
+```
+
+پوشش:
+
+- موفقیت کامل و ترتیب حساس فراخوانی‌ها از `uow.begin` تا `uow.commit`
+- استفاده از `transactions()`، `accounts()`، `balances()`، `holds()` و `journals()` همان UoW
+- Replay تراکنش Completed و عدم ورود به Account/Balance/Journal
+- Account not found و rollback بدون ایجاد Transaction
+- خطای persistence امن در Account currency lookup
+- شکست Hold lock و توقف پیش از Journal
+- شکست Journal post پس از نوشتن Balance و rollback پیش از commit
+- `DATABASE_UNAVAILABLE` و توقف پیش از ساخت UoW
+
+#### آزمون persistence Account/Hold
+
+```bash
+g++ -std=c++17 -fPIC -I. tests/account_hold_persistence_test.cpp \
+  src/infrastructure/repository/accountstaterepository.cpp \
+  src/infrastructure/repository/holdrepository.cpp \
+  $(pkg-config --cflags --libs Qt5Core Qt5Sql) \
+  -o /tmp/account_hold_persistence_test
+
+/tmp/account_hold_persistence_test
+```
+
+خروجی واقعی:
+
+```text
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+QSqlQuery::prepare: database not open
+All account and hold persistence tests passed
+```
+
+پوشش:
+
+- خواندن موفق `currency_id` از `account` با `QSQLITE`
+- تشخیص `NotFound` برای Account ناموجود، جدا از خطای persistence
+- خطای امن برای currency lookup، account row lock و hold lock روی Connection بسته
+- عدم نشت متن خام `not open`
+
+محدودیت: موفقیت `FOR UPDATE` روی `QSQLITE` آزموده نشد؛ این آزمون جایگزین PostgreSQL نیست.
+
+#### بررسی نهایی وابستگی‌های Deposit
+
+- جست‌وجوی `QSqlDatabase`، `QSqlQuery`، `QSqlError`، `lastError` و `infrastructure/repository` در `depositservice.h`/`.cpp`: بدون نتیجه.
+- includeهای Deposit فقط شامل قراردادهای Application، `transactionservice.h` و Qt Core هستند.
+- وابستگی Qt Core (`QDateTime`، `QCryptographicHash`، `QRegularExpression`، `QUuid`، `QDebug`) خارج از دامنه این مرحله باقی ماند.
+- `DepositService` هیچ تصمیم مالی جدیدی دریافت نکرد و فقط محل اجرای SQL تغییر کرد.
+
+#### موارد باز که حل نشده‌اند
+
+- هم‌زمانی قواعد مؤثر Balance، همه نویسندگان آن‌ها و شکاف نبود Override باز است.
+- زمان مرجع پس از قفل‌ها و انتخاب `CURRENT_TIMESTAMP`/`CURRENT_DATE` تعیین تکلیف نشده است.
+- محاسبات دقیق monetary و قواعد Domain تکمیل نشده‌اند.
+- آزمون PostgreSQL واقعی، رفتار commit نامعلوم در QPSQL، Integration/Concurrency و Fault Injection واقعی اجرا نشد.
+- محدودیت Connection مشترک و fail-closed فعلی باقی است.
+- این مرحله تکمیل 1B/1C، رفع race یا آمادگی عملیاتی بانکی نیست.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

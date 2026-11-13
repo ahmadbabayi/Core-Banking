@@ -4,6 +4,7 @@
 #include <QSqlDatabase>
 
 #include "infrastructure/database.h"
+#include "infrastructure/unitofwork.h"
 #include "infrastructure/repository/customerrepository.h"
 #include "infrastructure/repository/currencyrepository.h"
 #include "infrastructure/repository/countryrepository.h"
@@ -130,7 +131,10 @@ int main(int argc, char *argv[])
 
     // Deposit counter-entry configured for this chart of accounts.
     // In the current test database, 10100101 is Test Cash Settlement IRR.
-    DepositService depositService(db, QStringLiteral("10100101"));
+    // The factory owns the shared connection for every per-request UnitOfWork.
+    UnitOfWorkFactory unitOfWorkFactory(db);
+    DepositService depositService(
+        unitOfWorkFactory, QStringLiteral("10100101"));
     DepositController depositController(depositService);
 
     // Account holds

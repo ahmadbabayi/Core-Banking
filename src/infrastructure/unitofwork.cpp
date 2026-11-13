@@ -1,10 +1,25 @@
 #include "unitofwork.h"
 
+#include "repository/accountstaterepository.h"
+#include "repository/balancerepository.h"
+#include "repository/holdrepository.h"
+#include "repository/journalrepository.h"
+#include "repository/transactionrepository.h"
+
 #include <QDebug>
-#include <QSqlError>
 
 UnitOfWork::UnitOfWork(const QSqlDatabase& database)
-    : m_database(database)
+    : m_database(database),
+      m_transactionRepository(
+          std::make_unique<TransactionRepository>(m_database)),
+      m_balanceRepository(
+          std::make_unique<BalanceRepository>(m_database)),
+      m_journalRepository(
+          std::make_unique<JournalRepository>(m_database)),
+      m_accountStateRepository(
+          std::make_unique<AccountStateRepository>(m_database)),
+      m_holdRepository(
+          std::make_unique<HoldRepository>(m_database))
 {
 }
 
@@ -38,91 +53,141 @@ UnitOfWork::~UnitOfWork()
     }
 }
 
-bool UnitOfWork::begin(QString* error)
+BeginOutcome UnitOfWork::begin(OperationError* error)
 {
     if (m_state != State::NotStarted)
     {
-        setError(error, QStringLiteral("Unit of work has already been started"));
-        return false;
+        setError(
+            error,
+            PersistenceErrorCode::InvalidState,
+            QStringLiteral("Unit of work has already been started"));
+        return BeginOutcome::AlreadyStarted;
     }
 
     if (!m_database.isValid() || !m_database.isOpen())
     {
-        setError(error, QStringLiteral("Database connection is not open"));
-        return false;
+        setError(
+            error,
+            PersistenceErrorCode::ConnectionUnavailable,
+            QStringLiteral("Database connection is not open"));
+        return BeginOutcome::ConnectionUnavailable;
     }
 
     if (!m_database.transaction())
     {
-        // Preserve the original error before any later cleanup can overwrite
-        // the driver error. The connection was open, so a failed BEGIN leaves
-        // it in an unsafe state; close it at the safe destructor boundary.
-        setError(error, m_database.lastError().text());
+        // Preserve a safe error before any later cleanup. The connection was
+        // open, so a failed BEGIN leaves it in an unsafe state; close it at the
+        // safe destructor boundary.
+        setError(
+            error,
+            PersistenceErrorCode::QueryFailed,
+            QStringLiteral("Database transaction could not be started"));
         m_closeConnectionOnDestruct = true;
-        return false;
+        return BeginOutcome::Failed;
     }
 
     m_state = State::Active;
-    return true;
+    return BeginOutcome::Started;
 }
 
-bool UnitOfWork::commit(QString* error)
+CommitOutcome UnitOfWork::commit(OperationError* error)
 {
     if (m_state != State::Active)
     {
-        setError(error, QStringLiteral("Unit of work is not active"));
-        return false;
+        setError(
+            error,
+            PersistenceErrorCode::InvalidState,
+            QStringLiteral("Unit of work is not active"));
+        return CommitOutcome::NotActive;
     }
 
     if (!m_database.commit())
     {
         // A failed commit does not prove that the server rolled back. Keep the
         // unknown outcome explicit and do not attempt rollback afterwards.
-        setError(error, m_database.lastError().text());
+        setError(
+            error,
+            PersistenceErrorCode::QueryFailed,
+            QStringLiteral("Database commit outcome is unknown"));
         m_state = State::CommitOutcomeUnknown;
         m_closeConnectionOnDestruct = true;
-        return false;
+        return CommitOutcome::OutcomeUnknown;
     }
 
     m_state = State::Committed;
-    return true;
+    return CommitOutcome::Committed;
 }
 
-bool UnitOfWork::rollback(QString* error)
+RollbackOutcome UnitOfWork::rollback(OperationError* error)
 {
     if (m_state == State::CommitOutcomeUnknown)
     {
-        setError(error,
-                 QStringLiteral("Commit outcome is unknown; rollback was not attempted"));
+        setError(
+            error,
+            PersistenceErrorCode::InvalidState,
+            QStringLiteral("Commit outcome is unknown; rollback was not attempted"));
         m_closeConnectionOnDestruct = true;
-        return false;
+        return RollbackOutcome::UnsafeState;
     }
 
     if (m_state == State::RollbackFailed)
     {
-        setError(error,
-                 QStringLiteral("Rollback already failed; retry was not attempted"));
+        setError(
+            error,
+            PersistenceErrorCode::InvalidState,
+            QStringLiteral("Rollback already failed; retry was not attempted"));
         m_closeConnectionOnDestruct = true;
-        return false;
+        return RollbackOutcome::UnsafeState;
     }
 
     if (m_state != State::Active)
     {
-        setError(error, QStringLiteral("Unit of work is not active"));
-        return false;
+        setError(
+            error,
+            PersistenceErrorCode::InvalidState,
+            QStringLiteral("Unit of work is not active"));
+        return RollbackOutcome::NotActive;
     }
 
     if (!m_database.rollback())
     {
-        // Preserve the original error before the shared connection is closed.
-        setError(error, m_database.lastError().text());
+        // Preserve a safe error before the shared connection is closed.
+        setError(
+            error,
+            PersistenceErrorCode::QueryFailed,
+            QStringLiteral("Database transaction could not be rolled back"));
         m_state = State::RollbackFailed;
         m_closeConnectionOnDestruct = true;
-        return false;
+        return RollbackOutcome::Failed;
     }
 
     m_state = State::RolledBack;
-    return true;
+    return RollbackOutcome::RolledBack;
+}
+
+ITransactionRepository& UnitOfWork::transactions()
+{
+    return *m_transactionRepository;
+}
+
+IBalanceRepository& UnitOfWork::balances()
+{
+    return *m_balanceRepository;
+}
+
+IJournalRepository& UnitOfWork::journals()
+{
+    return *m_journalRepository;
+}
+
+IAccountStateRepository& UnitOfWork::accounts()
+{
+    return *m_accountStateRepository;
+}
+
+IHoldRepository& UnitOfWork::holds()
+{
+    return *m_holdRepository;
 }
 
 bool UnitOfWork::isActive() const
@@ -135,13 +200,29 @@ bool UnitOfWork::isCommitOutcomeUnknown() const
     return m_state == State::CommitOutcomeUnknown;
 }
 
-QSqlDatabase& UnitOfWork::database()
-{
-    return m_database;
-}
-
-void UnitOfWork::setError(QString* error, const QString& message) const
+void UnitOfWork::setError(
+    OperationError* error,
+    PersistenceErrorCode code,
+    const QString& message) const
 {
     if (error != nullptr)
-        *error = message;
+    {
+        error->code = code;
+        error->message = message;
+    }
+}
+
+UnitOfWorkFactory::UnitOfWorkFactory(const QSqlDatabase& database)
+    : m_database(database)
+{
+}
+
+bool UnitOfWorkFactory::isConnectionAvailable() const
+{
+    return m_database.isValid() && m_database.isOpen();
+}
+
+std::unique_ptr<ITransactionUnitOfWork> UnitOfWorkFactory::create()
+{
+    return std::make_unique<UnitOfWork>(m_database);
 }

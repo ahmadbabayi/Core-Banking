@@ -1,7 +1,7 @@
 #ifndef TRANSACTIONREPOSITORY_H
 #define TRANSACTIONREPOSITORY_H
 
-#include "itransactionrepository.h"
+#include "../../application/contracts/itransactionrepository.h"
 
 #include <QSqlDatabase>
 
@@ -12,7 +12,7 @@ public:
 
     bool acquireApiIdempotencyLock(
         const QString& idempotencyKey,
-        QString* error
+        OperationError* error
     ) override;
 
     TransactionLookupResult findByIdempotencyKeyForUpdate(
@@ -23,7 +23,16 @@ public:
 
     qint64 createInitiated(
         const Transaction& transaction,
-        QString* error
+        OperationError* error
+    ) override;
+
+    bool appendDestinationEntry(
+        qint64 transactionId,
+        qint64 accountId,
+        const QString& amount,
+        qint64 currencyId,
+        const QString& description,
+        OperationError* error
     ) override;
 
     bool updateStatus(
@@ -32,7 +41,7 @@ public:
         Transaction::Status nextStatus,
         const QString& resultCode,
         const QString& resultMessage,
-        QString* error
+        OperationError* error
     ) override;
 
 private:

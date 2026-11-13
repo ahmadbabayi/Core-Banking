@@ -1,16 +1,17 @@
 #include "depositservice.h"
 
-#include "../infrastructure/repository/transactionrepository.h"
-#include "../infrastructure/unitofwork.h"
+#include "contracts/iaccountstaterepository.h"
+#include "contracts/ibalancerepository.h"
+#include "contracts/iholdrepository.h"
+#include "contracts/ijournalrepository.h"
+#include "contracts/itransactionunitofwork.h"
+#include "contracts/operationerror.h"
 #include "transactionservice.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
 #include <QRegularExpression>
-#include <QSqlError>
-#include <QSqlQuery>
-#include <QVariant>
 #include <QUuid>
 
 namespace {
@@ -52,6 +53,13 @@ DepositResult completed(qint64 id, const QString& number,
     return result;
 }
 
+QString safeError(
+    const OperationError& error,
+    const QString& fallback)
+{
+    return error.message.isEmpty() ? fallback : error.message;
+}
+
 bool normalizePositiveAmount(const QString& input, QString* normalized)
 {
     const QString value = input.trimmed();
@@ -90,106 +98,12 @@ QString fingerprintFor(qint64 accountId,
         QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
 }
 
-struct DepositAccountState
-{
-    qint64 accountId = 0;
-    qint64 currencyId = 0;
-    qint64 productId = 0;
-    qint64 customerLedgerAccountId = 0;
-    QString accountStatus;
-    QString productStatus;
-    QString customerLedgerStatus;
-    QString customerLedgerCategory;
-    bool customerLedgerPostable = false;
-    qint64 customerLedgerCurrencyId = 0;
-    QString activeHolds;
-    QString effectiveOverdraftLimit;
-};
-
-bool loadLockedAccount(QSqlDatabase& db, qint64 accountId,
-                       DepositAccountState* state, QString* error)
-{
-    QSqlQuery query(db);
-    query.prepare(
-        "SELECT "
-        " a.id, a.status, a.currency_id, a.product_id, a.ledger_account_id, "
-        " COALESCE((SELECT SUM(hs.currently_blocked_amount) "
-        "             FROM account_hold_status hs WHERE hs.account_id = a.id), 0), "
-        " CASE WHEN COALESCE((SELECT pbr.overdraft_enabled "
-        "             FROM product_balance_rule pbr "
-        "            WHERE pbr.product_id = a.product_id "
-        "              AND pbr.effective_from <= CURRENT_TIMESTAMP "
-        "              AND (pbr.effective_to IS NULL OR pbr.effective_to > CURRENT_TIMESTAMP) "
-        "            ORDER BY pbr.effective_from DESC LIMIT 1), FALSE) "
-        "       AND COALESCE((SELECT o.overdraft_enabled "
-        "             FROM account_balance_rule_override o "
-        "            WHERE o.account_id = a.id AND o.overdraft_enabled IS NOT NULL "
-        "              AND o.effective_from <= CURRENT_TIMESTAMP "
-        "              AND (o.effective_to IS NULL OR o.effective_to > CURRENT_TIMESTAMP) "
-        "            ORDER BY o.effective_from DESC LIMIT 1), TRUE) "
-        " THEN LEAST( "
-        "       COALESCE((SELECT pbr.overdraft_limit "
-        "             FROM product_balance_rule pbr "
-        "            WHERE pbr.product_id = a.product_id "
-        "              AND pbr.effective_from <= CURRENT_TIMESTAMP "
-        "              AND (pbr.effective_to IS NULL OR pbr.effective_to > CURRENT_TIMESTAMP) "
-        "            ORDER BY pbr.effective_from DESC LIMIT 1), 0), "
-        "       COALESCE((SELECT o.overdraft_limit "
-        "             FROM account_balance_rule_override o "
-        "            WHERE o.account_id = a.id AND o.overdraft_enabled IS NOT NULL "
-        "              AND o.effective_from <= CURRENT_TIMESTAMP "
-        "              AND (o.effective_to IS NULL OR o.effective_to > CURRENT_TIMESTAMP) "
-        "            ORDER BY o.effective_from DESC LIMIT 1), "
-        "          COALESCE((SELECT pbr.overdraft_limit "
-        "             FROM product_balance_rule pbr "
-        "            WHERE pbr.product_id = a.product_id "
-        "              AND pbr.effective_from <= CURRENT_TIMESTAMP "
-        "              AND (pbr.effective_to IS NULL OR pbr.effective_to > CURRENT_TIMESTAMP) "
-        "            ORDER BY pbr.effective_from DESC LIMIT 1), 0)) "
-        "      ) ELSE 0::NUMERIC END, "
-        " CASE WHEN p.status = 'ACTIVE' "
-        "           AND p.effective_from <= CURRENT_DATE "
-        "           AND (p.effective_to IS NULL OR p.effective_to >= CURRENT_DATE) "
-        "      THEN 'ACTIVE' ELSE 'NOT_EFFECTIVE' END, "
-        " la.status, la.is_postable, la.currency_id, la.account_category "
-        "FROM account a "
-        "JOIN account_balance b ON b.account_id = a.id "
-        "JOIN product p ON p.id = a.product_id "
-        "JOIN ledger_account la ON la.id = a.ledger_account_id "
-        "WHERE a.id = :account_id "
-        "FOR UPDATE OF a, b");
-
-    query.bindValue(":account_id", accountId);
-
-    if (!query.exec()) {
-        *error = query.lastError().text();
-        return false;
-    }
-
-    if (!query.next())
-        return true;
-
-    state->accountId = query.value(0).toLongLong();
-    state->accountStatus = query.value(1).toString();
-    state->currencyId = query.value(2).toLongLong();
-    state->productId = query.value(3).toLongLong();
-    state->customerLedgerAccountId = query.value(4).toLongLong();
-    state->activeHolds = query.value(5).toString();
-    state->effectiveOverdraftLimit = query.value(6).toString();
-    state->productStatus = query.value(7).toString();
-    state->customerLedgerStatus = query.value(8).toString();
-    state->customerLedgerPostable = query.value(9).toBool();
-    state->customerLedgerCurrencyId = query.value(10).toLongLong();
-    state->customerLedgerCategory = query.value(11).toString();
-
-    return true;
-}
-
 } // namespace
 
-DepositService::DepositService(const QSqlDatabase& database,
-                               const QString& settlementLedgerAccountCode)
-    : m_database(database),
+DepositService::DepositService(
+    ITransactionUnitOfWorkFactory& unitOfWorkFactory,
+    const QString& settlementLedgerAccountCode)
+    : m_unitOfWorkFactory(unitOfWorkFactory),
       m_settlementLedgerAccountCode(settlementLedgerAccountCode.trimmed())
 {
 }
@@ -199,7 +113,7 @@ DepositResult DepositService::deposit(qint64 accountId,
                                       const QString& descriptionInput,
                                       const QString& idempotencyKeyInput)
 {
-    if (!m_database.isValid() || !m_database.isOpen())
+    if (!m_unitOfWorkFactory.isConnectionAvailable())
         return failed(QStringLiteral("DATABASE_UNAVAILABLE"),
                       QStringLiteral("Database connection is not open"));
 
@@ -230,23 +144,39 @@ DepositResult DepositService::deposit(qint64 accountId,
     const QString fingerprint =
         fingerprintFor(accountId, amount, description);
 
-    UnitOfWork unitOfWork(m_database);
-    QString unitOfWorkError;
+    auto unitOfWork = m_unitOfWorkFactory.create();
 
-    if (!unitOfWork.begin(&unitOfWorkError))
-        return failed(QStringLiteral("TRANSACTION_START_FAILED"),
-                      unitOfWorkError);
+    if (!unitOfWork)
+        return failed(
+            QStringLiteral("TRANSACTION_START_FAILED"),
+            QStringLiteral("Database transaction could not be started"));
 
-    QSqlDatabase& db = unitOfWork.database();
+    OperationError unitOfWorkError;
+    const BeginOutcome beginOutcome = unitOfWork->begin(&unitOfWorkError);
 
-    TransactionRepository transactionRepository(db);
+    if (beginOutcome != BeginOutcome::Started)
+        return failed(
+            QStringLiteral("TRANSACTION_START_FAILED"),
+            safeError(
+                unitOfWorkError,
+                QStringLiteral("Database transaction could not be started")));
+
+    ITransactionRepository& transactionRepository =
+        unitOfWork->transactions();
     TransactionService transactionService(transactionRepository);
+    IBalanceRepository& balanceRepository =
+        unitOfWork->balances();
+    IJournalRepository& journalRepository =
+        unitOfWork->journals();
+    IAccountStateRepository& accountStateRepository =
+        unitOfWork->accounts();
+    IHoldRepository& holdRepository =
+        unitOfWork->holds();
 
     auto rollbackForError = [&](const QString& originalCode) {
-        QString rollbackError;
-        // Capture the rollback error before UnitOfWork's destructor closes the
-        // shared connection. Raw driver text is not logged.
-        if (!unitOfWork.rollback(&rollbackError)) {
+        OperationError rollbackError;
+
+        if (unitOfWork->rollback(&rollbackError) != RollbackOutcome::RolledBack) {
             qWarning()
                 << "Deposit rollback failed; original code:"
                 << originalCode
@@ -289,12 +219,13 @@ DepositResult DepositService::deposit(qint64 accountId,
     }
 
     if (existing.status == ExistingTransactionResult::Status::Completed) {
-        QString commitError;
+        OperationError commitError;
 
-        if (!unitOfWork.commit(&commitError))
+        if (unitOfWork->commit(&commitError) != CommitOutcome::Committed)
             return failed(
                 QStringLiteral("DATABASE_COMMIT_FAILED"),
-                commitError, existing.transactionId, existing.transactionNumber);
+                safeError(commitError, QStringLiteral("Database commit failed")),
+                existing.transactionId, existing.transactionNumber);
 
         return completed(
             existing.transactionId, existing.transactionNumber,
@@ -305,12 +236,13 @@ DepositResult DepositService::deposit(qint64 accountId,
     }
 
     if (existing.status == ExistingTransactionResult::Status::Rejected) {
-        QString commitError;
+        OperationError commitError;
 
-        if (!unitOfWork.commit(&commitError))
+        if (unitOfWork->commit(&commitError) != CommitOutcome::Committed)
             return failed(
                 QStringLiteral("DATABASE_COMMIT_FAILED"),
-                commitError, existing.transactionId, existing.transactionNumber);
+                safeError(commitError, QStringLiteral("Database commit failed")),
+                existing.transactionId, existing.transactionNumber);
 
         return rejected(
             existing.resultCode.isEmpty()
@@ -329,17 +261,17 @@ DepositResult DepositService::deposit(qint64 accountId,
 
     qint64 currencyId = 0;
     {
-        QSqlQuery currency(db);
-        currency.prepare(
-            "SELECT currency_id FROM account WHERE id = :id");
-        currency.bindValue(":id", accountId);
+        const AccountCurrencyLookupResult currency =
+            accountStateRepository.findCurrencyById(accountId);
 
-        if (!currency.exec())
+        if (currency.status == AccountCurrencyLookupResult::Status::Failed)
             return rollbackFailure(
                 QStringLiteral("ACCOUNT_LOOKUP_FAILED"),
-                currency.lastError().text());
+                safeError(
+                    currency.error,
+                    QStringLiteral("Account currency lookup failed")));
 
-        if (!currency.next()) {
+        if (currency.status == AccountCurrencyLookupResult::Status::NotFound) {
             if (!rollbackForError(QStringLiteral("ACCOUNT_NOT_FOUND")))
                 return failed(
                     QStringLiteral("DATABASE_ROLLBACK_FAILED"),
@@ -350,7 +282,7 @@ DepositResult DepositService::deposit(qint64 accountId,
                 QStringLiteral("Customer account does not exist"));
         }
 
-        currencyId = currency.value(0).toLongLong();
+        currencyId = currency.currencyId;
     }
 
     const QString transactionNumber =
@@ -386,73 +318,68 @@ DepositResult DepositService::deposit(qint64 accountId,
                 persistenceError, transactionId, transactionNumber);
         }
 
-        QString commitError;
-        if (!unitOfWork.commit(&commitError))
+        OperationError commitError;
+        if (unitOfWork->commit(&commitError) != CommitOutcome::Committed)
             return failed(
                 QStringLiteral("DATABASE_COMMIT_FAILED"),
-                commitError, transactionId, transactionNumber);
+                safeError(commitError, QStringLiteral("Database commit failed")),
+                transactionId, transactionNumber);
 
         return rejected(code, message, transactionId, transactionNumber);
     };
 
     // Lock the account and balance rows.
     {
-        QSqlQuery lock(db);
-        lock.prepare(
-            "SELECT id FROM account WHERE id = :account_id FOR UPDATE");
-        lock.bindValue(":account_id", accountId);
+        const AccountRowLockResult lock =
+            accountStateRepository.lockAccountRow(accountId);
 
-        if (!lock.exec())
+        if (lock.status == AccountRowLockResult::Status::Failed)
             return rollbackFailure(
                 QStringLiteral("ACCOUNT_LOCK_FAILED"),
-                lock.lastError().text(), transactionId, transactionNumber);
-
-        while (lock.next()) {
-            // Acquire account row lock.
-        }
+                safeError(
+                    lock.error,
+                    QStringLiteral("Account row lock failed")),
+                transactionId, transactionNumber);
     }
 
     {
-        QSqlQuery lock(db);
-        lock.prepare(
-            "SELECT account_id FROM account_balance "
-            "WHERE account_id = :account_id FOR UPDATE");
-        lock.bindValue(":account_id", accountId);
+        OperationError balanceLockError;
 
-        if (!lock.exec())
+        if (!balanceRepository.lockAccountBalanceRow(
+                accountId, &balanceLockError))
             return rollbackFailure(
                 QStringLiteral("ACCOUNT_BALANCE_LOCK_FAILED"),
-                lock.lastError().text(), transactionId, transactionNumber);
-
-        while (lock.next()) {
-            // Acquire balance row lock.
-        }
+                safeError(
+                    balanceLockError,
+                    QStringLiteral("Account balance row lock failed")),
+                transactionId, transactionNumber);
     }
 
     {
-        QSqlQuery holdLocks(db);
-        holdLocks.prepare(
-            "SELECT id FROM account_hold "
-            "WHERE account_id = :account_id ORDER BY id FOR UPDATE");
-        holdLocks.bindValue(":account_id", accountId);
+        const HoldLockResult holdLock =
+            holdRepository.lockAccountHolds(accountId);
 
-        if (!holdLocks.exec())
+        if (holdLock.status == HoldLockResult::Status::Failed)
             return rollbackFailure(
                 QStringLiteral("HOLD_LOCK_FAILED"),
-                holdLocks.lastError().text(), transactionId, transactionNumber);
-
-        while (holdLocks.next()) {
-            // Acquire existing hold locks.
-        }
+                safeError(
+                    holdLock.error,
+                    QStringLiteral("Account hold rows could not be locked")),
+                transactionId, transactionNumber);
     }
 
-    DepositAccountState account;
-    QString dbError;
+    const BalanceSnapshotResult accountResult =
+        balanceRepository.loadLockedAccountSnapshot(accountId);
 
-    if (!loadLockedAccount(db, accountId, &account, &dbError))
+    if (accountResult.status == BalanceSnapshotStatus::Failed)
         return rollbackFailure(
             QStringLiteral("ACCOUNT_LOCK_OR_READ_FAILED"),
-            dbError, transactionId, transactionNumber);
+            safeError(
+                accountResult.error,
+                QStringLiteral("Account balance state could not be loaded")),
+            transactionId, transactionNumber);
+
+    const BalanceAccountSnapshot& account = accountResult.snapshot;
 
     if (account.accountId == 0)
         return rejectAndCommit(
@@ -482,84 +409,60 @@ DepositResult DepositService::deposit(qint64 accountId,
             QStringLiteral("CUSTOMER_LEDGER_CURRENCY_MISMATCH"),
             QStringLiteral("Customer ledger currency does not match the account currency"));
 
-    qint64 settlementLedgerAccountId = 0;
-    {
-        QSqlQuery settlement(db);
-        settlement.prepare(
-            "SELECT id FROM ledger_account "
-            "WHERE code = :code AND currency_id = :currency_id "
-            "  AND account_category = 'ASSET' "
-            "  AND status = 'ACTIVE' AND is_postable = TRUE "
-            "FOR SHARE");
-        settlement.bindValue(":code", m_settlementLedgerAccountCode);
-        settlement.bindValue(":currency_id", account.currencyId);
+    const SettlementLedgerLookupResult settlement =
+        journalRepository.findSettlementLedgerForShare(
+            m_settlementLedgerAccountCode, account.currencyId);
 
-        if (!settlement.exec())
-            return rollbackFailure(
-                QStringLiteral("SETTLEMENT_LEDGER_LOOKUP_FAILED"),
-                settlement.lastError().text(), transactionId, transactionNumber);
+    if (settlement.status == SettlementLedgerLookupResult::Status::Failed)
+        return rollbackFailure(
+            QStringLiteral("SETTLEMENT_LEDGER_LOOKUP_FAILED"),
+            safeError(
+                settlement.error,
+                QStringLiteral("Settlement ledger lookup failed")),
+            transactionId, transactionNumber);
 
-        if (!settlement.next())
-            return rejectAndCommit(
-                QStringLiteral("SETTLEMENT_LEDGER_NOT_CONFIGURED"),
-                QStringLiteral("No active, postable asset settlement ledger exists for this currency"));
+    if (settlement.status == SettlementLedgerLookupResult::Status::NotFound)
+        return rejectAndCommit(
+            QStringLiteral("SETTLEMENT_LEDGER_NOT_CONFIGURED"),
+            QStringLiteral("No active, postable asset settlement ledger exists for this currency"));
 
-        settlementLedgerAccountId = settlement.value(0).toLongLong();
-    }
+    const qint64 settlementLedgerAccountId =
+        settlement.ledgerAccountId;
 
     // Initialize missing ledger balance rows before locking them.
     {
-        QSqlQuery ensure(db);
-        ensure.prepare(
-            "INSERT INTO ledger_account_balance "
-            " (ledger_account_id, debit_total, credit_total, balance) "
-            "SELECT ledger_account_id, 0, 0, 0 "
-            "FROM (SELECT DISTINCT "
-            "        unnest(ARRAY["
-            "          CAST(:customer_ledger AS BIGINT), "
-            "          CAST(:settlement_ledger AS BIGINT)"
-            "        ]) AS ledger_account_id) x "
-            "ORDER BY ledger_account_id "
-            "ON CONFLICT (ledger_account_id) DO NOTHING");
+        OperationError ledgerInitError;
 
-        ensure.bindValue(
-            ":customer_ledger", account.customerLedgerAccountId);
-        ensure.bindValue(
-            ":settlement_ledger", settlementLedgerAccountId);
-
-        if (!ensure.exec())
+        if (!journalRepository.ensureLedgerBalanceRows(
+                account.customerLedgerAccountId,
+                settlementLedgerAccountId,
+                &ledgerInitError))
             return rollbackFailure(
                 QStringLiteral("LEDGER_BALANCE_INIT_FAILED"),
-                ensure.lastError().text(), transactionId, transactionNumber);
+                safeError(
+                    ledgerInitError,
+                    QStringLiteral("Ledger balance initialization failed")),
+                transactionId, transactionNumber);
     }
 
     {
-        QSqlQuery lock(db);
-        lock.prepare(
-            "SELECT ledger_account_id FROM ledger_account_balance "
-            "WHERE ledger_account_id IN ("
-            " CAST(:customer_ledger AS BIGINT), "
-            " CAST(:settlement_ledger AS BIGINT)) "
-            "ORDER BY ledger_account_id FOR UPDATE");
+        const LedgerBalanceLockResult lockResult =
+            journalRepository.lockLedgerBalanceRows(
+                account.customerLedgerAccountId,
+                settlementLedgerAccountId);
 
-        lock.bindValue(
-            ":customer_ledger", account.customerLedgerAccountId);
-        lock.bindValue(
-            ":settlement_ledger", settlementLedgerAccountId);
-
-        if (!lock.exec())
+        if (lockResult.status == LedgerBalanceLockResult::Status::Failed)
             return rollbackFailure(
                 QStringLiteral("LEDGER_BALANCE_LOCK_FAILED"),
-                lock.lastError().text(), transactionId, transactionNumber);
-
-        int lockedCount = 0;
-        while (lock.next())
-            ++lockedCount;
+                safeError(
+                    lockResult.error,
+                    QStringLiteral("Ledger balance rows could not be locked")),
+                transactionId, transactionNumber);
 
         const int expected =
             account.customerLedgerAccountId == settlementLedgerAccountId ? 1 : 2;
 
-        if (lockedCount != expected)
+        if (lockResult.lockedCount != expected)
             return rollbackFailure(
                 QStringLiteral("LEDGER_BALANCE_LOCK_FAILED"),
                 QStringLiteral("Could not lock all ledger balance rows"),
@@ -568,103 +471,81 @@ DepositResult DepositService::deposit(qint64 accountId,
 
     // Record the customer-facing deposit entry.
     {
-        QSqlQuery entry(db);
-        entry.prepare(
-            "INSERT INTO transaction_entry "
-            " (transaction_id, account_id, entry_type, amount, currency_id, "
-            "  sequence_no, description) "
-            "VALUES (:transaction_id, :account_id, 'DESTINATION', :amount, "
-            " :currency_id, 1, :description)");
+        OperationError entryError;
 
-        entry.bindValue(":transaction_id", transactionId);
-        entry.bindValue(":account_id", accountId);
-        entry.bindValue(":amount", amount);
-        entry.bindValue(":currency_id", account.currencyId);
-        entry.bindValue(
-            ":description",
-            description.isEmpty()
-                ? QVariant(QStringLiteral("Customer deposit"))
-                : QVariant(description));
-
-        if (!entry.exec())
+        if (!transactionRepository.appendDestinationEntry(
+                transactionId,
+                accountId,
+                amount,
+                account.currencyId,
+                description,
+                &entryError))
+        {
             return rollbackFailure(
                 QStringLiteral("TRANSACTION_ENTRY_CREATE_FAILED"),
-                entry.lastError().text(), transactionId, transactionNumber);
+                safeError(
+                    entryError,
+                    QStringLiteral("Transaction entry could not be created")),
+                transactionId, transactionNumber);
+        }
     }
+
+    const QString ledgerDescription = description.isEmpty()
+        ? QStringLiteral("Customer deposit")
+        : description;
 
     qint64 journalId = 0;
     {
-        QSqlQuery journal(db);
-        journal.prepare(
-            "INSERT INTO journal "
-            " (transaction_id, posting_date, value_date, status, description) "
-            "VALUES (:transaction_id, CURRENT_DATE, CURRENT_DATE, "
-            " 'DRAFT', :description) RETURNING id");
+        OperationError journalError;
+        const JournalCreateResult journalResult =
+            journalRepository.createDraft(
+                transactionId, ledgerDescription, &journalError);
 
-        journal.bindValue(":transaction_id", transactionId);
-        journal.bindValue(
-            ":description",
-            description.isEmpty()
-                ? QVariant(QStringLiteral("Customer deposit"))
-                : QVariant(description));
-
-        if (!journal.exec() || !journal.next())
+        if (journalResult.status != JournalCreateResult::Status::Created)
             return rollbackFailure(
                 QStringLiteral("JOURNAL_CREATE_FAILED"),
-                journal.lastError().text(), transactionId, transactionNumber);
+                safeError(
+                    journalError,
+                    QStringLiteral("Journal could not be created")),
+                transactionId, transactionNumber);
 
-        journalId = journal.value(0).toLongLong();
+        journalId = journalResult.journalId;
     }
 
     {
-        QSqlQuery entries(db);
-        entries.prepare(
-            "INSERT INTO journal_entry "
-            " (journal_id, sequence_no, ledger_account_id, account_id, "
-            "  currency_id, debit_amount, credit_amount, description) "
-            "VALUES "
-            " (:journal_id, 1, :settlement_ledger, NULL, :currency_id, "
-            "  :debit_amount, 0, :cash_description), "
-            " (:journal_id, 2, :customer_ledger, :account_id, :currency_id, "
-            "  0, :credit_amount, :customer_description)");
+        OperationError entriesError;
 
-        entries.bindValue(":journal_id", journalId);
-        entries.bindValue(":settlement_ledger", settlementLedgerAccountId);
-        entries.bindValue(":customer_ledger", account.customerLedgerAccountId);
-        entries.bindValue(":currency_id", account.currencyId);
-        entries.bindValue(":debit_amount", amount);
-        entries.bindValue(":credit_amount", amount);
-        entries.bindValue(":account_id", accountId);
-
-        const QVariant entryDescription = description.isEmpty()
-            ? QVariant(QStringLiteral("Customer deposit"))
-            : QVariant(description);
-
-        entries.bindValue(":cash_description", entryDescription);
-        entries.bindValue(":customer_description", entryDescription);
-
-        if (!entries.exec())
+        if (!journalRepository.createDepositEntries(
+                journalId,
+                settlementLedgerAccountId,
+                account.customerLedgerAccountId,
+                accountId,
+                account.currencyId,
+                amount,
+                ledgerDescription,
+                &entriesError))
             return rollbackFailure(
                 QStringLiteral("JOURNAL_ENTRY_CREATE_FAILED"),
-                entries.lastError().text(), transactionId, transactionNumber);
+                safeError(
+                    entriesError,
+                    QStringLiteral("Journal entries could not be created")),
+                transactionId, transactionNumber);
     }
 
     // Verify that the journal has exactly two balanced lines.
     {
-        QSqlQuery check(db);
-        check.prepare(
-            "SELECT COUNT(*), "
-            "       COALESCE(SUM(debit_amount), 0) = "
-            "       COALESCE(SUM(credit_amount), 0) "
-            "FROM journal_entry WHERE journal_id = :journal_id");
-        check.bindValue(":journal_id", journalId);
+        const JournalBalanceReadResult check =
+            journalRepository.readJournalBalance(journalId);
 
-        if (!check.exec() || !check.next())
+        if (check.status == JournalBalanceReadResult::Status::Failed)
             return rollbackFailure(
                 QStringLiteral("JOURNAL_BALANCE_CHECK_FAILED"),
-                check.lastError().text(), transactionId, transactionNumber);
+                safeError(
+                    check.error,
+                    QStringLiteral("Journal balance check failed")),
+                transactionId, transactionNumber);
 
-        if (check.value(0).toInt() != 2 || !check.value(1).toBool())
+        if (check.entryCount != 2 || !check.debitEqualsCredit)
             return rollbackFailure(
                 QStringLiteral("JOURNAL_NOT_BALANCED"),
                 QStringLiteral("Journal debit and credit totals do not match"),
@@ -673,101 +554,68 @@ DepositResult DepositService::deposit(qint64 accountId,
 
     // Deposit increases the customer's deposit liability and availability.
     {
-        QSqlQuery balance(db);
-        balance.prepare(
-            "UPDATE account_balance SET "
-            " ledger_balance = ledger_balance + CAST(:ledger_amount AS NUMERIC), "
-            " available_balance = ledger_balance + CAST(:available_amount AS NUMERIC) "
-            "   - CAST(:holds AS NUMERIC) + CAST(:overdraft_limit AS NUMERIC), "
-            " updated_at = CURRENT_TIMESTAMP "
-            "WHERE account_id = :account_id");
+        OperationError balanceUpdateError;
 
-        balance.bindValue(":ledger_amount", amount);
-        balance.bindValue(":available_amount", amount);
-        balance.bindValue(":holds", account.activeHolds);
-        balance.bindValue(":overdraft_limit", account.effectiveOverdraftLimit);
-        balance.bindValue(":account_id", accountId);
-
-        if (!balance.exec() || balance.numRowsAffected() != 1)
+        if (!balanceRepository.applyDepositIncrement(
+                accountId,
+                amount,
+                account.activeHolds,
+                account.effectiveOverdraftLimit,
+                &balanceUpdateError))
             return rollbackFailure(
                 QStringLiteral("ACCOUNT_BALANCE_UPDATE_FAILED"),
-                balance.lastError().text(), transactionId, transactionNumber);
+                safeError(
+                    balanceUpdateError,
+                    QStringLiteral("Account balance update failed")),
+                transactionId, transactionNumber);
     }
 
     // Update ledger totals atomically.
     {
-        QSqlQuery ledgerUpdate(db);
+        OperationError ledgerUpdateError;
+        const LedgerBalanceUpdateOutcome outcome =
+            journalRepository.applyLedgerDeltas(
+                settlementLedgerAccountId,
+                account.customerLedgerAccountId,
+                amount,
+                &ledgerUpdateError);
 
-        const QString sql =
-            "WITH deltas AS ( "
-            "  SELECT ledger_account_id, "
-            "         SUM(debit_delta) AS debit_delta, "
-            "         SUM(credit_delta) AS credit_delta "
-            "  FROM (VALUES "
-            "    (CAST(:settlement_ledger AS BIGINT), "
-            "     CAST(:cash_debit AS NUMERIC), CAST(0 AS NUMERIC)), "
-            "    (CAST(:customer_ledger AS BIGINT), "
-            "     CAST(0 AS NUMERIC), CAST(:customer_credit AS NUMERIC)) "
-            "  ) AS v(ledger_account_id, debit_delta, credit_delta) "
-            "  GROUP BY ledger_account_id "
-            ") "
-            "INSERT INTO ledger_account_balance "
-            " (ledger_account_id, debit_total, credit_total, balance, updated_at) "
-            "SELECT ledger_account_id, debit_delta, credit_delta, "
-            "       debit_delta - credit_delta, CURRENT_TIMESTAMP "
-            "FROM deltas "
-            "WHERE TRUE "
-            "ORDER BY ledger_account_id "
-            "ON CONFLICT (ledger_account_id) DO UPDATE SET "
-            " debit_total = ledger_account_balance.debit_total + EXCLUDED.debit_total, "
-            " credit_total = ledger_account_balance.credit_total + EXCLUDED.credit_total, "
-            " balance = ledger_account_balance.balance + EXCLUDED.balance, "
-            " updated_at = CURRENT_TIMESTAMP";
-
-        if (!ledgerUpdate.prepare(sql)) {
+        if (outcome == LedgerBalanceUpdateOutcome::PrepareFailed)
             return rollbackFailure(
                 QStringLiteral("LEDGER_BALANCE_PREPARE_FAILED"),
-                ledgerUpdate.lastError().text(),
+                safeError(
+                    ledgerUpdateError,
+                    QStringLiteral("Ledger balance update could not be prepared")),
                 transactionId, transactionNumber);
-        }
 
-        ledgerUpdate.bindValue(
-            ":settlement_ledger", settlementLedgerAccountId);
-        ledgerUpdate.bindValue(
-            ":customer_ledger", account.customerLedgerAccountId);
-        ledgerUpdate.bindValue(":cash_debit", amount);
-        ledgerUpdate.bindValue(":customer_credit", amount);
-
-        if (!ledgerUpdate.exec()) {
+        if (outcome == LedgerBalanceUpdateOutcome::UpdateFailed)
             return rollbackFailure(
                 QStringLiteral("LEDGER_BALANCE_UPDATE_FAILED"),
-                ledgerUpdate.lastError().text(),
+                safeError(
+                    ledgerUpdateError,
+                    QStringLiteral("Ledger balance update failed")),
                 transactionId, transactionNumber);
-        }
     }
 
     // Only post a journal after checking its balance.
     {
-        QSqlQuery post(db);
-        post.prepare(
-            "UPDATE journal j SET "
-            " status = 'POSTED', updated_at = CURRENT_TIMESTAMP "
-            "WHERE j.id = :journal_id AND j.status = 'DRAFT' "
-            "AND (SELECT COUNT(*) FROM journal_entry je "
-            "     WHERE je.journal_id = j.id) = 2 "
-            "AND (SELECT COALESCE(SUM(je.debit_amount), 0) "
-            "     FROM journal_entry je WHERE je.journal_id = j.id) "
-            "  = (SELECT COALESCE(SUM(je.credit_amount), 0) "
-            "     FROM journal_entry je WHERE je.journal_id = j.id)");
+        const JournalPostResult postResult =
+            journalRepository.postIfBalanced(journalId);
 
-        post.bindValue(":journal_id", journalId);
-
-        if (!post.exec() || post.numRowsAffected() != 1)
+        if (postResult.status == JournalPostResult::Status::Failed)
             return rollbackFailure(
                 QStringLiteral("JOURNAL_POST_FAILED"),
-                post.lastError().text().isEmpty()
-                    ? QStringLiteral("Journal is unbalanced or could not be posted")
-                    : post.lastError().text(),
+                safeError(
+                    postResult.error,
+                    QStringLiteral("Journal could not be posted")),
+                transactionId, transactionNumber);
+
+        if (postResult.status == JournalPostResult::Status::NotPosted)
+            return rollbackFailure(
+                QStringLiteral("JOURNAL_POST_FAILED"),
+                safeError(
+                    postResult.error,
+                    QStringLiteral("Journal is unbalanced or could not be posted")),
                 transactionId, transactionNumber);
     }
 
@@ -781,11 +629,12 @@ DepositResult DepositService::deposit(qint64 accountId,
             QStringLiteral("TRANSACTION_COMPLETE_FAILED"),
             completionError, transactionId, transactionNumber);
 
-    QString commitError;
-    if (!unitOfWork.commit(&commitError))
+    OperationError commitError;
+    if (unitOfWork->commit(&commitError) != CommitOutcome::Committed)
         return failed(
             QStringLiteral("DATABASE_COMMIT_FAILED"),
-            commitError, transactionId, transactionNumber);
+            safeError(commitError, QStringLiteral("Database commit failed")),
+            transactionId, transactionNumber);
 
     return completed(transactionId, transactionNumber);
 }

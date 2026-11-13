@@ -1,9 +1,10 @@
 #ifndef DEPOSITSERVICE_H
 #define DEPOSITSERVICE_H
 
-#include <QSqlDatabase>
 #include <QString>
 #include <QtGlobal>
+
+class ITransactionUnitOfWorkFactory;
 
 struct DepositResult
 {
@@ -25,7 +26,7 @@ struct DepositResult
 class DepositService
 {
 public:
-    DepositService(const QSqlDatabase& database,
+    DepositService(ITransactionUnitOfWorkFactory& unitOfWorkFactory,
                    const QString& settlementLedgerAccountCode);
 
     DepositResult deposit(qint64 accountId,
@@ -34,7 +35,7 @@ public:
                           const QString& idempotencyKey);
 
 private:
-    QSqlDatabase m_database;
+    ITransactionUnitOfWorkFactory& m_unitOfWorkFactory;
     QString m_settlementLedgerAccountCode;
 };
 

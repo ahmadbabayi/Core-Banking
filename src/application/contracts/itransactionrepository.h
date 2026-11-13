@@ -2,6 +2,7 @@
 #define ITRANSACTIONREPOSITORY_H
 
 #include "../../domain/transaction.h"
+#include "operationerror.h"
 
 #include <QString>
 #include <QtGlobal>
@@ -18,7 +19,7 @@ struct TransactionLookupResult
 
     Status status = Status::Failed;
     std::optional<Transaction> transaction;
-    QString error;
+    OperationError error;
 };
 
 class ITransactionRepository
@@ -28,7 +29,7 @@ public:
 
     virtual bool acquireApiIdempotencyLock(
         const QString& idempotencyKey,
-        QString* error
+        OperationError* error
     ) = 0;
 
     virtual TransactionLookupResult findByIdempotencyKeyForUpdate(
@@ -39,7 +40,16 @@ public:
 
     virtual qint64 createInitiated(
         const Transaction& transaction,
-        QString* error
+        OperationError* error
+    ) = 0;
+
+    virtual bool appendDestinationEntry(
+        qint64 transactionId,
+        qint64 accountId,
+        const QString& amount,
+        qint64 currencyId,
+        const QString& description,
+        OperationError* error
     ) = 0;
 
     virtual bool updateStatus(
@@ -48,7 +58,7 @@ public:
         Transaction::Status nextStatus,
         const QString& resultCode,
         const QString& resultMessage,
-        QString* error
+        OperationError* error
     ) = 0;
 };
 

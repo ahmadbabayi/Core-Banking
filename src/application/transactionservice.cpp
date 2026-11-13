@@ -9,6 +9,13 @@ void setError(QString* error, const QString& message)
         *error = message;
 }
 
+QString safeMessage(const OperationError& error)
+{
+    return error.message.isEmpty()
+        ? QStringLiteral("Persistence operation failed")
+        : error.message;
+}
+
 } // namespace
 
 TransactionService::TransactionService(ITransactionRepository& repository)
@@ -23,12 +30,12 @@ ExistingTransactionResult TransactionService::lockAndLookup(
 {
     ExistingTransactionResult result;
 
-    QString lockError;
+    OperationError lockError;
     if (!m_repository.acquireApiIdempotencyLock(idempotencyKey, &lockError))
     {
         result.status = ExistingTransactionResult::Status::Failed;
         result.errorCode = QStringLiteral("IDEMPOTENCY_LOCK_FAILED");
-        result.errorMessage = lockError;
+        result.errorMessage = safeMessage(lockError);
         return result;
     }
 
@@ -39,7 +46,7 @@ ExistingTransactionResult TransactionService::lockAndLookup(
     {
         result.status = ExistingTransactionResult::Status::Failed;
         result.errorCode = QStringLiteral("IDEMPOTENCY_LOOKUP_FAILED");
-        result.errorMessage = lookup.error;
+        result.errorMessage = safeMessage(lookup.error);
         return result;
     }
 
@@ -136,13 +143,13 @@ qint64 TransactionService::createProcessing(
         QDateTime()
     );
 
-    QString repositoryError;
+    OperationError repositoryError;
     const qint64 transactionId =
         m_repository.createInitiated(transaction, &repositoryError);
 
     if (transactionId <= 0)
     {
-        setError(error, repositoryError);
+        setError(error, safeMessage(repositoryError));
         return 0;
     }
 
@@ -154,7 +161,7 @@ qint64 TransactionService::createProcessing(
             QString(),
             &repositoryError))
     {
-        setError(error, repositoryError);
+        setError(error, safeMessage(repositoryError));
         return 0;
     }
 
@@ -175,13 +182,20 @@ bool TransactionService::complete(
         return false;
     }
 
-    return m_repository.updateStatus(
-        transactionId,
-        Transaction::Status::PROCESSING,
-        Transaction::Status::COMPLETED,
-        resultCode,
-        resultMessage,
-        error);
+    OperationError repositoryError;
+    if (!m_repository.updateStatus(
+            transactionId,
+            Transaction::Status::PROCESSING,
+            Transaction::Status::COMPLETED,
+            resultCode,
+            resultMessage,
+            &repositoryError))
+    {
+        setError(error, safeMessage(repositoryError));
+        return false;
+    }
+
+    return true;
 }
 
 bool TransactionService::reject(
@@ -198,11 +212,18 @@ bool TransactionService::reject(
         return false;
     }
 
-    return m_repository.updateStatus(
-        transactionId,
-        Transaction::Status::PROCESSING,
-        Transaction::Status::REJECTED,
-        resultCode,
-        resultMessage,
-        error);
+    OperationError repositoryError;
+    if (!m_repository.updateStatus(
+            transactionId,
+            Transaction::Status::PROCESSING,
+            Transaction::Status::REJECTED,
+            resultCode,
+            resultMessage,
+            &repositoryError))
+    {
+        setError(error, safeMessage(repositoryError));
+        return false;
+    }
+
+    return true;
 }
