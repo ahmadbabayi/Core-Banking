@@ -146,6 +146,18 @@ public:
         return true;
     }
 
+    bool appendSourceEntry(
+        qint64,
+        qint64,
+        const QString&,
+        qint64,
+        const QString&,
+        OperationError*) override
+    {
+        log.add(QStringLiteral("transactions.appendSourceEntry"));
+        return true;
+    }
+
     bool updateStatus(
         qint64,
         Transaction::Status,
@@ -230,6 +242,29 @@ public:
     bool snapshotFailed = false;
     QString lastDepositAmount;
     CallLog& log;
+
+    WithdrawalFundsResult checkWithdrawalFunds(
+        const QString&,
+        const QString&,
+        const QString&,
+        const QString&,
+        const QString&) override
+    {
+        WithdrawalFundsResult result;
+        result.status = WithdrawalFundsStatus::WithinDepositFunds;
+        return result;
+    }
+
+    bool applyWithdrawalDecrement(
+        qint64,
+        const QString&,
+        const QString&,
+        const QString&,
+        OperationError*) override
+    {
+        log.add(QStringLiteral("balances.applyWithdrawal"));
+        return true;
+    }
 };
 
 class FakeJournalRepository : public IJournalRepository
@@ -340,6 +375,30 @@ public:
 
     bool postFailed = false;
     CallLog& log;
+
+    bool createWithdrawalEntries(
+        qint64,
+        qint64,
+        qint64,
+        qint64,
+        qint64,
+        const QString&,
+        const QString&,
+        OperationError*) override
+    {
+        log.add(QStringLiteral("journals.createWithdrawalEntries"));
+        return true;
+    }
+
+    LedgerBalanceUpdateOutcome applyWithdrawalLedgerDeltas(
+        qint64,
+        qint64,
+        const QString&,
+        OperationError*) override
+    {
+        log.add(QStringLiteral("journals.applyWithdrawalLedgerDeltas"));
+        return LedgerBalanceUpdateOutcome::Updated;
+    }
 };
 
 class FakeAccountStateRepository : public IAccountStateRepository

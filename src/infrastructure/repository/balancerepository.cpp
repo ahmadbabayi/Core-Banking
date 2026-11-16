@@ -99,7 +99,22 @@ BalanceSnapshotResult BalanceRepository::loadLockedAccountSnapshot(
             "           AND p.effective_from <= CURRENT_DATE "
             "           AND (p.effective_to IS NULL OR p.effective_to >= CURRENT_DATE) "
             "      THEN 'ACTIVE' ELSE 'NOT_EFFECTIVE' END, "
-            " la.status, la.is_postable, la.currency_id, la.account_category "
+            " la.status, la.is_postable, la.currency_id, la.account_category, "
+            " b.ledger_balance, "
+            " GREATEST( "
+            "   COALESCE((SELECT pbr.minimum_balance "
+            "             FROM product_balance_rule pbr "
+            "            WHERE pbr.product_id = a.product_id "
+            "              AND pbr.effective_from <= CURRENT_TIMESTAMP "
+            "              AND (pbr.effective_to IS NULL OR pbr.effective_to > CURRENT_TIMESTAMP) "
+            "            ORDER BY pbr.effective_from DESC LIMIT 1), 0), "
+            "   COALESCE((SELECT o.minimum_balance "
+            "             FROM account_balance_rule_override o "
+            "            WHERE o.account_id = a.id AND o.minimum_balance IS NOT NULL "
+            "              AND o.effective_from <= CURRENT_TIMESTAMP "
+            "              AND (o.effective_to IS NULL OR o.effective_to > CURRENT_TIMESTAMP) "
+            "            ORDER BY o.effective_from DESC LIMIT 1), 0) "
+            " ) "
             "FROM account a "
             "JOIN account_balance b ON b.account_id = a.id "
             "JOIN product p ON p.id = a.product_id "
@@ -142,6 +157,8 @@ BalanceSnapshotResult BalanceRepository::loadLockedAccountSnapshot(
     s.customerLedgerPostable = query.value(9).toBool();
     s.customerLedgerCurrencyId = query.value(10).toLongLong();
     s.customerLedgerCategory = query.value(11).toString();
+    s.ledgerBalance = query.value(12).toString();
+    s.minimumBalance = query.value(13).toString();
 
     return result;
 }
@@ -159,6 +176,99 @@ bool BalanceRepository::applyDepositIncrement(
             "UPDATE account_balance SET "
             " ledger_balance = ledger_balance + CAST(:ledger_amount AS NUMERIC), "
             " available_balance = ledger_balance + CAST(:available_amount AS NUMERIC) "
+            "   - CAST(:holds AS NUMERIC) + CAST(:overdraft_limit AS NUMERIC), "
+            " updated_at = CURRENT_TIMESTAMP "
+            "WHERE account_id = :account_id"));
+
+    query.bindValue(QStringLiteral(":ledger_amount"), amount);
+    query.bindValue(QStringLiteral(":available_amount"), amount);
+    query.bindValue(QStringLiteral(":holds"), activeHolds);
+    query.bindValue(
+        QStringLiteral(":overdraft_limit"), effectiveOverdraftLimit);
+    query.bindValue(QStringLiteral(":account_id"), accountId);
+
+    if (!query.exec())
+    {
+        setError(
+            error,
+            PersistenceErrorCode::QueryFailed,
+            QStringLiteral("Account balance update failed"));
+        return false;
+    }
+
+    if (query.numRowsAffected() != 1)
+    {
+        setError(
+            error,
+            PersistenceErrorCode::InvalidState,
+            QStringLiteral("Account balance update failed"));
+        return false;
+    }
+
+    return true;
+}
+
+WithdrawalFundsResult BalanceRepository::checkWithdrawalFunds(
+    const QString& amount,
+    const QString& ledgerBalance,
+    const QString& activeHolds,
+    const QString& minimumBalance,
+    const QString& effectiveOverdraftLimit)
+{
+    WithdrawalFundsResult result;
+
+    QSqlQuery query(db);
+    query.prepare(
+        QStringLiteral(
+            "SELECT CAST(:deposit_amount AS NUMERIC) <= "
+            "       CAST(:deposit_balance AS NUMERIC) - CAST(:deposit_holds AS NUMERIC) - CAST(:deposit_minimum AS NUMERIC), "
+            "       CAST(:capacity_amount AS NUMERIC) <= "
+            "       CAST(:capacity_balance AS NUMERIC) - CAST(:capacity_holds AS NUMERIC) "
+            "       + CAST(:overdraft_limit AS NUMERIC) - CAST(:capacity_minimum AS NUMERIC)"));
+
+    query.bindValue(QStringLiteral(":deposit_amount"), amount);
+    query.bindValue(QStringLiteral(":deposit_balance"), ledgerBalance);
+    query.bindValue(QStringLiteral(":deposit_holds"), activeHolds);
+    query.bindValue(QStringLiteral(":deposit_minimum"), minimumBalance);
+    query.bindValue(QStringLiteral(":capacity_amount"), amount);
+    query.bindValue(QStringLiteral(":capacity_balance"), ledgerBalance);
+    query.bindValue(QStringLiteral(":capacity_holds"), activeHolds);
+    query.bindValue(QStringLiteral(":capacity_minimum"), minimumBalance);
+    query.bindValue(
+        QStringLiteral(":overdraft_limit"), effectiveOverdraftLimit);
+
+    if (!query.exec() || !query.next())
+    {
+        result.status = WithdrawalFundsStatus::Failed;
+        result.error.code = PersistenceErrorCode::QueryFailed;
+        result.error.message =
+            QStringLiteral("Withdrawal funds check failed");
+        return result;
+    }
+
+    if (query.value(0).toBool())
+        result.status = WithdrawalFundsStatus::WithinDepositFunds;
+    else if (query.value(1).toBool())
+        result.status = WithdrawalFundsStatus::WithinOverdraftCapacity;
+    else
+        result.status = WithdrawalFundsStatus::Insufficient;
+
+    return result;
+}
+
+bool BalanceRepository::applyWithdrawalDecrement(
+    qint64 accountId,
+    const QString& amount,
+    const QString& activeHolds,
+    const QString& effectiveOverdraftLimit,
+    OperationError* error)
+{
+    QSqlQuery query(db);
+    query.prepare(
+        QStringLiteral(
+            "UPDATE account_balance SET "
+            " ledger_balance = ledger_balance - CAST(:ledger_amount AS NUMERIC), "
+            " available_balance = ledger_balance - CAST(:available_amount AS NUMERIC) "
             "   - CAST(:holds AS NUMERIC) + CAST(:overdraft_limit AS NUMERIC), "
             " updated_at = CURRENT_TIMESTAMP "
             "WHERE account_id = :account_id"));

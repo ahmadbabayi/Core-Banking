@@ -15,6 +15,7 @@
 #include "accountopeningcontroller.h"
 #include "transfercontroller.h"
 #include "depositcontroller.h"
+#include "withdrawalcontroller.h"
 #include "holdcontroller.h"
 
 class HttpRouter
@@ -36,6 +37,7 @@ public:
 
     void setTransferController(TransferController* controller);
     void setDepositController(DepositController* controller);
+    void setWithdrawalController(WithdrawalController* controller);
     void setHoldController(HoldController* controller);
 
     HttpResponse route(
@@ -60,6 +62,7 @@ private:
 
     TransferController* transferController = nullptr;
     DepositController* depositController = nullptr;
+    WithdrawalController* withdrawalController = nullptr;
     HoldController* holdController = nullptr;
 };
 

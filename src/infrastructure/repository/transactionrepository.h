@@ -35,6 +35,15 @@ public:
         OperationError* error
     ) override;
 
+    bool appendSourceEntry(
+        qint64 transactionId,
+        qint64 accountId,
+        const QString& amount,
+        qint64 currencyId,
+        const QString& description,
+        OperationError* error
+    ) override;
+
     bool updateStatus(
         qint64 transactionId,
         Transaction::Status expectedStatus,

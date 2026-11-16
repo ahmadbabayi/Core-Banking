@@ -534,6 +534,44 @@ bool TransactionRepository::appendDestinationEntry(
     return true;
 }
 
+bool TransactionRepository::appendSourceEntry(
+    qint64 transactionId,
+    qint64 accountId,
+    const QString& amount,
+    qint64 currencyId,
+    const QString& description,
+    OperationError* error)
+{
+    QSqlQuery query(db);
+    query.prepare(
+        "INSERT INTO transaction_entry "
+        " (transaction_id, account_id, entry_type, amount, currency_id, "
+        "  sequence_no, description) "
+        "VALUES (:transaction_id, :account_id, 'SOURCE', :amount, "
+        " :currency_id, 1, :description)");
+
+    query.bindValue(QStringLiteral(":transaction_id"), transactionId);
+    query.bindValue(QStringLiteral(":account_id"), accountId);
+    query.bindValue(QStringLiteral(":amount"), amount);
+    query.bindValue(QStringLiteral(":currency_id"), currencyId);
+    query.bindValue(
+        QStringLiteral(":description"),
+        description.isEmpty()
+            ? QVariant(QStringLiteral("Customer withdrawal"))
+            : QVariant(description));
+
+    if (!query.exec())
+    {
+        setError(
+            error,
+            classifySqlError(query.lastError()),
+            QStringLiteral("Transaction entry insert failed"));
+        return false;
+    }
+
+    return true;
+}
+
 bool TransactionRepository::updateStatus(
     qint64 transactionId,
     Transaction::Status expectedStatus,

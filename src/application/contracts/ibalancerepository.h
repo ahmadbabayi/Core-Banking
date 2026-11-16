@@ -20,6 +20,22 @@ struct BalanceAccountSnapshot
     qint64 customerLedgerCurrencyId = 0;
     QString activeHolds;
     QString effectiveOverdraftLimit;
+    QString ledgerBalance;
+    QString minimumBalance;
+};
+
+enum class WithdrawalFundsStatus
+{
+    WithinDepositFunds,
+    WithinOverdraftCapacity,
+    Insufficient,
+    Failed
+};
+
+struct WithdrawalFundsResult
+{
+    WithdrawalFundsStatus status = WithdrawalFundsStatus::Failed;
+    OperationError error;
 };
 
 enum class BalanceSnapshotStatus
@@ -51,6 +67,22 @@ public:
     ) = 0;
 
     virtual bool applyDepositIncrement(
+        qint64 accountId,
+        const QString& amount,
+        const QString& activeHolds,
+        const QString& effectiveOverdraftLimit,
+        OperationError* error
+    ) = 0;
+
+    virtual WithdrawalFundsResult checkWithdrawalFunds(
+        const QString& amount,
+        const QString& ledgerBalance,
+        const QString& activeHolds,
+        const QString& minimumBalance,
+        const QString& effectiveOverdraftLimit
+    ) = 0;
+
+    virtual bool applyWithdrawalDecrement(
         qint64 accountId,
         const QString& amount,
         const QString& activeHolds,

@@ -118,11 +118,29 @@ public:
         OperationError* error
     ) = 0;
 
+    virtual bool createWithdrawalEntries(
+        qint64 journalId,
+        qint64 settlementLedgerAccountId,
+        qint64 customerLedgerAccountId,
+        qint64 accountId,
+        qint64 currencyId,
+        const QString& amount,
+        const QString& description,
+        OperationError* error
+    ) = 0;
+
     virtual JournalBalanceReadResult readJournalBalance(
         qint64 journalId
     ) = 0;
 
     virtual LedgerBalanceUpdateOutcome applyLedgerDeltas(
+        qint64 settlementLedgerAccountId,
+        qint64 customerLedgerAccountId,
+        const QString& amount,
+        OperationError* error
+    ) = 0;
+
+    virtual LedgerBalanceUpdateOutcome applyWithdrawalLedgerDeltas(
         qint64 settlementLedgerAccountId,
         qint64 customerLedgerAccountId,
         const QString& amount,

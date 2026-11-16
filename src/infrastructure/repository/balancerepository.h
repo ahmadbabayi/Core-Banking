@@ -27,6 +27,22 @@ public:
         OperationError* error
     ) override;
 
+    WithdrawalFundsResult checkWithdrawalFunds(
+        const QString& amount,
+        const QString& ledgerBalance,
+        const QString& activeHolds,
+        const QString& minimumBalance,
+        const QString& effectiveOverdraftLimit
+    ) override;
+
+    bool applyWithdrawalDecrement(
+        qint64 accountId,
+        const QString& amount,
+        const QString& activeHolds,
+        const QString& effectiveOverdraftLimit,
+        OperationError* error
+    ) override;
+
 private:
     QSqlDatabase db;
 };

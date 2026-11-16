@@ -44,6 +44,11 @@ void HttpRouter::setDepositController(DepositController* controller)
     depositController = controller;
 }
 
+void HttpRouter::setWithdrawalController(WithdrawalController* controller)
+{
+    withdrawalController = controller;
+}
+
 void HttpRouter::setHoldController(HoldController* controller)
 {
     holdController = controller;
@@ -118,6 +123,20 @@ HttpResponse HttpRouter::route(
         }
 
         return depositController->deposit(body);
+    }
+
+    // Withdrawals
+    if (method == "POST" && path == "/api/v1/withdrawals") {
+        if (withdrawalController == nullptr) {
+            return {
+                "503 Service Unavailable",
+                ApiResponse::error(
+                    "WITHDRAWAL_SERVICE_UNAVAILABLE",
+                    "Withdrawal service is not configured")
+            };
+        }
+
+        return withdrawalController->withdraw(body);
     }
 
     // Holds

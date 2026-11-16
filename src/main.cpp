@@ -31,6 +31,7 @@
 #include "application/accountservice.h"
 #include "application/transferservice.h"
 #include "application/depositservice.h"
+#include "application/withdrawalservice.h"
 #include "application/holdservice.h"
 
 #include "web/customercontroller.h"
@@ -47,6 +48,7 @@
 #include "web/accountopeningcontroller.h"
 #include "web/transfercontroller.h"
 #include "web/depositcontroller.h"
+#include "web/withdrawalcontroller.h"
 #include "web/holdcontroller.h"
 #include "web/httprouter.h"
 #include "web/httpserver.h"
@@ -137,6 +139,10 @@ int main(int argc, char *argv[])
         unitOfWorkFactory, QStringLiteral("10100101"));
     DepositController depositController(depositService);
 
+    WithdrawalService withdrawalService(
+        unitOfWorkFactory, QStringLiteral("10100101"));
+    WithdrawalController withdrawalController(withdrawalService);
+
     // Account holds
     HoldService holdService(db);
     HoldController holdController(holdService);
@@ -157,6 +163,7 @@ int main(int argc, char *argv[])
         accountOpeningController);
     router.setTransferController(&transferController);
     router.setDepositController(&depositController);
+    router.setWithdrawalController(&withdrawalController);
     router.setHoldController(&holdController);
 
     // HTTP server
@@ -191,6 +198,8 @@ int main(int argc, char *argv[])
              << "POST http://localhost:8080/api/v1/transfers";
     qDebug() << "Deposit endpoint:"
              << "POST http://localhost:8080/api/v1/deposits";
+    qDebug() << "Withdrawal endpoint:"
+             << "POST http://localhost:8080/api/v1/withdrawals";
     qDebug() << "Hold endpoints:"
              << "http://localhost:8080/api/v1/holds";
     qDebug() << "Country endpoints:"

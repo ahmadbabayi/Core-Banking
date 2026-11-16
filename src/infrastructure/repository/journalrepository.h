@@ -43,11 +43,29 @@ public:
         OperationError* error
     ) override;
 
+    bool createWithdrawalEntries(
+        qint64 journalId,
+        qint64 settlementLedgerAccountId,
+        qint64 customerLedgerAccountId,
+        qint64 accountId,
+        qint64 currencyId,
+        const QString& amount,
+        const QString& description,
+        OperationError* error
+    ) override;
+
     JournalBalanceReadResult readJournalBalance(
         qint64 journalId
     ) override;
 
     LedgerBalanceUpdateOutcome applyLedgerDeltas(
+        qint64 settlementLedgerAccountId,
+        qint64 customerLedgerAccountId,
+        const QString& amount,
+        OperationError* error
+    ) override;
+
+    LedgerBalanceUpdateOutcome applyWithdrawalLedgerDeltas(
         qint64 settlementLedgerAccountId,
         qint64 customerLedgerAccountId,
         const QString& amount,

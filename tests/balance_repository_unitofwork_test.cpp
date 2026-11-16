@@ -227,6 +227,133 @@ void testSafeErrorsOnUnavailableConnection(const QString& connectionName)
     QSqlDatabase::removeDatabase(connectionName);
 }
 
+void testWithdrawalFundsAndDecrement(const QString& connectionName)
+{
+    {
+        QSqlDatabase db =
+            QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+        db.setDatabaseName(QStringLiteral(":memory:"));
+
+        check(db.open(), "withdrawal test database opens");
+
+        QSqlQuery setup(db);
+        check(
+            setup.exec(
+                "CREATE TABLE account_balance ("
+                " account_id INTEGER PRIMARY KEY, "
+                " ledger_balance NUMERIC NOT NULL, "
+                " available_balance NUMERIC NOT NULL, "
+                " updated_at TEXT)"),
+            "withdrawal account_balance table is created");
+        check(
+            setup.exec(
+                "INSERT INTO account_balance "
+                "(account_id, ledger_balance, available_balance, updated_at) "
+                "VALUES (1, 10, 8, CURRENT_TIMESTAMP)"),
+            "withdrawal initial balance is inserted");
+
+        BalanceRepository repository(db);
+
+        WithdrawalFundsResult funds = repository.checkWithdrawalFunds(
+            QStringLiteral("5"),
+            QStringLiteral("10"),
+            QStringLiteral("2"),
+            QStringLiteral("0"),
+            QStringLiteral("0"));
+        check(
+            funds.status == WithdrawalFundsStatus::WithinDepositFunds,
+            "withdrawal within deposit funds is accepted");
+
+        funds = repository.checkWithdrawalFunds(
+            QStringLiteral("9"),
+            QStringLiteral("10"),
+            QStringLiteral("2"),
+            QStringLiteral("0"),
+            QStringLiteral("0"));
+        check(
+            funds.status == WithdrawalFundsStatus::Insufficient,
+            "withdrawal beyond deposit funds and zero overdraft is insufficient");
+
+        funds = repository.checkWithdrawalFunds(
+            QStringLiteral("12"),
+            QStringLiteral("10"),
+            QStringLiteral("2"),
+            QStringLiteral("0"),
+            QStringLiteral("5"));
+        check(
+            funds.status == WithdrawalFundsStatus::WithinOverdraftCapacity,
+            "withdrawal within effective overdraft capacity is classified");
+
+        funds = repository.checkWithdrawalFunds(
+            QStringLiteral("8"),
+            QStringLiteral("10"),
+            QStringLiteral("2"),
+            QStringLiteral("1"),
+            QStringLiteral("0"));
+        check(
+            funds.status == WithdrawalFundsStatus::Insufficient,
+            "minimum balance reduces withdrawal funds");
+
+        funds = repository.checkWithdrawalFunds(
+            QStringLiteral("5"),
+            QStringLiteral("10"),
+            QStringLiteral("2"),
+            QStringLiteral("3"),
+            QStringLiteral("0"));
+        check(
+            funds.status == WithdrawalFundsStatus::WithinDepositFunds,
+            "withdrawal exactly at ledger minus holds minus minimum is accepted");
+
+        funds = repository.checkWithdrawalFunds(
+            QStringLiteral("5.00000001"),
+            QStringLiteral("10"),
+            QStringLiteral("2"),
+            QStringLiteral("3"),
+            QStringLiteral("0"));
+        check(
+            funds.status == WithdrawalFundsStatus::Insufficient,
+            "one smallest unit above available funds is rejected");
+
+        OperationError error;
+        check(
+            repository.applyWithdrawalDecrement(
+                1,
+                QStringLiteral("3"),
+                QStringLiteral("2"),
+                QStringLiteral("5"),
+                &error),
+            "withdrawal decrement is applied");
+
+        double ledger = 0;
+        double available = 0;
+        check(
+            readBalance(db, 1, &ledger, &available),
+            "withdrawal balance is readable");
+        check(
+            nearlyEqual(ledger, 7.0),
+            "withdrawal decreases ledger balance");
+        check(
+            nearlyEqual(available, 10.0),
+            "withdrawal recalculates available from ledger, holds and overdraft");
+
+        check(
+            !repository.applyWithdrawalDecrement(
+                99,
+                QStringLiteral("1"),
+                QStringLiteral("0"),
+                QStringLiteral("0"),
+                &error),
+            "withdrawal on a missing account is rejected");
+        check(
+            error.message == QStringLiteral("Account balance update failed"),
+            "withdrawal missing-account error is safe");
+
+        db.close();
+    }
+
+    QSqlDatabase::removeDatabase(connectionName);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -237,6 +364,8 @@ int main(int argc, char** argv)
         QStringLiteral("balance-scope-test-connection"));
     testSafeErrorsOnUnavailableConnection(
         QStringLiteral("balance-error-test-connection"));
+    testWithdrawalFundsAndDecrement(
+        QStringLiteral("withdrawal-balance-test-connection"));
 
     if (failures == 0)
     {
