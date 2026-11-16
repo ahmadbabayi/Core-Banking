@@ -6,9 +6,12 @@
 #include "../src/application/contracts/itransactionunitofwork.h"
 #include "../src/application/depositservice.h"
 #include "../src/domain/transaction.h"
+#include "../src/web/depositcontroller.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -214,16 +217,18 @@ public:
 
     bool applyDepositIncrement(
         qint64,
-        const QString&,
+        const QString& amount,
         const QString&,
         const QString&,
         OperationError*) override
     {
+        lastDepositAmount = amount;
         log.add(QStringLiteral("balances.applyDeposit"));
         return true;
     }
 
     bool snapshotFailed = false;
+    QString lastDepositAmount;
     CallLog& log;
 };
 
@@ -704,6 +709,50 @@ void testUnavailableConnectionStopsBeforeUnitOfWork()
           "unavailable connection stops before creating a unit of work");
 }
 
+QString errorCode(const HttpResponse& response)
+{
+    return QJsonDocument::fromJson(response.body)
+        .object()
+        .value(QStringLiteral("error"))
+        .toObject()
+        .value(QStringLiteral("code"))
+        .toString();
+}
+
+void testLossyNumericAmountIsRejectedBeforeUnitOfWork()
+{
+    FakeUnitOfWorkFactory factory;
+    DepositService service(factory, QStringLiteral("10100101"));
+    DepositController controller(service);
+
+    const HttpResponse response = controller.deposit(
+        QByteArrayLiteral("{\"accountId\":1,\"amount\":0.123456789,"
+                          "\"idempotencyKey\":\"key-lossy-numeric\"}"));
+
+    check(response.status == QByteArrayLiteral("422 Unprocessable Entity"),
+          "lossy numeric amount is rejected");
+    check(errorCode(response) == QStringLiteral("INVALID_AMOUNT"),
+          "lossy numeric amount keeps INVALID_AMOUNT");
+    check(factory.log.calls.isEmpty(),
+          "lossy numeric amount stops before creating a unit of work");
+}
+
+void testRepresentableNumericAmountIsAccepted()
+{
+    FakeUnitOfWorkFactory factory;
+    DepositService service(factory, QStringLiteral("10100101"));
+    DepositController controller(service);
+
+    const HttpResponse response = controller.deposit(
+        QByteArrayLiteral("{\"accountId\":10,\"amount\":0.12345678,"
+                          "\"idempotencyKey\":\"key-valid-numeric\"}"));
+
+    check(response.status == QByteArrayLiteral("201 Created"),
+          "representable numeric amount is accepted");
+    check(factory.balances.lastDepositAmount == QStringLiteral("0.12345678"),
+          "representable numeric amount is passed without rounding");
+}
+
 } // namespace
 
 int main()
@@ -715,6 +764,8 @@ int main()
     testHoldLockFailureRollsBackBeforeJournal();
     testJournalPostFailureRollsBackBeforeCommit();
     testUnavailableConnectionStopsBeforeUnitOfWork();
+    testLossyNumericAmountIsRejectedBeforeUnitOfWork();
+    testRepresentableNumericAmountIsAccepted();
 
     if (failures == 0)
     {

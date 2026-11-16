@@ -68,9 +68,30 @@ HttpResponse DepositController::deposit(const QByteArray& body)
     }
 
     const qint64 accountId = static_cast<qint64>(accountNumber);
-    const QString amount = amountValue.isString()
-        ? amountValue.toString().trimmed()
-        : QString::number(amountValue.toDouble(), 'f', 8);
+
+    QString amount;
+    if (amountValue.isString()) {
+        amount = amountValue.toString().trimmed();
+    } else {
+        const double numericAmount = amountValue.toDouble();
+        const QString canonical =
+            QString::number(numericAmount, 'f', 8);
+
+        // A JSON number carries no decimal text. Reject it when eight
+        // decimal places cannot represent the same value, instead of
+        // silently depositing a rounded amount.
+        if (canonical.toDouble() != numericAmount) {
+            return {
+                "422 Unprocessable Entity",
+                ApiResponse::error(
+                    "INVALID_AMOUNT",
+                    "Amount must be positive and have at most 8 decimal places")
+            };
+        }
+
+        amount = canonical;
+    }
+
     const QString description = descriptionValue.toString().trimmed();
     const QString idempotencyKey = idempotencyValue.toString().trimmed();
 
