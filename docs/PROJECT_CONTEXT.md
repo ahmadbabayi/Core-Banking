@@ -14,6 +14,7 @@
 
 ### وضعیت جاری — 2026-11-16
 
+- **Withdrawal (2026-11-16):** `POST /api/v1/withdrawals` پیاده‌سازی و با API واقعی روی حساب‌های `1` و `3` آزمون شد. Journal برداشت (بدهکار سپرده/بستانکار سرفصل تسویه)، Idempotency/Replay/Conflict، رد موجودی ناکافی با Hold، حساب CLOSED/ناموجود و مبلغ نامعتبر بررسی شدند. سیاست حداقل مانده طبق تصمیم کاربر اعمال شد: `effective_minimum = MAX(product_minimum, account_override_minimum)` و Override فقط افزایش‌دهنده است. هیچ Migration/DDL انجام نشد. **تکمیل جامع/آمادگی انتشار نیست:** Overdraft واقعی، Rule واقعی PostgreSQL، هم‌زمانی و Fault Injection آزمون نشده‌اند؛ `TransferService` هنوز با سیاست جدید حداقل هم‌تراز نشده و مورد بازبینی Transfer است. گزارش: [WITHDRAWAL_COMPLETION_RESULT.md](opencode-reports/WITHDRAWAL_COMPLETION_RESULT.md).
 - **تکمیل Deposit (2026-11-16):** یک نقص مالی واقعی در `DepositController` اصلاح شد: مبلغ عددی JSON با بیش از ۸ رقم اعشار بی‌صدا گرد می‌شد و مبلغی متفاوت ثبت می‌کرد. اکنون چنین ورودی‌ای با همان کد موجود `INVALID_AMOUNT` و HTTP `422` رد می‌شود؛ ورودی عددی معتبر (مثلاً `0.12345678`) همچنان پذیرفته می‌شود. Build و آزمون‌های هدفمند و آزمون واقعی API روی حساب‌های موجود انجام شد و یک حساب رزرو برای مرحله‌های بعد ایجاد شد. هیچ Migration/DDL یا تغییر Schema انجام نشد. گزارش: [DEPOSIT_COMPLETION_RESULT.md](opencode-reports/DEPOSIT_COMPLETION_RESULT.md).
 - **طراحی مرحله Balance (2026-11-16):** مرحله‌ای پیش از تکمیل Deposit، صرفاً بررسی/طراحی بود و هیچ کد/تست/داده‌ای تغییر نکرد. گزارش: [BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md](opencode-reports/BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md). زیرمرحله پیشنهادی Balance (1B.2) هنوز تأیید یا اجرا نشده و Balance Slice «شروع‌شده» محسوب نمی‌شود.
 - **1A:** در دامنه محدود پذیرفته شده است. جزئیات و محدودیت‌ها: [1A_ACCEPTANCE_WITH_LIMITATIONS.md](opencode-reports/1A_ACCEPTANCE_WITH_LIMITATIONS.md).
@@ -61,6 +62,7 @@
 - [DOCUMENTATION_REORGANIZATION.md](opencode-reports/DOCUMENTATION_REORGANIZATION.md) — گزارش همین بازآرایی مستندات.
 - [BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md](opencode-reports/BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md) — گزارش طراحی مرحله بعدی Balance در مسیر Deposit (بررسی/طراحی، بدون اجرا).
 - [DEPOSIT_COMPLETION_RESULT.md](opencode-reports/DEPOSIT_COMPLETION_RESULT.md) — گزارش تکمیل و آزمون واقعی Deposit و اصلاح مبلغ عددی.
+- [WITHDRAWAL_COMPLETION_RESULT.md](opencode-reports/WITHDRAWAL_COMPLETION_RESULT.md) — گزارش پیاده‌سازی و آزمون واقعی Withdrawal و محدودیت‌های باز.
 - گزارش‌های Hold: [HOLD_SERVICE_IMPLEMENTATION.md](opencode-reports/HOLD_SERVICE_IMPLEMENTATION.md)، [HOLD_CONTROLLER_IMPLEMENTATION.md](opencode-reports/HOLD_CONTROLLER_IMPLEMENTATION.md)، [HOLD_018_COREBANKING_TEST_PLAN.md](opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md) و [HOLD_EVENT_FINAL_CLOSURE.md](opencode-reports/HOLD_EVENT_FINAL_CLOSURE.md).
 
 ### تفکیک نقشه‌راه از وضعیت واقعی
@@ -88,7 +90,7 @@
 | ۸ | Deposit | `POST /api/v1/deposits` با Idempotency آدرس‌دهی‌شده، Journal متوازن، افزایش مانده؛ مبلغ عددی بدون گردکردن بی‌صدا | تأیید کاربر 2026-10-28؛ آزمون‌های 1A/1A.1 در History 18.17/18.20؛ تکمیل و آزمون واقعی API در 18.25 | Cache کهنه `available_balance`، حداقل مانده، هم‌ترازی legacy، نبود fixture برای محصول/سرفصل نامعتبر | ادامه در دامنه Balance با تأیید جداگانه |
 | ۹ | Hold / وجه قابل استفاده / Balance Inquiry | Hold API بسته؛ محاسبه `ledger_balance - active_holds` در Hold | آزمون API Hold در History 18.14/18.15 | API خواندن مانده وجود ندارد؛ تفاوت معنای «قابل استفاده» بین Hold و Cache/Transfer | Balance Slice با تأیید جداگانه |
 | ۱۰ | Limits | محدودیت عملیاتی حساب در Schema/قواعد مستند | شواهدی ثبت نشده | بدون API مدیریت، بدون اعمال اثبات‌شده در مسیرهای مالی | طراحی و تأیید مستقل |
-| ۱۱ | Transfer / Withdrawal | `POST /api/v1/transfers` موجود؛ Withdrawal وجود ندارد | تأیید کاربر 2026-10-28 برای Transfer؛ شواهد تفصیلی ناقص | Withdrawal ندارد؛ حداقل مانده فقط در Transfer؛ مسیر Overdraft رد می‌شود | تأیید جداگانه؛ هم‌ترازی با قواعد Balance |
+| ۱۱ | Transfer / Withdrawal | `POST /api/v1/transfers` و `POST /api/v1/withdrawals` موجودند؛ سیاست حداقل برداشت `MAX(product, account override)` اعمال شده | Transfer: تأیید کاربر 2026-10-28 با شواهد ناقص؛ Withdrawal: آزمون واقعی API در History 18.26/18.27 | Overdraft واقعی و Rule واقعی PostgreSQL آزمون نشده؛ Transfer با سیاست جدید minimum هم‌تراز نیست | بازبینی/هم‌ترازی Transfer با تصمیم حداقل؛ آزمون fixture قواعد |
 | ۱۲ | Reversal | جدول/نوع `REVERSAL` و ستون `reverses_transaction_id` در Schema | شواهدی ثبت نشده | بدون Service/Route/Controller؛ بدون کنترل برگشت دوگانه | طراحی و تأیید مستقل |
 | ۱۳ | استعلام و گزارش‌گیری مالی | — | — | Transaction Query، Account Statement، Journal Inquiry، GL Inquiry و Trial Balance همگی وجود ندارند | تصمیم درباره نیاز و قرارداد API |
 | ۱۴ | Overdraft / Fees | Overdraft در SQL محاسبه و در Transfer با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود؛ `transaction_fee` فقط در Schema | تأیید/آزمون چرخه اضافه‌برداشت وجود ندارد | چرخه کامل اعتبار/بدهی/تسویه و Fees پیاده نشده | تصمیم کسب‌وکار و فاز مستقل |
@@ -373,6 +375,7 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 - بازه اعتبار قواعد باید رعایت شود.
 - قواعد زمان‌مند نباید با ویرایش گذشته بازنویسی شوند.
 - Override حساب نباید ممنوعیت پایه محصول برای اضافه‌برداشت را دور بزند.
+- **حداقل مانده (تصمیم قطعی 2026-11-16):** حداقل محصول کف الزام‌آور برداشت است و Override حساب فقط می‌تواند حداقل را افزایش دهد: `effective_minimum = MAX(product_minimum, account_override_minimum)`. `LEAST` برای این سیاست استفاده نمی‌شود. نبود Override حداقل محصول را حذف نمی‌کند؛ نبود Rule محصول پایه صفر دارد و Override مؤثر مثبت اعمال می‌شود. کاهش حداقل با معافیت مستقل خارج از دامنه است. `TransferService` هنوز با این سیاست هم‌تراز نشده و مورد بازبینی مرحله Transfer است.
 - نباید ادعا شود تمام بازه‌های Override با یک قید واحد از هم‌پوشانی منع شده‌اند؛ محدودیت واقعی به ستون‌ها و قیود تعریف‌شده در Schema بستگی دارد.
 
 **شکاف باز پیش از Balance Slice:** `FOR SHARE` فقط ردیف موجود را قفل می‌کند. اگر Override یا قاعده مؤثر موجود نباشد، Exclusion Constraint به‌تنهایی مانع درج قاعده جدید مؤثر نمی‌شود. این شکاف هم‌زمانی پیش از Balance Slice باید تعیین تکلیف شود.
@@ -600,6 +603,7 @@ Schema جاری `available_balance` را ذخیره می‌کند و فرمول 
 | Account Opening | `POST /api/v1/accounts` | تکمیل و تست‌شده |
 | Account Details / Status | `GET /api/v1/accounts/{id}`؛ `PATCH /api/v1/accounts/{id}/status` | تکمیل و تست‌شده |
 | Deposits | `POST /api/v1/deposits` | تکمیل و تست‌شده |
+| Withdrawals | `POST /api/v1/withdrawals` | پیاده‌سازی‌شده و آزمون واقعی API در دامنه محدود؛ وابسته به تصمیم قواعد حداقل/Override و فاقد آزمون Overdraft واقعی |
 | Internal Transfers | `POST /api/v1/transfers` | تکمیل و تست‌شده |
 
 **محدودیت شواهد:** History حاوی گزارش جزئی برخی تست‌ها است، اما خروجی کامل همه تست‌های مورد تأیید کاربر، مخصوصاً گروه‌های جغرافیا و شعب و آخرین تست Transfer، در این فایل ثبت نشده است. هنگام اجرای دوباره تست‌ها، تاریخ، SHA، دیتابیس، درخواست، پاسخ و کنترل مانده/Journal به History اضافه شود. از این کمبود مستندات نباید نتیجه گرفت APIها تست نشده‌اند؛ وضعیت تکمیل و تست آن‌ها طبق تأیید کاربر پذیرفته شده است.
@@ -654,7 +658,6 @@ History استفاده از یک نگاشت فعال در آزمون افتتا�
 
 در `src/web/httprouter.cpp` بررسی‌شده، مسیر HTTP مستقیمی برای موارد زیر وجود ندارد؛ وجود جدول، Migration یا منطق داخلی را نباید با وجود API اشتباه گرفت:
 
-- برداشت وجه (Withdrawal).
 - برگشت تراکنش (Reversal).
 - دریافت مانده حساب از مسیر اختصاصی.
 - دریافت فهرست/جزئیات تراکنش و Journal.
@@ -725,7 +728,7 @@ Hold API نیز پس از اجرای Migration 018 و آزمون یکپارچه�
 
 ### 18.3 قابلیت‌های/APIهای باقی‌مانده
 
-1. **Withdrawal API:** endpoint برداشت در Router بررسی‌شده وجود ندارد؛ باید قرارداد و ثبت حسابداری آن، در صورت ورود به دامنه فعلی، طراحی و پیاده‌سازی شود.
+1. **Withdrawal API:** `POST /api/v1/withdrawals` پیاده‌سازی و آزمون واقعی شده است (موفق، Replay، Conflict، موجودی ناکافی، Hold، حساب CLOSED/ناموجود، مبلغ نامعتبر). ثبت: بدهکار سپرده مشتری / بستانکار سرفصل تسویه، در همان UoW. سیاست حداقل مانده قطعی و اعمال‌شده است: `MAX(product_minimum, account_override_minimum)` با Override فقط افزایش‌دهنده. محدودیت‌های باز: Overdraft واقعی، Rule واقعی PostgreSQL، هم‌زمانی و Fault Injection آزمون نشده‌اند؛ `TransferService` هنوز با سیاست جدید هم‌تراز نیست.
 2. **Reversal API:** مسیر مستقل برگشت وجود ندارد. برگشت باید تراکنش جدید و Journal معکوس ایجاد کند، نه اینکه تراکنش قبلی را حذف یا ویرایش کند.
 3. **Balance/Transaction/Journal read APIs:** endpoint اختصاصی برای دریافت مانده یا پرس‌وجوی تراکنش‌ها و Journalها در Router فعلی دیده نشده است؛ مشخص شود برای کلاینت/عملیات لازم‌اند یا خیر.
 4. **چرخه اضافه‌برداشت:** تسویه اضافه‌برداشت و ثبت هم‌زمان بدهی مشتری و مطالبات بانک تکمیل/تأیید نشده است. مسیر نیازمند تسویه همچنان با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود.

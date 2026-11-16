@@ -2085,6 +2085,82 @@ g++ -std=c++17 -fPIC -I. tests/deposit_orchestration_test.cpp \
 - رکورد `transactionId=8` (Probe پیش از اصلاح) در دیتابیس توسعه باقی است و حذف/اصلاح نشد.
 - تفاوت رفتاری واحد: مبلغ عددی با اعشار بیش از ۸ رقم اکنون `422` است، نه واریز گردشده.
 
+### 18.26 پیاده‌سازی و آزمون واقعی Withdrawal — 2026-11-16
+
+#### محدوده و SHA
+
+- HEAD مبنا: `d5a31497e3b76806083f72d10ccc56464c109f6b`؛ تغییرات این مرحله uncommitted.
+- `origin/main` همان `d5a3149` بود.
+- هیچ Migration/DDL یا تغییر Schema انجام نشد. نوع `WITHDRAWAL`، `transaction_entry.entry_type='SOURCE'`، `journal`/`journal_entry`، `account_balance`، `ledger_account_balance` و `uq_transaction_api_idempotency` کافی و سازگار بودند.
+
+#### کد و قرارداد
+
+- ایجاد `src/application/withdrawalservice.{h,cpp}` و `src/web/withdrawalcontroller.{h,cpp}`.
+- افزودن متدهای لازم به قراردادهای `IBalanceRepository` (Snapshot با `ledger_balance`/`minimum_balance`، `checkWithdrawalFunds`، `applyWithdrawalDecrement`)، `IJournalRepository` (`createWithdrawalEntries`، `applyWithdrawalLedgerDeltas`) و `ITransactionRepository` (`appendSourceEntry`).
+- اتصال در `httprouter.*`، `main.cpp` و `CMakeLists.txt`.
+- قرارداد API: `POST /api/v1/withdrawals`؛ `201` موفق، `422` رد کسب‌وکاری، `400` ورودی نامعتبر، `500` خطای فنی، `503 WITHDRAWAL_SERVICE_UNAVAILABLE`.
+- قواعد: `deposit_funds = ledger - holds - minimum`، `overdraft_capacity = ledger - holds + effective_overdraft_limit - minimum`؛ برداشت فقط از deposit funds؛ نیاز به Overdraft با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود؛ Journal: بدهکار LIABILITY مشتری، بستانکار ASSET تسویه؛ `transaction_entry` نوع `SOURCE`.
+- تغییر مشترک: افزودن دو ستون به `loadLockedAccountSnapshot` برای Withdrawal؛ Deposit از آن‌ها استفاده نمی‌کند و رفتارش حفظ شد. Ruleها با Scalar Subquery و `COALESCE` خوانده می‌شوند (JOIN اضافه‌ای به جدول Rule وجود ندارد).
+
+#### Build و تست
+
+- Build: `cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2` → موفق (`[100%] Built target CoreBanking`).
+- `tests/withdrawal_orchestration_test.cpp` → `All withdrawal orchestration tests passed`.
+- `tests/balance_repository_unitofwork_test.cpp` (شامل آزمون جدید funds/decrement) → `All balance repository and unit-of-work tests passed`.
+- Regression: `deposit_orchestration_test`، `journal_repository_unitofwork_test`، `account_hold_persistence_test` → همگی موفق.
+
+#### آزمون واقعی API و شناسه‌ها
+
+- تأمین وجه: Deposit `0.20` روی حساب `3` با کلید `withdrawal-setup-deposit-20261116-a1` → `transactionId=12`, `journalId=9`.
+- برداشت موفق حساب `3`: `0.05` با کلید `withdrawal-completion-20261116-s1` → `transactionId=13`, `journalId=10`.
+- برداشت موفق حساب `1` (با Hold `0.52`): `0.10` با کلید `withdrawal-completion-20261116-s2` → `transactionId=14`, `journalId=11`.
+- برداشت عددی معتبر حساب `3`: `0.01` با کلید `withdrawal-completion-20261116-numeric-2dp` → `transactionId=18`, `journalId=12`.
+- Rejectedها: `15` (`INSUFFICIENT_AVAILABLE_FUNDS`، Hold-limit حساب `1`)، `16` (`INSUFFICIENT_AVAILABLE_FUNDS`، حساب `3`)، `17` (`ACCOUNT_NOT_ACTIVE`، حساب `2` CLOSED)؛ هیچ Journal/TransactionEntry ندارند.
+- Replay و Conflict بدون اثر مالی اضافی؛ Reuse کلید Deposit در Withdrawal → `422 IDEMPOTENCY_KEY_REUSED` و بدون رکورد جدید.
+- مبلغ `0`، `-0.01`، `"0.123456789"` و JSON number `0.123456789` → `422 INVALID_AMOUNT`؛ حساب ناموجود → `422 ACCOUNT_NOT_FOUND` بدون رکورد.
+
+#### تطبیق read-only دیتابیس
+
+- حساب `1`: `ledger=1.51691357` به `1.41691357`، `available=0.99691357` به `0.89691357`، Hold `0.52` بدون تغییر.
+- حساب `3`: `0` → Deposit `0.20` → برداشت `0.05` و `0.01` → `0.14`.
+- Journalها `9..12` `POSTED` با دو سطر و Debit=Credit؛ سطر ۱ Debit روی سرفصل `1` (LIABILITY)، سطر ۲ Credit روی سرفصل `4` (ASSET).
+- سرفصل `1`: `debit_total=0.16`, `credit_total=1.71691357`, `balance=-1.55691357`؛ سرفصل `4`: `debit_total=1.71691357`, `credit_total=0.16`, `balance=1.55691357`.
+- برای همه Transactionهای `REJECTED` تعداد Journal و TransactionEntry صفر است.
+
+#### محدودیت‌ها و تصمیم باز
+
+- **minimum override loosening:** صرفاً آزمون‌نشده نیست؛ معنای مالی آن حل‌نشده است. کد فعلی (هم در Transfer و هم در Snapshot مشترک) برای minimum از `COALESCE(override, product, 0)` بدون `LEAST` استفاده می‌کند؛ بنابراین Override می‌تواند حداقل مانده را کمتر از محصول کند و برداشت را تسهیل کند. فقط ممنوعیت Override برای Overdraft صریح است. تا تصمیم کسب‌وکار، Withdrawal از نظر قواعد حداقل مانده تکمیل قطعی نیست. **(این مورد در بخش 18.27 با تصمیم قطعی کاربر حل شد؛ این متن وضعیت تاریخی پیش از تصمیم است.)**
+- Overdraft واقعی آزمون نشد و موفق اعلام نمی‌شود؛ جدول‌های Rule خالی‌اند و API نوشتن ندارند.
+- حداقل مانده با Rule واقعی، Override، مرزهای زمانی Rule و درج هم‌زمان Rule آزمون نشدند.
+- محصول غیرفعال، سرفصل غیرقابل‌ثبت/عدم‌تطابق ارز با fixture واقعی آزمون نشد.
+- هم‌زمانی واقعی، Fault Injection، restart و `CommitOutcomeUnknown` آزمون نشدند. F1/F2، fail-closed و عدم Rollback پس از Commit نامعلوم حفظ شدند.
+- Snapshot SQL روی PostgreSQL به‌صورت Unit آزمون نشد؛ فقط مسیر واقعی API برای حساب بدون Rule و حساب دارای Hold اجرا شد.
+
+### 18.27 اعمال سیاست حداقل مانده تأییدشده در Withdrawal — 2026-11-16
+
+#### تصمیم و دامنه
+
+- تصمیم قطعی کاربر: حداقل محصول کف الزام‌آور برداشت است؛ Override حساب فقط می‌تواند حداقل را افزایش دهد. `effective_minimum = MAX(product_minimum, account_override_minimum)`؛ `LEAST` استفاده نمی‌شود. معافیت/کاهش حداقل خارج از دامنه است.
+- تغییر در `src/infrastructure/repository/balancerepository.cpp` (`loadLockedAccountSnapshot`) با `GREATEST(COALESCE(product,0), COALESCE(override,0))` و حفظ `CURRENT_TIMESTAMP` و بازه‌های اعتبار اعمال شد.
+- مصرف‌کننده `minimumBalance` فقط `WithdrawalService` است (یک بار در `checkWithdrawalFunds`)؛ Deposit آن را نمی‌خواند، Transfer SQL جدا دارد و Hold آن را استفاده نمی‌کند.
+- `TransferService` به‌عنوان **مورد بازبینی** باقی ماند (هنوز `COALESCE` بدون `GREATEST` دارد) و در این مرحله تغییر نکرد.
+
+#### Build و تست
+
+- Build: `cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2` → موفق.
+- `withdrawal_orchestration_test` → `All withdrawal orchestration tests passed`.
+- `balance_repository_unitofwork_test` (شامل مرز `ledger=10, holds=2, minimum=3`: مقدار `5` پذیرفته، `5.00000001` رد) → موفق.
+- Regression: `deposit_orchestration_test`، `journal_repository_unitofwork_test`، `account_hold_persistence_test` → موفق.
+- harness ایزوله PostgreSQL read-only با `VALUES/CTE` برای ۷ حالت minimum اجرا شد و همه `pass=t` بودند: (100,NULL→100)، (100,20→100)، (100,150→150)، (100,0→100)، (NULL,20→20)، (NULL,NULL→0)، (100,NULL برای Override نامؤثر/منقضی→100). این Query عبارت SQL سیاست را تست می‌کند، نه Subqueryهای جدول Rule/فیلتر زمانی/کل Snapshot تولیدی را.
+- پس از Build مجدد و restart سرویس (PID `58285`)، یک Regression واقعی انجام شد: Withdrawal `0.01` از حساب `3` با کلید `withdrawal-minpolicy-20261116-s1` → `201`, `transactionId=19`, `journalId=13`; مانده حساب `3` از `0.14` به `0.13`؛ Journal متوازن با Debit LIABILITY و Credit ASSET.
+- شواهد API قبلی (`transactionId=12..18`) مربوط به باینری پیش از اصلاح minimum است و در گزارش با همین تفکیک ثبت شده است.
+
+#### محدودیت‌ها
+
+- سیاست minimum با ردیف Rule واقعی در PostgreSQL آزمون نشد؛ فقط عبارت SQL با VALUES/CTE و مسیر no-rule از طریق API بررسی شد.
+- Overdraft واقعی، Override واقعی، مرزهای زمانی Rule، هم‌زمانی، Fault Injection و `CommitOutcomeUnknown` آزمون نشدند.
+- این مرحله آمادگی جامع انتشار نیست؛ مسیر پایه Withdrawal آزموده شده، اما قواعد واقعی و سناریوهای رقابتی/خطا پوشش کامل ندارند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.
