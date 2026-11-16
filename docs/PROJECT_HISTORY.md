@@ -1988,6 +1988,103 @@ All account and hold persistence tests passed
 - محدودیت Connection مشترک و fail-closed فعلی باقی است.
 - این مرحله تکمیل 1B/1C، رفع race یا آمادگی عملیاتی بانکی نیست.
 
+### 18.24 بررسی و طراحی مرحله بعدی Balance در مسیر Deposit — 2026-11-16
+
+#### دامنه و SHA بررسی
+
+- بررسی صرفاً read-only روی مخزن محلی با HEAD `fd23100c06f5862234f14019ac4b4eac26b0ff86`؛ `origin/main` همان SHA بود و working tree پاک.
+- منابع اصلی: `docs/PROJECT_CONTEXT.md`، همین سند، `database/CURRENT_SCHEMA.sql` و کد Deposit و قراردادها/Repositoryهای مرتبط. Transfer، HoldService و مسیرهای legacy فقط برای شناسایی نویسندگان و وابستگی‌ها خوانده شدند.
+
+#### فایل‌های مستند تغییرکرده
+
+- ایجاد `docs/opencode-reports/BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md`.
+- تغییر `docs/PROJECT_CONTEXT.md`: به‌روزرسانی وضعیت جاری، افزودن «تفکیک نقشه‌راه از وضعیت واقعی»، «ماتریس تطبیق نقشه‌راه و وضعیت مخزن» و «وضعیت مرحله جاری»، و لینک گزارش طراحی.
+- تغییر همین سند برای افزودن این ورود تاریخی.
+
+#### خلاصه نتیجه طراحی
+
+- رفتار فعلی Deposit مستند شد: `loadLockedAccountSnapshot` و `applyDepositIncrement`، معنای `ledger_balance`/`active_holds`/`available_balance`، ترتیب قفل Account → Balance → Hold، زمان مرجع `CURRENT_TIMESTAMP`/`CURRENT_DATE` (زمان شروع تراکنش)، و نویسندگان مؤثر بر مانده/Hold/قاعده.
+- موانع اصلی: عدم قفل روی ردیف‌های قاعده مؤثر، ابهام سیاست Override حداقل (بدون LEAST در Transfer)، و تعیین‌نشدن زمان مرجع رسمی و سیاست هم‌زمانی.
+- کوچک‌ترین گام پیشنهادی برای ادامه 1B: زیرمرحله 1B.2 «قرارداد حل قاعده مؤثر مانده» به‌صورت read-only و Deposit-scoped، بدون تغییر رفتار مالی؛ این زیرمرحله هنوز تأیید یا اجرا نشده است.
+- Balance Slice با این گزارش «شروع‌شده» یا «انجام‌شده» محسوب نمی‌شود و ادامه 1C نیز خودکار مجاز نشد.
+
+#### تصریح محدوده
+
+- هیچ کد اجرایی، تست، Schema، Migration، داده یا تنظیم اتصال تغییر نکرد.
+- هیچ Build، HTTP، SQL یا اتصال به دیتابیس اجرا نشد.
+- هیچ stage/commit/push یا دستور تغییردهنده Git اجرا نشد.
+
+### 18.25 تکمیل و آزمون واقعی سرویس Deposit — 2026-11-16
+
+#### محدوده و SHA
+
+- HEAD مبنا: `fd23100c06f5862234f14019ac4b4eac26b0ff86`؛ بدون Commit جدید.
+- تغییرات مستنداتی مرحله طراحی Balance (18.24) حفظ شد.
+- هیچ Migration/DDL یا تغییر Schema انجام نشد. ساختار `account_balance`، `ledger_account_balance`، `journal`، `journal_entry`، `transaction`، ایندکس `uq_transaction_api_idempotency` و VIEW `account_hold_status` با نقش read-only بررسی و کافی تشخیص داده شد.
+
+#### نقص و اصلاح کد
+
+- نقص واقعی: `DepositController` مبلغ JSON number را با `QString::number(value,'f',8)` تبدیل می‌کرد و مبالغ با بیش از ۸ رقم اعشار را بی‌صدا گرد می‌کرد. Probe پیش از اصلاح با `amount: 0.123456789` → `201` و ذخیره `0.12345679` در `transactionId=8`.
+- اصلاح: در `src/web/depositcontroller.cpp` ورودی عددی فقط وقتی پذیرفته می‌شود که canonical ۸ رقمی با `toDouble()` به همان عدد برگردد؛ در غیر این صورت `422 INVALID_AMOUNT` با همان کد موجود. ورودی رشته‌ای و ورودی عددی معتبر تغییر نکرد.
+- فایل‌های کد/تست تغییرکرده: `src/web/depositcontroller.cpp`، `tests/deposit_orchestration_test.cpp`.
+
+#### Build و آزمون‌های هدفمند
+
+```bash
+cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+نتیجه: موفق (`[100%] Built target CoreBanking`).
+
+```bash
+g++ -std=c++17 -fPIC -I. tests/deposit_orchestration_test.cpp \
+  src/application/depositservice.cpp src/application/transactionservice.cpp \
+  src/domain/transaction.cpp src/web/depositcontroller.cpp \
+  src/web/apiresponse.cpp $(pkg-config --cflags --libs Qt5Core) \
+  -o /tmp/opencode/deposit_orchestration_test
+/tmp/opencode/deposit_orchestration_test
+```
+
+نتیجه: `All deposit orchestration tests passed` (شامل دو آزمون جدید مبلغ عددی).
+
+آزمون‌های موجود دیگر نیز موفق بودند: `balance_repository_unitofwork_test`، `journal_repository_unitofwork_test`، `account_hold_persistence_test`. این آزمون‌ها `QSQLITE`/fake هستند و جایگزین PostgreSQL، هم‌زمانی یا Fault Injection نیستند.
+
+#### آزمون واقعی API و داده‌ها
+
+- سرویس از باینری Build فعلی روی `http://localhost:8080` اجرا شد؛ همه نوشتن‌ها از API انجام شد.
+- حساب `1` (`0100000000017`, ACTIVE) برای واریز استفاده شد. حساب `2` از قبل `CLOSED` بود و برای سناریوی `ACCOUNT_NOT_ACTIVE` به‌کار رفت. حساب `3` (`0100000000038`) با `POST /api/v1/accounts` ایجاد شد و برای مرحله‌های بعد رزرو است (مانده صفر، بدون تراکنش).
+- Replay کلید `deposit-completion-20261116-fixed-s1` همان `transactionId=9` را برگرداند؛ Conflict با مبلغ متفاوت `422 IDEMPOTENCY_KEY_REUSED` داد؛ تراکنش ردشده Replay شد و رکورد جدید نساخت.
+- ورودی عددی `0.123456789` پس از اصلاح `422 INVALID_AMOUNT` و بدون رکورد؛ ورودی عددی `0.12345678` پس از اصلاح `201` و ذخیره دقیق `0.12345678` (`transactionId=10`).
+
+شناسه‌های این مرحله:
+
+| کلید | Transaction | Journal | نتیجه |
+|---|---|---|---|
+| `deposit-completion-20261116-s1` | `5` | `4` | `COMPLETED`, `0.1` |
+| `deposit-completion-20261116-closed-acct` | `6` | — | `REJECTED`, `ACCOUNT_NOT_ACTIVE` |
+| `deposit-completion-20261116-numeric` | `7` | `5` | `COMPLETED`, `0.1` |
+| `deposit-completion-20261116-numeric-precision` | `8` | `6` | `COMPLETED`, `0.12345679` (Probe پیش از اصلاح) |
+| `deposit-completion-20261116-fixed-s1` | `9` | `7` | `COMPLETED`, `0.05` |
+| `deposit-completion-20261116-fixed-numeric-8dp` | `10` | `8` | `COMPLETED`, `0.12345678` |
+| `deposit-completion-20261116-fixed-closed-acct` | `11` | — | `REJECTED`, `ACCOUNT_NOT_ACTIVE` |
+
+#### تطبیق دیتابیس
+
+- مانده حساب `1` پیش از مرحله: `ledger_balance=1.02`، `available_balance=0.50`، Hold فعال `0.52`.
+- مانده پس از مرحله: `ledger_balance=1.51691357`، `available_balance=0.99691357`، Hold فعال `0.52` (بدون تغییر).
+- تطبیق: `1.51691357 - 0.52000000 = 0.99691357`؛ مجموع واریزهای موفق `0.51691357`.
+- هر Journal موفق `POSTED` با ۲ سطر و Debit=Credit؛ سطر اول Debit روی سرفصل `4` (ASSET) و سطر دوم Credit روی سرفصل `1` (LIABILITY)، ارز `1`.
+- `ledger_account_balance`: سرفصل `4` → `debit_total=balance=1.51691357`؛ سرفصل `1` → `credit_total=1.51691357`, `balance=-1.51691357`.
+- تراکنش‌های `REJECTED` هیچ Journal یا تغییر مانده ندارند؛ کلید Idempotency تکراری وجود ندارد.
+
+#### محدودیت‌ها
+
+- `product_balance_rule` و `account_balance_rule_override` خالی‌اند و API نوشتن ندارند؛ مسیر Overdraft/Override با داده واقعی آزمون نشد.
+- تغییر وضعیت محصول مشترک یا سرفصل‌ها برای ساخت fixture انجام نشد؛ سناریوهای `PRODUCT_NOT_ACTIVE` و `CUSTOMER_LEDGER_NOT_POSTABLE`/currency mismatch آزمون واقعی نشدند.
+- هم‌زمانی واقعی، Fault Injection، restart و `CommitOutcomeUnknown` اجرا نشد.
+- رکورد `transactionId=8` (Probe پیش از اصلاح) در دیتابیس توسعه باقی است و حذف/اصلاح نشد.
+- تفاوت رفتاری واحد: مبلغ عددی با اعشار بیش از ۸ رقم اکنون `422` است، نه واریز گردشده.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

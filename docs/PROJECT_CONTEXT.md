@@ -12,8 +12,10 @@
 
 ## راهنمای سریع عامل
 
-### وضعیت جاری — 2026-11-13
+### وضعیت جاری — 2026-11-16
 
+- **تکمیل Deposit (2026-11-16):** یک نقص مالی واقعی در `DepositController` اصلاح شد: مبلغ عددی JSON با بیش از ۸ رقم اعشار بی‌صدا گرد می‌شد و مبلغی متفاوت ثبت می‌کرد. اکنون چنین ورودی‌ای با همان کد موجود `INVALID_AMOUNT` و HTTP `422` رد می‌شود؛ ورودی عددی معتبر (مثلاً `0.12345678`) همچنان پذیرفته می‌شود. Build و آزمون‌های هدفمند و آزمون واقعی API روی حساب‌های موجود انجام شد و یک حساب رزرو برای مرحله‌های بعد ایجاد شد. هیچ Migration/DDL یا تغییر Schema انجام نشد. گزارش: [DEPOSIT_COMPLETION_RESULT.md](opencode-reports/DEPOSIT_COMPLETION_RESULT.md).
+- **طراحی مرحله Balance (2026-11-16):** مرحله‌ای پیش از تکمیل Deposit، صرفاً بررسی/طراحی بود و هیچ کد/تست/داده‌ای تغییر نکرد. گزارش: [BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md](opencode-reports/BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md). زیرمرحله پیشنهادی Balance (1B.2) هنوز تأیید یا اجرا نشده و Balance Slice «شروع‌شده» محسوب نمی‌شود.
 - **1A:** در دامنه محدود پذیرفته شده است. جزئیات و محدودیت‌ها: [1A_ACCEPTANCE_WITH_LIMITATIONS.md](opencode-reports/1A_ACCEPTANCE_WITH_LIMITATIONS.md).
 - **1A.1:** انتقال قرارداد Transaction/UoW به Application و UoW per-request انجام شده است. در زمان آن مرحله، Balance/Journal SQL و `QSqlDatabase` به‌صورت انتقالی در Deposit باقی ماندند.
 - **1B.1:** استخراج ساختاری Balance از Deposit انجام شده است: قرارداد `IBalanceRepository` در Application، پیاده‌سازی `BalanceRepository` در Infrastructure و `balances()` در قرارداد/پیاده‌سازی UoW با همان Connection و تراکنش. SQLها، bindها، ترتیب Queryها/قفل‌ها، زمان مرجع و فرمول محاسبه فعلی حفظ شده‌اند. این مرحله فقط استخراج ساختاری است؛ تکمیل 1B، رفع شکاف هم‌زمانی قواعد مؤثر یا اصلاح `available_balance` را ادعا نمی‌کند.
@@ -21,7 +23,7 @@
 - **1C.2:** بسته نهایی استخراج persistence از Deposit انجام شده است: Account currency lookup، Account row lock و Hold row lock به `IAccountStateRepository`/`IHoldRepository` در Application و پیاده‌سازی‌های Infrastructure منتقل شدند و از `accounts()`/`holds()` همان UoW استفاده می‌کنند. `DepositService` دیگر هیچ SQL، `QSqlDatabase`، `QSqlQuery` یا include مستقیم Infrastructure ندارد. این مرحله تکمیل Domain rules، رفع race یا آمادگی عملیاتی بانکی نیست.
 - **1B:** در جریان است. فقط 1B.1 انجام شده و ادامه آن نیازمند تأیید جداگانه است.
 - **1C:** در جریان است. استخراج ساختاری 1C.1 و 1C.2 انجام شده؛ ادامه آن نیازمند تأیید جداگانه است.
-- **Balance Slice:** شروع نشده است. شکاف هم‌زمانی قواعد مؤثر و نبود Override باید پیش از آن تعیین تکلیف شود.
+- **Balance Slice:** شروع نشده است. شکاف هم‌زمانی قواعد مؤثر، ابهام Override و زمان مرجع باید پیش از آن تعیین تکلیف شود. پیشنهاد کوچک‌ترین گام بعدی در [BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md](opencode-reports/BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md) ثبت شده است.
 - **Hold API:** در دامنه مصوب خود بسته شده است؛ Migration 018 اجرا شده و `CURRENT_SCHEMA.sql` به‌روز است.
 - **وضعیت fail-closed 1A:** پس از `CommitOutcomeUnknown`، `RollbackFailed` یا شکست BEGIN روی اتصال باز، اتصال مشترک بسته می‌ماند و بدون بازگشایی خودکار بسته است؛ دسترسی دیتابیس سرویس تا restart متوقف می‌شود. این مصالحه موقت ایمنی است، نه معماری نهایی مدیریت اتصال.
 - **ابهام Commit:** restart یا بستن اتصال، نتیجه Commit قبلی را تعیین نمی‌کند. Retry باید با همان `idempotencyKey` انجام شود و نتیجه پایدار را از دیتابیس بازیابی کند؛ عملیات مالی خودکار با کلید جدید مجاز نیست.
@@ -57,7 +59,50 @@
 - [1A_F1_F2_IMPLEMENTATION.md](opencode-reports/1A_F1_F2_IMPLEMENTATION.md) — گزارش پیاده‌سازی اصلاح F1/F2.
 - [1A_F1_F2_HARNESS_EVIDENCE.md](opencode-reports/1A_F1_F2_HARNESS_EVIDENCE.md) — گزارش Harness و خروجی خام آن.
 - [DOCUMENTATION_REORGANIZATION.md](opencode-reports/DOCUMENTATION_REORGANIZATION.md) — گزارش همین بازآرایی مستندات.
+- [BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md](opencode-reports/BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md) — گزارش طراحی مرحله بعدی Balance در مسیر Deposit (بررسی/طراحی، بدون اجرا).
+- [DEPOSIT_COMPLETION_RESULT.md](opencode-reports/DEPOSIT_COMPLETION_RESULT.md) — گزارش تکمیل و آزمون واقعی Deposit و اصلاح مبلغ عددی.
 - گزارش‌های Hold: [HOLD_SERVICE_IMPLEMENTATION.md](opencode-reports/HOLD_SERVICE_IMPLEMENTATION.md)، [HOLD_CONTROLLER_IMPLEMENTATION.md](opencode-reports/HOLD_CONTROLLER_IMPLEMENTATION.md)، [HOLD_018_COREBANKING_TEST_PLAN.md](opencode-reports/HOLD_018_COREBANKING_TEST_PLAN.md) و [HOLD_EVENT_FINAL_CLOSURE.md](opencode-reports/HOLD_EVENT_FINAL_CLOSURE.md).
+
+### تفکیک نقشه‌راه از وضعیت واقعی
+
+- نقشه‌راه پروژه، **ترتیب طراحی و توسعه از صفر** را تعیین می‌کند و به‌تنهایی شاهدی بر وضعیت مخزن نیست.
+- وضعیت واقعی مخزن باید مستقل و مبتنی بر شواهد گزارش شود: کد جاری، Schema، Router، و آزمون‌های واقعاً اجراشده.
+- وجود Schema، Migration، Route، Repository یا enum به‌تنهایی به معنای تکمیل کل قابلیت نیست.
+- تکمیل یک API زیرمجموعه به معنای تکمیل کل فاز نیست.
+- Transaction Query، Account Statement، Journal Inquiry، General Ledger Inquiry و Trial Balance قابلیت‌های **متمایز** هستند و نباید با یکدیگر یا با Deposit/Transfer جمع شوند.
+- در صورت اختلاف بین نقشه‌راه و وضعیت مخزن، گزارش شواهد مخزن مرجع است و اختلاف باید صریح ثبت شود.
+
+### ماتریس تطبیق نقشه‌راه و وضعیت مخزن — 2026-11-16
+
+این جدول از روی کد جاری، `database/CURRENT_SCHEMA.sql`، `src/web/httprouter.cpp` و شواهد ثبت‌شده در `PROJECT_HISTORY.md` تکمیل شده است. گستره فاز از تکمیل یک API زیرمجموعه نتیجه گرفته نشده است.
+
+| # | فاز | قابلیت موجود و محدوده آن | وضعیت شواهد آزمون | شکاف باقی‌مانده | اقدام بعدی یا نیاز به تأیید |
+|---|---|---|---|---|---|
+| ۱ | زیرساخت و امنیت | Connection مشترک Qt SQL، UoW برای مسیر Deposit، مالکیت تراکنش در Use Case، fail-closed موقت | Harness F1/F2 در History 18.18/18.20؛ بدون آزمون QPSQL واقعی در قطع ارتباط | مدیریت مرکزی اتصال/recovery، آزمون واقعی QPSQL، ریسک مشترک مسیرهای legacy | تأیید جداگانه برای هر تغییر؛ آزمون اختلال نیازمند مجوز |
+| ۲ | داده‌های پایه | Country، Province، City، Branch، Currency با CRUD طبق Router | تأیید کاربر 2026-10-28 برای Country/Currency/City/Branch؛ Province با شواهد آزمون ناکافی در سند | Province بدون شواهد آزمون ثبت‌شده | بررسی/تکمیل شواهد آزمون Province |
+| ۳ | تعاریف حسابداری | Account Type، Ledger Account، Product–Ledger Mapping | تأیید کاربر برای Ledger Accounts؛ Account Type و Mapping با شواهد ناکافی | آزمون مستقیم endpointهای Account Type و Mapping | تکمیل شواهد آزمون؛ بدون بازنویسی |
+| ۴ | مشتری | Customer ایجاد/خواندن با `nationalId`، Individual/Legal Entity، شماره‌گذاری ۱۰ رقمی | تأیید کاربر 2026-10-28 | شواهد تفصیلی آزمون محدود | ثبت شواهد آزمون در صورت نیاز |
+| ۵ | محصول و قواعد | Product CRUD/وضعیت؛ `product_balance_rule` و `account_balance_rule_override` در Schema | تأیید کاربر برای Products؛ قواعد مانده فقط در Schema/SQL و بدون آزمون API | نبود API خواندن/نوشتن قواعد؛ ابهام Override حداقل؛ شکاف هم‌زمانی | تصمیم‌های D1–D3 گزارش طراحی Balance |
+| ۶ | حساب و مالکیت | افتتاح حساب اتمیک با `account_balance` صفر، مالکیت اولیه، وضعیت/چرخه عمر | تأیید کاربر 2026-10-28 برای Opening و Status | مدیریت روابط/اختیارات چندامضایی و محدودیت عملیاتی API ندارد | فاز مستقل با طراحی جداگانه |
+| ۷ | Transaction + Journal + Balance | Transaction/Journal/Ledger در Deposit؛ استخراج ساختاری 1A/1B.1/1C.1/1C.2 | API و SQL read-only در History 18.17؛ آزمون هدفمند QSQLITE در 18.21–18.23؛ بدون PostgreSQL واقعی | قاعده مؤثر مانده، زمان مرجع، Override، race و invariants ژورنال | زیرمرحله 1B.2 پیشنهادی و تصمیم‌های D1–D3 |
+| ۸ | Deposit | `POST /api/v1/deposits` با Idempotency آدرس‌دهی‌شده، Journal متوازن، افزایش مانده؛ مبلغ عددی بدون گردکردن بی‌صدا | تأیید کاربر 2026-10-28؛ آزمون‌های 1A/1A.1 در History 18.17/18.20؛ تکمیل و آزمون واقعی API در 18.25 | Cache کهنه `available_balance`، حداقل مانده، هم‌ترازی legacy، نبود fixture برای محصول/سرفصل نامعتبر | ادامه در دامنه Balance با تأیید جداگانه |
+| ۹ | Hold / وجه قابل استفاده / Balance Inquiry | Hold API بسته؛ محاسبه `ledger_balance - active_holds` در Hold | آزمون API Hold در History 18.14/18.15 | API خواندن مانده وجود ندارد؛ تفاوت معنای «قابل استفاده» بین Hold و Cache/Transfer | Balance Slice با تأیید جداگانه |
+| ۱۰ | Limits | محدودیت عملیاتی حساب در Schema/قواعد مستند | شواهدی ثبت نشده | بدون API مدیریت، بدون اعمال اثبات‌شده در مسیرهای مالی | طراحی و تأیید مستقل |
+| ۱۱ | Transfer / Withdrawal | `POST /api/v1/transfers` موجود؛ Withdrawal وجود ندارد | تأیید کاربر 2026-10-28 برای Transfer؛ شواهد تفصیلی ناقص | Withdrawal ندارد؛ حداقل مانده فقط در Transfer؛ مسیر Overdraft رد می‌شود | تأیید جداگانه؛ هم‌ترازی با قواعد Balance |
+| ۱۲ | Reversal | جدول/نوع `REVERSAL` و ستون `reverses_transaction_id` در Schema | شواهدی ثبت نشده | بدون Service/Route/Controller؛ بدون کنترل برگشت دوگانه | طراحی و تأیید مستقل |
+| ۱۳ | استعلام و گزارش‌گیری مالی | — | — | Transaction Query، Account Statement، Journal Inquiry، GL Inquiry و Trial Balance همگی وجود ندارند | تصمیم درباره نیاز و قرارداد API |
+| ۱۴ | Overdraft / Fees | Overdraft در SQL محاسبه و در Transfer با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود؛ `transaction_fee` فقط در Schema | تأیید/آزمون چرخه اضافه‌برداشت وجود ندارد | چرخه کامل اعتبار/بدهی/تسویه و Fees پیاده نشده | تصمیم کسب‌وکار و فاز مستقل |
+| ۱۵ | Reconciliation / پایان روز / بستن دوره | — | — | بدون Job، بدون API، بدون آزمون تطبیق جامع | طراحی و تأیید مستقل |
+
+### وضعیت مرحله طراحی Balance (پیش از تکمیل Deposit) — 2026-11-16
+
+- در آن مرحله صرفاً بررسی کد، طراحی و مستندسازی انجام شد؛ وضعیت فعلی Deposit در بخش «وضعیت جاری» و History بخش 18.25 ثبت شده است.
+- در آن مرحله هیچ پیاده‌سازی جدید، Build، آزمون اجرایی، Migration یا تغییر داده مربوط به Deposit انجام نشد.
+- زیرمرحله پیشنهادی Balance (1B.2) هنوز تأیید یا اجرا نشده است.
+- Balance Slice با تولید گزارش طراحی «شروع‌شده» یا «انجام‌شده» محسوب نمی‌شود.
+- ادامه 1C با این درخواست خودکار مجاز نمی‌شود.
+- گزارش طراحی: [BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md](opencode-reports/BALANCE_DEPOSIT_NEXT_STEP_DESIGN.md).
+
 
 ## 1. هدف، وضعیت و معماری جاری
 
