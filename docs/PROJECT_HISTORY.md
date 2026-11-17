@@ -31,8 +31,8 @@
 - GCC 12.2
 - CMake 3.25
 - PostgreSQL 15.x
-- مسیر پروژه: `/home/ahmad/projects/CoreBanking`
-- مسیر Build: `/home/ahmad/projects/build-CoreBanking-Desktop-Debug`
+- مسیر پروژه: `/home/it4850/Projects/CoreBanking`
+- مسیر Build: `/home/it4850/Projects/build-CoreBanking-Desktop-Debug`
 - دیتابیس اصلی: `corebanking`
 - پورت API: `8080`
 
@@ -45,7 +45,7 @@ psql -U corebanking -h localhost -d corebanking -W
 دستور Build:
 
 ```bash
-cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2
+cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2
 ```
 
 آزمون Health API:
@@ -2160,6 +2160,106 @@ g++ -std=c++17 -fPIC -I. tests/deposit_orchestration_test.cpp \
 - سیاست minimum با ردیف Rule واقعی در PostgreSQL آزمون نشد؛ فقط عبارت SQL با VALUES/CTE و مسیر no-rule از طریق API بررسی شد.
 - Overdraft واقعی، Override واقعی، مرزهای زمانی Rule، هم‌زمانی، Fault Injection و `CommitOutcomeUnknown` آزمون نشدند.
 - این مرحله آمادگی جامع انتشار نیست؛ مسیر پایه Withdrawal آزموده شده، اما قواعد واقعی و سناریوهای رقابتی/خطا پوشش کامل ندارند.
+
+### 18.28 اصلاح محدود سیاست حداقل مانده Transfer — T1 — 2026-11-16
+
+#### منبع شواهد
+
+`docs/opencode-reports/TRANSFER_MINIMUM_POLICY_RESULT.md`
+
+نتایج زیر از گزارش اجرای T1 نقل می‌شوند؛ در مرحله مستندسازی، Build یا آزمون جدیدی اجرا نشده است.
+
+#### محدوده
+
+فقط بلوک محاسبه minimum در `loadLockedAccounts` از `src/application/transferservice.cpp` به قاعده مفهومی زیر تغییر کرد:
+
+```text
+GREATEST(COALESCE(product_minimum, 0),
+         COALESCE(account_override_minimum, 0))
+```
+
+نام‌های بالا بیان مفهومی دو ورودی هستند. عبارت واقعی موجود در گزارش T1، بدون نام‌گذاری جدید، به این صورت است:
+
+```sql
+GREATEST(
+  COALESCE((SELECT pbr.minimum_balance
+            FROM product_balance_rule pbr
+           WHERE pbr.product_id = a.product_id
+             AND pbr.effective_from <= CURRENT_TIMESTAMP
+             AND (pbr.effective_to IS NULL OR pbr.effective_to > CURRENT_TIMESTAMP)
+           ORDER BY pbr.effective_from DESC LIMIT 1), 0),
+  COALESCE((SELECT o.minimum_balance
+            FROM account_balance_rule_override o
+           WHERE o.account_id = a.id
+             AND o.minimum_balance IS NOT NULL
+             AND o.effective_from <= CURRENT_TIMESTAMP
+             AND (o.effective_to IS NULL OR o.effective_to > CURRENT_TIMESTAMP)
+           ORDER BY o.effective_from DESC LIMIT 1), 0)
+)
+```
+
+هدف، اجرای تصمیم مصوب بود که Override حساب فقط می‌تواند حداقل محصول را افزایش دهد.
+
+#### نتایج گزارش‌شده
+
+Build موفق؛ ۷ آزمون expression-level موفق.
+
+#### محدودیت آزمون
+
+Query کامل تولیدی `loadLockedAccounts` مستقیماً اجرا نشد. آزمون expression به‌تنهایی انتخاب Rule مؤثر، فیلترهای زمانی، قفل‌ها یا رفتار مالی Transfer با Ruleهای واقعی PostgreSQL را اثبات نمی‌کند.
+
+#### بدون تغییر در T1
+
+Commit/Rollback، قرارداد API، Schema، Migration و داده‌ها.
+
+در خود اجرای T1، `PROJECT_CONTEXT.md` و `PROJECT_HISTORY.md` تغییر نکردند؛ ثبت حاضر در مرحله مستندسازی بعدی اضافه شده است.
+
+#### وضعیت
+
+اصلاح فرمول minimum در دامنه محدود گزارش شده است؛ رفع خطر Commit/Rollback یا آمادگی انتشار Transfer از آن نتیجه نمی‌شود.
+
+جزئیات SHA مبنای اجرای T1، وضعیت Git، دستورها و خروجی‌ها در گزارش مرجع نگهداری می‌شوند.
+
+### 18.29 آماده‌سازی و هم‌ترازی محیط جدید پیش از T2 — 2026-11-17
+
+#### دامنه این ثبت
+
+- این مرحله فقط مستندسازی و هم‌ترازی مسیرهای محیط بود؛ هیچ سرویس، کد، Schema یا آزمونی در آن اجرا نشد.
+
+#### محیط و مسیرهای جدید
+
+- مسیر پروژه: `/home/it4850/Projects/CoreBanking`
+- مسیر Build: `/home/it4850/Projects/build-CoreBanking-Desktop-Debug`
+- طبق گزارش کاربر، پروژه همراه با تغییرات Commit‌نشده منتقل شده است؛ روش انتقال فلش مموری بوده و توسط کاربر اعلام شده است.
+
+#### تغییرات مسیر در این مرحله
+
+- در `AGENTS.md`، `docs/PROJECT_CONTEXT.md` و بخش محیط همین سند (`PROJECT_HISTORY.md` بخش 2)، مسیر پروژه و Build با محیط جدید هماهنگ شد.
+- در رکوردهای تاریخی این سند (بخش‌های 18.x)، مسیرهای قدیمی `/home/ahmad/projects/...` دست‌نخورده نگه داشته شدند؛ زیرا محیط زمان همان رخداد را ثبت می‌کنند.
+
+#### گزارش‌شده توسط کاربر (بررسی مستقل نشده)
+
+- نسخه اعلام‌شده OpenCode: `2.3.0`.
+- Build موفق در Qt Creator.
+- لاگ ارسالی کاربر اتصال موفق دیتابیس و شروع HTTP server روی پورت `8080` را نشان می‌دهد.
+- ایجاد دیتابیس `corebanking` و نقش‌های `corebanking` و `corebanking_reader` و اجرای `CURRENT_SCHEMA.sql` طبق گزارش کاربر.
+- اتصال OpenCode به‌گفته کاربر اصلاح شده است.
+- این موارد در حد گزارش کاربر ثبت می‌شوند و تأییدکننده صحت Schema، مجوزهای کامل دیتابیس، APIهای مالی یا ایمنی Commit/Rollback نیستند.
+
+#### اجرا نشده در این مرحله
+
+- Build، اجرای برنامه، آزمون HTTP/API، اتصال به دیتابیس و بررسی داده اجرا نشدند.
+- Migration، DDL و تغییر داده یا مجوز انجام نشد.
+
+#### وضعیت T1 و T2
+
+- وضعیت T1 همان‌طور که در 18.28 ثبت شده باقی است؛ Build و ۷ آزمون expression-level گزارش‌شده با آزمون Query کامل تولیدی یا آزمون یکپارچه/دیتابیس یکسان نیستند.
+- T2 آغاز یا اجرا نشده است.
+
+#### محدودیت‌ها
+
+- مسیرهای تاریخی حفظ‌شده ممکن است با محیط فعلی متفاوت باشند و نباید به‌عنوان وضعیت جاری خوانده شوند.
+- `CMakeLists.txt.user.*` موجود جزو فایل‌های Commit‌نشده است و در این مرحله تغییر نکرد.
 
 ## 19. قاعده پایانی تاریخچه
 

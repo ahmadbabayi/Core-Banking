@@ -32,10 +32,10 @@
 - Keep a clear record of test data created during each stage so the user knows what remains in the development database.
 
 ## 5. Build and test environment
-- Use the existing Qt Creator build directory only: `/home/ahmad/projects/build-CoreBanking-Desktop-Debug`.
+- Use the existing Qt Creator build directory only: `/home/it4850/Projects/build-CoreBanking-Desktop-Debug`.
 - The existing build uses CMake, `Unix Makefiles`, and `Debug`. Do not create a second build directory or an in-repository `build/` directory.
 - Normal build command:
-  `cmake --build /home/ahmad/projects/build-CoreBanking-Desktop-Debug -j2`
+  `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2`
 - Do not run `cmake -S`, reconfigure CMake, change the Qt kit, change build type, or alter the build directory without first explaining why and obtaining user approval.
 - Run the application and API integration tests against the local development instance. Do not add temporary test code to `src/main.cpp`.
 - A successful compile is not a substitute for API tests. Verify relevant API responses and use `corebanking_reader` to check persisted state.
