@@ -187,7 +187,7 @@ bool loadLockedAccounts(QSqlDatabase& db,
     query.bindValue(":second_id", secondId);
 
     if (!query.exec()) {
-        *error = query.lastError().text();
+        *error = QStringLiteral("Account state could not be read");
         return false;
     }
 
@@ -238,7 +238,7 @@ bool persistRejection(QSqlDatabase& db, qint64 transactionId,
     query.bindValue(":id", transactionId);
 
     if (!query.exec() || query.numRowsAffected() != 1) {
-        *error = query.lastError().text();
+        *error = QStringLiteral("Transaction rejection could not be persisted");
         return false;
     }
 
@@ -273,7 +273,7 @@ bool recalculateAvailableBalance(QSqlDatabase& db,
     query.bindValue(":account_id", account.id);
 
     if (!query.exec() || query.numRowsAffected() != 1) {
-        *error = query.lastError().text();
+        *error = QStringLiteral("Account balance could not be updated");
         return false;
     }
 
@@ -317,6 +317,10 @@ TransferResult TransferService::transfer(
     if (idempotencyKey.isEmpty() || idempotencyKey.size() > 100)
         return rejected(QStringLiteral("INVALID_IDEMPOTENCY_KEY"),
                         QStringLiteral("idempotencyKey must contain 1 to 100 characters"));
+
+    if (description.size() > 500)
+        return rejected(QStringLiteral("INVALID_DESCRIPTION"),
+                        QStringLiteral("description must not exceed 500 characters"));
 
     QSqlDatabase db = m_database;
 
@@ -392,7 +396,7 @@ TransferResult TransferService::transfer(
         if (!lock.exec() || !lock.next())
             return rollbackFailure(
                 QStringLiteral("IDEMPOTENCY_LOCK_FAILED"),
-                lock.lastError().text());
+                QStringLiteral("Idempotency guard could not be acquired"));
     }
 
     const QString fingerprint = fingerprintFor(
@@ -413,7 +417,7 @@ TransferResult TransferService::transfer(
         if (!existing.exec())
             return rollbackFailure(
                 QStringLiteral("IDEMPOTENCY_LOOKUP_FAILED"),
-                existing.lastError().text());
+                QStringLiteral("Idempotency record could not be read"));
 
         if (existing.next()) {
             const qint64 priorId = existing.value(0).toLongLong();
@@ -482,7 +486,7 @@ TransferResult TransferService::transfer(
         if (!sourceCurrency.exec())
             return rollbackFailure(
                 QStringLiteral("SOURCE_ACCOUNT_LOOKUP_FAILED"),
-                sourceCurrency.lastError().text());
+                QStringLiteral("Source account could not be read"));
 
         if (!sourceCurrency.next()) {
             return rollbackRejected(
@@ -524,7 +528,7 @@ TransferResult TransferService::transfer(
         if (!insert.exec() || !insert.next())
             return rollbackFailure(
                 QStringLiteral("TRANSACTION_CREATE_FAILED"),
-                insert.lastError().text());
+                QStringLiteral("Transaction could not be created"));
 
         transactionId = insert.value(0).toLongLong();
     }
@@ -551,6 +555,11 @@ TransferResult TransferService::transfer(
         return rejected(code, message, transactionId, transactionNumber);
     };
 
+    bool sourceAccountExists = false;
+    bool destinationAccountExists = false;
+    bool sourceBalanceExists = false;
+    bool destinationBalanceExists = false;
+
     // Global lock order: account rows by ascending id, then balance rows,
     // then hold rows by (account_id, id). Hold creation/release services must
     // follow this same order to avoid deadlocks with transfers.
@@ -567,11 +576,17 @@ TransferResult TransferService::transfer(
         if (!accountLocks.exec())
             return rollbackFailure(
                 QStringLiteral("ACCOUNT_LOCK_FAILED"),
-                accountLocks.lastError().text(),
+                QStringLiteral("Account rows could not be locked"),
                 transactionId, transactionNumber);
 
         while (accountLocks.next()) {
-            // Acquire account locks.
+            const qint64 lockedAccountId =
+                accountLocks.value(0).toLongLong();
+
+            if (lockedAccountId == sourceAccountId)
+                sourceAccountExists = true;
+            else if (lockedAccountId == destinationAccountId)
+                destinationAccountExists = true;
         }
     }
 
@@ -588,11 +603,17 @@ TransferResult TransferService::transfer(
         if (!balanceLocks.exec())
             return rollbackFailure(
                 QStringLiteral("ACCOUNT_BALANCE_LOCK_FAILED"),
-                balanceLocks.lastError().text(),
+                QStringLiteral("Account balance rows could not be locked"),
                 transactionId, transactionNumber);
 
         while (balanceLocks.next()) {
-            // Acquire balance locks.
+            const qint64 lockedAccountId =
+                balanceLocks.value(0).toLongLong();
+
+            if (lockedAccountId == sourceAccountId)
+                sourceBalanceExists = true;
+            else if (lockedAccountId == destinationAccountId)
+                destinationBalanceExists = true;
         }
     }
 
@@ -609,7 +630,7 @@ TransferResult TransferService::transfer(
         if (!holdLocks.exec())
             return rollbackFailure(
                 QStringLiteral("HOLD_LOCK_FAILED"),
-                holdLocks.lastError().text(),
+                QStringLiteral("Account hold rows could not be locked"),
                 transactionId, transactionNumber);
 
         while (holdLocks.next()) {
@@ -626,10 +647,25 @@ TransferResult TransferService::transfer(
             dbError, transactionId, transactionNumber);
     }
 
-    if (accounts.size() != 2)
+    // The existing lock queries above report which account and balance rows
+    // actually exist. Distinguish a missing account from a missing balance row
+    // instead of treating both as "not found"; a query error already returned
+    // above and is never converted into a missing row.
+    if (!sourceAccountExists || !destinationAccountExists)
         return rejectAndCommit(
             QStringLiteral("ACCOUNT_NOT_FOUND"),
-            QStringLiteral("Both accounts must exist and have initialized balances"));
+            QStringLiteral("Both accounts must exist"));
+
+    if (!sourceBalanceExists || !destinationBalanceExists)
+        return rejectAndCommit(
+            QStringLiteral("ACCOUNT_BALANCE_NOT_INITIALIZED"),
+            QStringLiteral("Both accounts must have initialized balances"));
+
+    if (accounts.size() != 2)
+        return rollbackFailure(
+            QStringLiteral("ACCOUNT_LOCK_OR_READ_FAILED"),
+            QStringLiteral("Locked account snapshot is incomplete"),
+            transactionId, transactionNumber);
 
     AccountState source = accounts.value(sourceAccountId);
     AccountState destination = accounts.value(destinationAccountId);
@@ -692,7 +728,7 @@ TransferResult TransferService::transfer(
         if (!funds.exec() || !funds.next())
             return rollbackFailure(
                 QStringLiteral("AVAILABLE_FUNDS_CHECK_FAILED"),
-                funds.lastError().text(),
+                QStringLiteral("Available funds could not be verified"),
                 transactionId, transactionNumber);
 
         amountWithinDepositFunds = funds.value(0).toBool();
@@ -728,7 +764,7 @@ TransferResult TransferService::transfer(
         if (!ensure.exec())
             return rollbackFailure(
                 QStringLiteral("LEDGER_BALANCE_INIT_FAILED"),
-                ensure.lastError().text(),
+                QStringLiteral("Ledger balance rows could not be prepared"),
                 transactionId, transactionNumber);
     }
 
@@ -746,7 +782,7 @@ TransferResult TransferService::transfer(
         if (!lock.exec())
             return rollbackFailure(
                 QStringLiteral("LEDGER_BALANCE_LOCK_FAILED"),
-                lock.lastError().text(),
+                QStringLiteral("Ledger balance rows could not be locked"),
                 transactionId, transactionNumber);
 
         int lockedCount = 0;
@@ -790,7 +826,7 @@ TransferResult TransferService::transfer(
         if (!entries.exec())
             return rollbackFailure(
                 QStringLiteral("TRANSACTION_ENTRY_CREATE_FAILED"),
-                entries.lastError().text(),
+                QStringLiteral("Transaction entries could not be created"),
                 transactionId, transactionNumber);
     }
 
@@ -814,7 +850,7 @@ TransferResult TransferService::transfer(
         if (!journal.exec() || !journal.next())
             return rollbackFailure(
                 QStringLiteral("JOURNAL_CREATE_FAILED"),
-                journal.lastError().text(),
+                QStringLiteral("Journal could not be created"),
                 transactionId, transactionNumber);
 
         journalId = journal.value(0).toLongLong();
@@ -849,7 +885,7 @@ TransferResult TransferService::transfer(
         if (!entries.exec())
             return rollbackFailure(
                 QStringLiteral("JOURNAL_ENTRY_CREATE_FAILED"),
-                entries.lastError().text(),
+                QStringLiteral("Journal entries could not be created"),
                 transactionId, transactionNumber);
     }
 
@@ -866,7 +902,7 @@ TransferResult TransferService::transfer(
         if (!check.exec() || !check.next())
             return rollbackFailure(
                 QStringLiteral("JOURNAL_BALANCE_CHECK_FAILED"),
-                check.lastError().text(),
+                QStringLiteral("Journal balance could not be verified"),
                 transactionId, transactionNumber);
 
         if (check.value(0).toInt() != 2 || !check.value(1).toBool())
@@ -916,7 +952,7 @@ TransferResult TransferService::transfer(
             " updated_at = CURRENT_TIMESTAMP")) {
             return rollbackFailure(
                 QStringLiteral("LEDGER_BALANCE_PREPARE_FAILED"),
-                ledgerUpdate.lastError().text(),
+                QStringLiteral("Ledger balance update could not be prepared"),
                 transactionId, transactionNumber);
         }
 
@@ -928,7 +964,7 @@ TransferResult TransferService::transfer(
         if (!ledgerUpdate.exec())
             return rollbackFailure(
                 QStringLiteral("LEDGER_BALANCE_UPDATE_FAILED"),
-                ledgerUpdate.lastError().text(),
+                QStringLiteral("Ledger balance update failed"),
                 transactionId, transactionNumber);
     }
 
@@ -947,9 +983,7 @@ TransferResult TransferService::transfer(
         if (!post.exec() || post.numRowsAffected() != 1)
             return rollbackFailure(
                 QStringLiteral("JOURNAL_POST_FAILED"),
-                post.lastError().text().isEmpty()
-                    ? QStringLiteral("Journal is unbalanced or could not be posted")
-                    : post.lastError().text(),
+                QStringLiteral("Journal is unbalanced or could not be posted"),
                 transactionId, transactionNumber);
     }
 
@@ -967,7 +1001,7 @@ TransferResult TransferService::transfer(
         if (!finish.exec() || finish.numRowsAffected() != 1)
             return rollbackFailure(
                 QStringLiteral("TRANSACTION_COMPLETE_FAILED"),
-                finish.lastError().text(),
+                QStringLiteral("Transaction could not be completed"),
                 transactionId, transactionNumber);
     }
 

@@ -2330,6 +2330,102 @@ cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2
 - بستن اتصال مشترک نامطمئن ممکن است درخواست‌های بعدی را تا بازیابی اتصال با `DATABASE_UNAVAILABLE` مواجه کند؛ بازیابی اتصال خارج از دامنهٔ این مرحله است.
 - این رکورد ادعای ایمنی مالی اثبات‌شده یا آمادگی انتشار نمی‌کند.
 
+### 18.31 اصلاح تجمیعی Transfer — C3، C5، C7، C8 — 2026-11-18
+
+#### منبع شواهد
+
+`docs/opencode-reports/TRANSFER_C3_C5_C7_C8_RESULT.md`
+
+Build، آزمون‌های API و بررسی‌های SQL این رکورد در همین مرحله و در همین checkout اجرا شدند. هیچ نتیجه‌ای از مرحلهٔ دیگری به‌عنوان شاهد جدید نقل نمی‌شود.
+
+#### مبنا و وضعیت اولیهٔ Git
+
+- HEAD و commit حل‌شدهٔ `33add8f`: `33add8f0260de52d000f26831b01970cfb48fbd6` (یکسان).
+- `git status --short` در شروع مرحله بدون خروجی بود؛ working tree پاک.
+- تغییرات T1 (سیاست حداقل) و T2 (`UnitOfWork`) در سورس حاضر بودند.
+- هیچ checkout/reset/stash یا عملیات نوشتنی Git اجرا نشد.
+
+#### محدوده و فایل‌ها
+
+- تغییر: `src/web/transfercontroller.cpp` (C3)
+- تغییر: `src/application/transferservice.cpp` (C5، C7، C8)
+- ایجاد: `docs/opencode-reports/TRANSFER_C3_C5_C7_C8_RESULT.md`
+- به‌روزرسانی: `docs/PROJECT_CONTEXT.md` و همین سند
+- بدون تغییر: `transferservice.h`، `transfercontroller.h`، `unitofwork.*`، Repositoryها، Router، `src/main.cpp`، Schema/Migration، State Machine، سایر سرویس‌ها، CMake و فایل‌های Qt Creator.
+- هیچ Migration/DDL، SQL نوشتنی، Fault Injection یا `stage`/`commit`/`push` اجرا نشد.
+
+#### تغییر رفتار
+
+- **C3:** برای مبلغ JSON number، `QString::number(value, 'f', 8)` ساخته می‌شود و اگر `canonical.toDouble() != numericAmount` بود، پیش از فراخوانی سرویس `422 INVALID_AMOUNT` برگردانده می‌شود؛ همان الگوی `DepositController`. ورودی رشته‌ای و اعتبارسنجی سرویس تغییر نکرد و مبلغ صرفاً رشته‌ای نشد. این گارد از گردکردن هنگام قالب‌بندی جلوگیری می‌کند، نه از افت دقت هنگام parse شدن JSON.
+- **C8:** روی `description` نرمال‌شده با `trim` و با `QString::size()` بررسی می‌شود؛ بیش از ۵۰۰ پیش از `Begin` و هر نوشتن با `Rejected / INVALID_DESCRIPTION` (HTTP 422) رد می‌شود. پاسخ 400 برای نوع نامعتبر و پذیرش description خالی/اختیاری تغییر نکرد.
+- **C5:** همهٔ `lastError().text()`ها در `TransferService` و سه helper داخلی (`loadLockedAccounts`، `persistRejection`، `recalculateAvailableBalance`) با پیام‌های ثابت جایگزین شدند؛ کدهای خطا و HTTP statusها حفظ شدند و متن خام SQL/درایور به `TransferResult` نمی‌رسد. پیام «نتیجه Commit نامعلوم است» و رفتار Commit/Rollback مصوب T2 دست‌نخورده ماند.
+- **C7:** از شناسه‌هایی که همان Queryهای قفل موجود `account` و `account_balance` برمی‌گردانند چهار boolean پر می‌شود. نبود هر حساب → `Rejected / ACCOUNT_NOT_FOUND` (مقدم)؛ وجود هر دو حساب بدون ردیف مانده → `Rejected / ACCOUNT_BALANCE_NOT_INITIALIZED`. خطای Query همچنان به `rollbackFailure` می‌رود و به «ردیف موجود نیست» تبدیل نمی‌شود. مسیر rejection/Commit، JOIN اسنپ‌شات، ترتیب قفل account → balance → hold و ترتیب صعودی شناسه‌ها تغییر نکردند و Query/قفل تازه‌ای اضافه نشد.
+- شاخهٔ دفاعی قبلی `accounts.size() != 2` که پیش‌تر `ACCOUNT_NOT_FOUND` برمی‌گرداند، به `Failed / ACCOUNT_LOCK_OR_READ_FAILED` با پیام ثابت «Locked account snapshot is incomplete» تغییر کرد تا ناسازگاری داده به «حساب ناموجود» نسبت داده نشود.
+
+#### Build
+
+```bash
+cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+خروجی واقعی:
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/transferservice.cpp.o
+[  2%] Building CXX object CMakeFiles/CoreBanking.dir/src/web/transfercontroller.cpp.o
+[  3%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+نتیجه: موفق؛ هشدار کامپایلری مشاهده نشد. `git diff --check` نیز بدون خطا (exit 0) بود.
+
+#### آزمون API
+
+سرور از همان Build موجود روی `http://localhost:8080` اجرا شد؛ `GET /api/v1/health` پاسخ `200` و `{"data":{"status":"UP"},"success":true}` داد و سپس متوقف شد (پورت 8080 آزاد شد).
+
+| # | سناریو | نتیجهٔ واقعی |
+|---|---|---|
+| A | عدد `0.123456789` (قالب‌بندی تغییرش می‌دهد) | `422 INVALID_AMOUNT` |
+| B | عدد معتبر `0.12345678` | `422 ACCOUNT_NOT_FOUND` (از سرویس گذشت) |
+| C | description با ۵۰۱ کاراکتر پس از trim | `422 INVALID_DESCRIPTION` |
+| D | description با ۵۰۰ کاراکتر پس از trim | `422 ACCOUNT_NOT_FOUND` (طول مجاز بود) |
+| E | مبلغ رشته‌ای `"1.00"` | `422 ACCOUNT_NOT_FOUND` |
+| F | مبلغ رشته‌ای `"0.123456789"` | `422 INVALID_AMOUNT` |
+| G | description غایب | `422 ACCOUNT_NOT_FOUND` |
+| H | description غیررشته‌ای (`123`) | `400 INVALID_DESCRIPTION` |
+| I | مقصد `999999999` | `422 ACCOUNT_NOT_FOUND` |
+
+کلیدهای idempotency: `t4-c3-a-20261118`، `t4-c3-b-20261118`، `t4-c8-c-20261118`، `t4-c8-d-20261118`، `t4-c3-e-20261118`، `t4-c3-f-20261118`، `t4-c8-g-20261118`، `t4-c8-h-20261118`، `t4-c7-i-20261118`.
+
+**محدودیت مهم:** دیتابیس توسعه خالی بود (`accounts=0, balances=0, customers=0, products=0`)، بنابراین همهٔ `ACCOUNT_NOT_FOUND`ها از lookup زودهنگام حساب مبدأ آمدند و مسیر جدید C7 با Queryهای قفل اجرا نشد.
+
+#### آزمون‌های اجرانشده
+
+اجرا نشد (به دلیل نبود fixture مجاز، نه شکست): انتقال موفق با مبلغ رشته‌ای، انتقال موفق با مبلغ عددی ۸ اعشاری، ثبت/بازیابی description ۵۰۰ کاراکتری، حساب مقصد ناموجود با مبدأ موجود، `ACCOUNT_BALANCE_NOT_INITIALIZED`، replay و کنترل نبود اثر مالی تکراری، و خطاهای واقعی DB برای C5. حذف ردیف مانده، خراب‌کردن عمدی دیتابیس/اتصال و Fault Injection انجام نشد.
+
+#### بررسی دیتابیس
+
+با `corebanking_reader` و فقط `SELECT`، پس از آزمون‌ها:
+
+```text
+accounts=0, balances=0, transactions=0, tx_entries=0,
+journals=0, journal_entries=0, holds=0
+```
+
+`SELECT ... FROM transaction ORDER BY id DESC LIMIT 10` بدون ردیف بود؛ ردهای اعتبارسنجی هیچ تراکنش یا نوشتن مالی ایجاد نکردند.
+
+#### شناسه‌های ایجادشده
+
+هیچ شناسهٔ کسب‌وکاری جدیدی ایجاد نشد (نه حساب، نه تراکنش، نه Journal).
+
+#### محدودیت‌ها
+
+- T1 (Query تولیدی با Rule واقعی PostgreSQL) و T2 (آزمون runtime چرخهٔ Commit/Rollback) بسته نشدند.
+- C5 فقط با بازبینی کد تأیید شده و با خطای واقعی دیتابیس آزمون نشده است.
+- C7 ساختاراً پیاده شده، اما `ACCOUNT_BALANCE_NOT_INITIALIZED` و تفکیک مقصد ناموجود آزمون runtime ندارند.
+- C4 (State Machine)، هم‌زمانی، Overdraft واقعی و آمادگی انتشار همچنان باز هستند.
+- آزمون‌ها روی دیتابیس خالی انجام شدند و به‌تنهایی صحت مالی Transfer را اثبات نمی‌کنند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.
