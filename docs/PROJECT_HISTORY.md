@@ -2426,6 +2426,207 @@ journals=0, journal_entries=0, holds=0
 - C4 (State Machine)، هم‌زمانی، Overdraft واقعی و آمادگی انتشار همچنان باز هستند.
 - آزمون‌ها روی دیتابیس خالی انجام شدند و به‌تنهایی صحت مالی Transfer را اثبات نمی‌کنند.
 
+### 18.32 گذار وضعیت موفق Transfer — INITIATED → PROCESSING → COMPLETED — 2026-11-18
+
+#### منبع شواهد
+
+`docs/opencode-reports/TRANSFER_STATE_TRANSITION_RESULT.md`
+
+#### مبنا و وضعیت اولیهٔ Git
+
+- HEAD: `279416c350930fc16edce5d602d39819b2ba4ffc` (پایه‌ای شامل اصلاحات T1/T2/T4).
+- `git status --short` در شروع بدون خروجی؛ `git diff --check` exit 0.
+
+#### محدوده و فایل‌ها
+
+- تغییر: `src/application/transferservice.cpp`
+- ایجاد: `src/application/transferstatetransitions.h` (ثابت‌های SQL گذار، مشترک سرویس/آزمون)
+- ایجاد: `tests/transfer_status_transition_test.cpp` (آزمون متمرکز، خارج از target CMake)
+- ایجاد: `docs/opencode-reports/TRANSFER_STATE_TRANSITION_RESULT.md`
+- به‌روزرسانی: `docs/PROJECT_CONTEXT.md` و همین سند
+- بدون تغییر: Controller، قراردادها، `UnitOfWork`، Repositoryها، Schema/Migration، ترتیب قفل‌ها، کف مانده، fingerprint/replay و اصلاحات T4.
+- هیچ Migration/DDL، SQL نوشتنی، Fault Injection یا `stage`/`commit`/`push` اجرا نشد.
+
+#### تغییر رفتار
+
+- پس از همهٔ اعتبارسنجی‌های کسب‌وکاری و پیش از نخستین نوشتن مالی، ردیف تراکنش با گارد `WHERE id = :id AND status = 'INITIATED'` به `PROCESSING` می‌رود؛ صفر ردیف یا خطای SQL → `Failed / TRANSACTION_PROCESSING_FAILED` با پیام ثابت و رول‌بک کل UoW. Commit میانی اضافه نشد.
+- گذار نهایی `COMPLETED` فقط با گارد `WHERE id = :id AND status = 'PROCESSING'` انجام می‌شود؛ بدون عبور از PROCESSING، COMPLETED ثبت نمی‌شود.
+- ردهای کسب‌وکاری (پیش از گذار) همچنان `INITIATED → REJECTED` هستند.
+- نام جدول در SQL گذار نقل‌قول‌شده است تا همان متن در PostgreSQL و آزمون SQLite معتبر باشد.
+
+#### Build
+
+```bash
+cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/transferservice.cpp.o
+[  2%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+موفق، بدون هشدار.
+
+#### آزمون متمرکز گذار
+
+```bash
+g++ -std=c++17 -fPIC -I. tests/transfer_status_transition_test.cpp \
+  $(pkg-config --cflags --libs Qt5Core Qt5Sql) \
+  -o /tmp/opencode/transfer_status_transition_test
+/tmp/opencode/transfer_status_transition_test
+```
+
+خروجی: `All transfer status transition tests passed`. پوشش: INITIATED→PROCESSING با گارد یک ردیف، رد تکرار، PROCESSING→COMPLETED با `result_code`/`completed_at`، رد COMPLETED مستقیم از INITIATED، و رد بازگشت COMPLETED→PROCESSING.
+
+#### دادهٔ آزمایشی (ساخته‌شده فقط از API محلی)
+
+Country 1، Province/City/Branch 1/1/1، Currency 1 (IRR)، AccountType 1 (`10`)، Ledger ASSET 1 (`10100101`)، Ledger LIABILITY 2 (`20100101`)، Customer 1/2، Product 1 (`SAV-T5`)، Mapping 1، Account A=1 (`1000000000013`) و B=2 (`1000000000029`)، Deposit A=tx 1 (1000) و B=tx 2 (100).
+
+#### آزمون API (واقعی)
+
+| سناریو | نتیجه |
+|---|---|
+| رشته `"10.00000000"` + description ۵۰۰ کاراکتری | `201`, tx `3`, `TRF-1794989910596-3C489564` |
+| عدد `5.12345678` | `201`, tx `4`, `TRF-1794989910606-5E4FDB56` |
+| Replay همان کلید/payload | `201` با همان tx `3` و شماره |
+| تعارض همان کلید با payload متفاوت | `422 IDEMPOTENCY_KEY_REUSED` |
+| مبدأ ۱ موجود، مقصد ۹۹۹۹۹۹۹۹۹ | `422 ACCOUNT_NOT_FOUND` پیام `Both accounts must exist` (مسیر قفلی C7) |
+
+کلیدهای idempotency: `t5-str-20261118`، `t5-num-20261118`، `t5-missing-dest-20261118`.
+
+#### بررسی دیتابیس (read-only)
+
+- مانده‌ها: حساب ۱ = `984.87654322`، حساب ۲ = `115.12345678`.
+- تراکنش: tx 3/4 `COMPLETED / TRANSFER_COMPLETED`؛ tx 5 `REJECTED / ACCOUNT_NOT_FOUND`؛ برای `t5-str-20261118` فقط یک ردیف (replay بدون اثر تکراری)؛ description تراکنش ۳ طول ۵۰۰.
+- Journal: چهار Journal `POSTED`، هرکدام ۲ Entry متوازن (۱۰ و ۵٫۱۲۳۴۵۶۷۸). `ledger_account_balance`: ASSET=1100، LIABILITY=-1100.00000000.
+
+#### اجرانشده
+
+- `ACCOUNT_BALANCE_NOT_INITIALIZED`: هیچ fixture مجازی موجود نبود (Account Opening همیشه ردیف مانده می‌سازد و حذف ردیف ممنوع است).
+- مشاهدهٔ بیرونی مستقیم PROCESSING در PostgreSQL ممکن نیست (یک تراکنش، بدون Commit میانی)؛ گذر با آزمون متمرکز و گارد `status='PROCESSING'` پوشش داده شد.
+- Fault Injection، DDL، SQL نوشتنی و خطاهای واقعی DB اجرا نشدند.
+
+#### شناسه‌های ایجادشده
+
+حساب‌های 1 و 2، تراکنش‌های 1 تا 5 (دو Deposit، دو Transfer، یک Rejection)، Customer 1/2، Product 1، Ledger 1/2 و ردیف‌های مرجع مربوطه.
+
+#### محدودیت‌ها
+
+- فقط گذار مسیر موفق پوشش داده شد؛ State Machine کامل (C4)، هم‌زمانی و Recovery باز هستند.
+- آزمون متمرکز QSQLITE است و سرویس کامل PostgreSQL را اجرا نمی‌کند؛ SQL هر دو از یک ثابت مشترک می‌آیند.
+- T1/T2 و سایر شکاف‌های ثبت‌شده تغییری نکردند.
+
+### 18.33 آزمون Rule کف مانده Withdrawal — اجرانشده — 2026-11-18
+
+#### منبع شواهد
+
+`docs/opencode-reports/WITHDRAWAL_BALANCE_RULE_TEST_RESULT.md`
+
+#### مبنا و محدوده
+
+- HEAD: `279416c350930fc16edce5d602d39819b2ba4ffc`.
+- تغییرات مرحله Transfer در working tree حاضر و در این مرحله دست‌نخورده ماند.
+- هدف: آزمون واقعی API برداشت با Rule فعال PostgreSQL؛ سیاست کف مانده بازنویسی نشد.
+- هیچ فایل تولیدی، Schema، Migration یا داده‌ای تغییر نکرد؛ هیچ درخواست Withdrawal ارسال نشد.
+
+#### مانع و یافته‌ها
+
+- هیچ Route یا Controller برای `product_balance_rule` و `account_balance_rule_override` وجود ندارد. فهرست Routeها فقط health/transfers/deposits/withdrawals/holds/accounts/customers/currencies/account-types/products/product-ledger-mappings/ledger-accounts/countries/provinces/cities/branches است.
+- محصول و Account Opening هیچ فیلد حداقل مانده/Override نمی‌پذیرند.
+- پس از ساخت محصول ۱ و حساب‌های ۱ و ۲ فقط از API در مرحله قبل، جدول‌های Rule خالی ماندند؛ مسیر جانبی یا Trigger برای seed وجود ندارد.
+
+وضعیت read-only:
+
+```text
+product_balance_rule = 0
+account_balance_rule_override = 0
+WITHDRAWAL transactions = 0
+
+account 1: ledger_balance=984.87654322, product_min=0, override_min=0, effective_min=0
+account 2: ledger_balance=115.12345678, product_min=0, override_min=0, effective_min=0
+```
+
+Journalهای موجود ۴ ردیف Deposit/Transfer هستند؛ هیچ Journal برداشت وجود ندارد.
+
+#### سه سناریو
+
+| سناریو | وضعیت |
+|---|---|
+| Override پایین‌تر کف محصول را کاهش ندهد | اجرا نشد |
+| Override بالاتر کف مؤثر را افزایش دهد | اجرا نشد |
+| مرز دقیق کف پذیرفته و ۰٫۰۰۰۰۰۰۰۱ بیشتر رد شود | اجرا نشد |
+
+دلیل: fixture مجاز Rule نه در دیتابیس موجود است و نه API ساخت آن وجود دارد؛ SQL نوشتنی ممنوع بود. اجرای برداشت بدون Rule نتیجه‌اش به کف مانده وابسته نیست و به‌جای آزمون واقعی حساب نمی‌شود.
+
+#### پیش‌نیاز دقیق (اجرا نشد)
+
+سه ردیف پیشنهادی برای اعمال دستی کاربر پس از بازبینی: Rule محصول ۱ با حداقل `100.00000000` و Overdraft خاموش؛ Override حساب ۱ با حداقل `50.00000000`؛ Override حساب ۲ با حداقل `200.00000000`؛ همه با `effective_from` گذشته و `effective_to` تهی. سپس سه سناریو طبق برنامهٔ گزارش: رد برداشت ۹۰۰ از حساب ۱ و پذیرش ۸۸۴٫۸۷۶۵۴۳۲۲؛ افزایش ماندهٔ حساب ۲ به ۲۵۰ با Deposit، رد ۵۰٫۰۰۰۰۰۰۰۱ و پذیرش ۵۰؛ و در دو حساب جدید بدون Override با ماندهٔ ۱۵۰، پذیرش ۵۰ و رد ۵۰٫۰۰۰۰۰۰۰۱.
+
+#### Build و آزمون
+
+Build و آزمون جدیدی اجرا نشد، چون هیچ کد یا دادهٔ جدیدی در دامنهٔ این مرحله تغییر نکرد. آزمون واقعی Ruleهای زمان‌مند، هم‌زمانی و Overdraft همچنان اجرا نشده است.
+
+#### شناسه‌های ایجادشده
+
+هیچ شناسهٔ جدیدی ایجاد نشد.
+
+#### محدودیت‌ها
+
+- هیچ ادعای جدیدی دربارهٔ درستی رفتار کف مانده Withdrawal مطرح نیست؛ شواهد قبلی مسیر موفق بدون Rule به‌جای خود باقی است.
+- تا اعمال fixture مجاز Rule، سه سناریوی این مرحله «اجرا نشده» می‌مانند.
+- DDL/Migration، SQL نوشتنی، Fault Injection و عملیات Git انجام نشد.
+
+### 18.34 آماده‌سازی fixture Withdrawal از API — 2026-11-18
+
+#### منبع شواهد
+
+`docs/opencode-reports/WITHDRAWAL_FIXTURE_READINESS_RESULT.md`
+
+#### محیط و مبنا
+
+- API محلی `http://localhost:8080` از Build موجود اجرا شد؛ health پاسخ `200` داد و در پایان متوقف شد.
+- اتصال برنامه: `localhost:5432`، دیتابیس `corebanking`؛ بررسی SQL فقط با `corebanking_reader`.
+- هیچ Withdrawal/Transfer ارسال نشد؛ هیچ SQL نوشتنی، DDL/Migration، تغییر کد، reconfigure یا عملیات Git انجام نشد.
+
+#### وضعیت از قبل موجود
+
+Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV-T5`)، Mapping 1 (product 1 → ledger 2)، Ledger ASSET 1 (`10100101`، settlement)، Ledger LIABILITY 2 (`20100101`)، Customer 1/2 و Account 1/2 با مانده‌های `984.87654322`/`115.12345678`. حساب‌های 1/2 دست‌نخورده ماندند.
+
+#### ساخته‌شده از API
+
+| مورد | مسیر | شناسه | وضعیت |
+|---|---|---|---|
+| Customer | `POST /api/v1/customers` | 3 (`WDF-000001`) | ACTIVE |
+| Account A | `POST /api/v1/accounts` | 3 (`1000000000034`) | ACTIVE، balance row موجود با 0 |
+| Account B | `POST /api/v1/accounts` | 4 (`1000000000055`) | ACTIVE، balance row موجود با 0 |
+
+#### واریزها
+
+| حساب | مبلغ | Idempotency key | تراکنش | Journal |
+|---|---|---|---|---|
+| A (3) | `150.00000000` | `wd-fixture-deposit-a-20261118` | 6 (`DEP-1794995338630-2A2F4604`) | 5، POSTED، 2 Entry، متوازن |
+| B (4) | `250.00000000` | `wd-fixture-deposit-b-20261118` | 7 (`DEP-1794995338645-BEB5EFB8`) | 6، POSTED، 2 Entry، متوازن |
+
+ماندهٔ نهایی: حساب 3 = `150`، حساب 4 = `250`؛ Hold مؤثر هر دو 0. هر کلید idempotency فقط یک تراکنش ساخت.
+
+#### وضعیت Rule/Override
+
+- `product_balance_rule` برای محصول 1: 0 ردیف.
+- `account_balance_rule_override` برای حساب‌های 3/4: 0 ردیف.
+- `effective_minimum` هر دو حساب 0 و `overdraft_limit` 0.
+- هیچ API مجاز برای ساخت Rule/Override وجود ندارد.
+
+#### تفکیک آمادگی
+
+- آماده برای برداشت عادی: بله (حساب‌های 3/4 ACTIVE با ماندهٔ 150/250 و بدون Hold).
+- آماده برای آزمون کف مانده: خیر؛ Rule/Override فعالِ مجاز وجود ندارد.
+
+#### محدودیت‌ها
+
+- هیچ Journal برداشت ایجاد نشد؛ آزمون Rule کف مانده همچنان مسدود است.
+- Ruleهای زمان‌مند، Overdraft و هم‌زمانی آزمون‌نشده‌اند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.
