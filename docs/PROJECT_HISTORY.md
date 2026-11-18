@@ -2261,6 +2261,75 @@ Commit/Rollback، قرارداد API، Schema، Migration و داده‌ها.
 - مسیرهای تاریخی حفظ‌شده ممکن است با محیط فعلی متفاوت باشند و نباید به‌عنوان وضعیت جاری خوانده شوند.
 - `CMakeLists.txt.user.*` موجود جزو فایل‌های Commit‌نشده است و در این مرحله تغییر نکرد.
 
+### 18.30 اصلاح محدود چرخهٔ تراکنش Transfer با UnitOfWork — T2 — 2026-11-18
+
+#### منبع شواهد
+
+`docs/opencode-reports/TRANSFER_TRANSACTION_LIFECYCLE_RESULT.md`
+
+اعداد Build و جدول مسیرهای این رکورد از همان گزارش مرحله نقل می‌شوند. در این ثبت، هیچ Build یا آزمون جدیدی اجرا نشد.
+
+#### مبنا و وضعیت اولیهٔ Git
+
+- HEAD و commit حل‌شدهٔ `a7156dd`: `a7156dd9ae74649352de0c81609a2e099e804508` (یکسان).
+- `git status --short`، `git diff --stat` و `git diff --cached --stat` در شروع مرحله بدون خروجی بودند؛ `git diff --check` و `git diff --cached --check` بدون خطا.
+- هیچ تغییر محلی قبلی برای حفظ یا تفکیک وجود نداشت و هیچ checkout/reset انجام نشد.
+
+#### محدوده و فایل‌ها
+
+- تغییر: `src/application/transferservice.cpp`
+- ایجاد: `docs/opencode-reports/TRANSFER_TRANSACTION_LIFECYCLE_RESULT.md`
+- به‌روزرسانی: `docs/PROJECT_CONTEXT.md` و همین سند
+- بدون تغییر: `transferservice.h`، `transfercontroller.*`، `src/main.cpp`، `unitofwork.*`، قراردادهای مشترک، Router، Schema/Migration، `CMakeLists.txt` و فایل‌های Qt Creator شخصی.
+- هیچ `stage`/`commit`/`push` یا تغییر branch اجرا نشد.
+
+#### تغییر رفتار
+
+- `db.transaction()` با `UnitOfWork::begin` و همهٔ `db.commit()`ها با `UnitOfWork::commit` و همهٔ `db.rollback()`ها با `UnitOfWork::rollback` جایگزین شدند؛ همان اتصال مشترک و همان Queryهای محلی حفظ شدند و Repository استخراج نشد.
+- شکست Begin: `Failed` + `TRANSACTION_START_FAILED` + پیام ثابت و امن؛ بدون Query کسب‌وکار؛ بستن اتصال نامطمئن در destructor `UnitOfWork`.
+- چهار مسیر Commit (replay Completed، replay Rejected، ثبت Rejection جدید، تکمیل Transfer جدید) فقط با `CommitOutcome::Committed` نتیجهٔ عادی برمی‌گردانند.
+- `CommitOutcome::OutcomeUnknown`: `Failed` + `DATABASE_COMMIT_FAILED` + پیام «نتیجه Commit نامعلوم است»؛ بدون Rollback، بدون retry Commit، با حفظ شناسه/شمارهٔ موجود و واگذاری cleanup اتصال به destructor. سایر outcomeهای غیرمنتظره نیز `Failed` هستند.
+- Rollback ناموفق در همهٔ مسیرها، از جمله `rollbackFailure`، idempotency conflict و نبود حساب مبدأ، به `Failed` + `DATABASE_ROLLBACK_FAILED` می‌رسد؛ نتیجهٔ اصلی فقط با `RolledBack` برگردانده می‌شود و Rollback ناموفق تکرار نمی‌شود.
+- `UnitOfWork` پیش از Queryهای محلی ساخته می‌شود تا Queryها پیش از destructor آن تخریب شوند؛ سرویس هیچ `db.close()` صدا نمی‌زند.
+- وابستگی `transferservice.cpp` به `../infrastructure/unitofwork.h` یک بدهی ساختاری ثبت‌شده است، چون تغییر constructor/header/wiring ممنوع بود.
+
+#### Build
+
+```bash
+cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2
+```
+
+خروجی نهایی:
+
+```text
+[  1%] Building CXX object CMakeFiles/CoreBanking.dir/src/application/transferservice.cpp.o
+[  2%] Linking CXX executable CoreBanking
+[100%] Built target CoreBanking
+```
+
+نتیجه: موفق؛ هشدار کامپایلری مشاهده نشد.
+
+#### آزمون‌ها
+
+- هیچ آزمون runtime برای چرخهٔ تراکنش Transfer اجرا نشد.
+- در `tests/` هیچ فایل تست Transfer وجود ندارد و `tests/` به هیچ target در `CMakeLists.txt` وصل نیست؛ اجرای آن‌ها نیازمند تغییر زیرساخت Build یا اتصال دیتابیس بود که در دامنهٔ T2 مجاز نیست.
+- آزمون expression-level T1 پوششی از Begin/Commit/Rollback ارائه نمی‌کند و در این مرحله دوباره اجرا نشد.
+- اجرا نشد: اجرای برنامه/restart، HTTP/API test، SQL، دادهٔ مالی، قطع اتصال، Fault Injection و Migration.
+- بنابراین رفتار Begin/Commit/Rollback و مسیرهای `OutcomeUnknown`/`DATABASE_ROLLBACK_FAILED` فقط از روی کد بازبینی شده و runtime-tested نیست.
+
+#### شناسه‌های ایجادشده
+
+هیچ شناسهٔ کسب‌وکاری جدیدی ایجاد نشد.
+
+#### محدودیت‌ها
+
+- T2 فقط چرخهٔ تراکنش را محدود اصلاح می‌کند؛ تکمیل استخراج persistence یا تکمیل Transfer نیست.
+- آزمون یکپارچهٔ Query تولیدی Transfer و Ruleهای واقعی PostgreSQL همچنان انجام نشده است.
+- اختلاف متن `SELECT` و ستون‌های خروجی در گزارش تاریخی T1 با حدس اصلاح نشد و شواهد آن مستقل تأیید نشده است.
+- یافته‌های باز C3/C4/C5/C7/C8 گزارش بازبینی Transfer در T2 تغییر نکردند.
+- بستن اتصال مشترک نامطمئن ممکن است درخواست‌های بعدی را تا بازیابی اتصال با `DATABASE_UNAVAILABLE` مواجه کند؛ بازیابی اتصال خارج از دامنهٔ این مرحله است.
+- این رکورد ادعای ایمنی مالی اثبات‌شده یا آمادگی انتشار نمی‌کند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

@@ -1,7 +1,10 @@
 #include "transferservice.h"
 
+#include "../infrastructure/unitofwork.h"
+
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QMap>
 #include <QRegularExpression>
 #include <QSqlError>
@@ -317,14 +320,66 @@ TransferResult TransferService::transfer(
 
     QSqlDatabase db = m_database;
 
-    if (!db.transaction())
+    // The unit of work owns begin/commit/rollback for this request and uses
+    // the same shared QSqlDatabase connection as the local queries below.
+    // Scope contract: it is constructed before every local QSqlQuery in this
+    // function, so on return those queries are destroyed before this
+    // destructor can close an unsafe shared connection. Connection cleanup is
+    // not performed here.
+    UnitOfWork unitOfWork(db);
+
+    OperationError beginError;
+
+    if (unitOfWork.begin(&beginError) != BeginOutcome::Started)
         return failed(QStringLiteral("TRANSACTION_START_FAILED"),
-                      db.lastError().text());
+                      QStringLiteral("Database transaction could not be started"));
+
+    auto rollbackForError = [&](const QString& originalCode) {
+        OperationError rollbackError;
+
+        if (unitOfWork.rollback(&rollbackError) != RollbackOutcome::RolledBack) {
+            qWarning()
+                << "Transfer rollback failed; original code:" << originalCode;
+            return false;
+        }
+
+        return true;
+    };
 
     auto rollbackFailure = [&](const QString& code, const QString& message,
                                qint64 id = 0, const QString& number = QString()) {
-        db.rollback();
+        if (!rollbackForError(code))
+            return failed(
+                QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                QStringLiteral("Database transaction could not be safely rolled back"),
+                id, number);
+
         return failed(code, message, id, number);
+    };
+
+    auto rollbackRejected = [&](const QString& code, const QString& message,
+                                qint64 id = 0, const QString& number = QString()) {
+        if (!rollbackForError(code))
+            return failed(
+                QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                QStringLiteral("Database transaction could not be safely rolled back"),
+                id, number);
+
+        return rejected(code, message, id, number);
+    };
+
+    auto commitFailure = [](CommitOutcome outcome, qint64 id,
+                            const QString& number) {
+        if (outcome == CommitOutcome::OutcomeUnknown)
+            return failed(
+                QStringLiteral("DATABASE_COMMIT_FAILED"),
+                QStringLiteral("The database commit outcome is unknown; the transfer may or may not have been recorded"),
+                id, number);
+
+        return failed(
+            QStringLiteral("DATABASE_COMMIT_FAILED"),
+            QStringLiteral("Database commit failed"),
+            id, number);
     };
 
     // Serializes retries for a key, including the first request before its row exists.
@@ -369,18 +424,20 @@ TransferResult TransferService::transfer(
             const QString priorMessage = existing.value(5).toString();
 
             if (priorFingerprint != fingerprint) {
-                db.rollback();
-                return rejected(
+                return rollbackRejected(
                     QStringLiteral("IDEMPOTENCY_KEY_REUSED"),
                     QStringLiteral("This idempotencyKey was already used with a different request"),
                     priorId, priorNumber);
             }
 
             if (priorStatus == QStringLiteral("COMPLETED")) {
-                if (!db.commit())
-                    return failed(
-                        QStringLiteral("DATABASE_COMMIT_FAILED"),
-                        db.lastError().text(), priorId, priorNumber);
+                OperationError commitError;
+                const CommitOutcome commitOutcome =
+                    unitOfWork.commit(&commitError);
+
+                if (commitOutcome != CommitOutcome::Committed)
+                    return commitFailure(
+                        commitOutcome, priorId, priorNumber);
 
                 return completed(
                     priorId, priorNumber,
@@ -391,10 +448,13 @@ TransferResult TransferService::transfer(
             }
 
             if (priorStatus == QStringLiteral("REJECTED")) {
-                if (!db.commit())
-                    return failed(
-                        QStringLiteral("DATABASE_COMMIT_FAILED"),
-                        db.lastError().text(), priorId, priorNumber);
+                OperationError commitError;
+                const CommitOutcome commitOutcome =
+                    unitOfWork.commit(&commitError);
+
+                if (commitOutcome != CommitOutcome::Committed)
+                    return commitFailure(
+                        commitOutcome, priorId, priorNumber);
 
                 return rejected(
                     priorCode.isEmpty()
@@ -425,8 +485,7 @@ TransferResult TransferService::transfer(
                 sourceCurrency.lastError().text());
 
         if (!sourceCurrency.next()) {
-            db.rollback();
-            return rejected(
+            return rollbackRejected(
                 QStringLiteral("ACCOUNT_NOT_FOUND"),
                 QStringLiteral("Source account does not exist"));
         }
@@ -482,10 +541,12 @@ TransferResult TransferService::transfer(
                 persistenceError, transactionId, transactionNumber);
         }
 
-        if (!db.commit())
-            return failed(
-                QStringLiteral("DATABASE_COMMIT_FAILED"),
-                db.lastError().text(), transactionId, transactionNumber);
+        OperationError commitError;
+        const CommitOutcome commitOutcome = unitOfWork.commit(&commitError);
+
+        if (commitOutcome != CommitOutcome::Committed)
+            return commitFailure(
+                commitOutcome, transactionId, transactionNumber);
 
         return rejected(code, message, transactionId, transactionNumber);
     };
@@ -910,11 +971,12 @@ TransferResult TransferService::transfer(
                 transactionId, transactionNumber);
     }
 
-    if (!db.commit())
-        return rollbackFailure(
-            QStringLiteral("DATABASE_COMMIT_FAILED"),
-            db.lastError().text(),
-            transactionId, transactionNumber);
+    OperationError commitError;
+    const CommitOutcome commitOutcome = unitOfWork.commit(&commitError);
+
+    if (commitOutcome != CommitOutcome::Committed)
+        return commitFailure(
+            commitOutcome, transactionId, transactionNumber);
 
     return completed(transactionId, transactionNumber);
 }
