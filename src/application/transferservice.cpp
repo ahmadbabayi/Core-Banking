@@ -1,5 +1,7 @@
 #include "transferservice.h"
 
+#include "transferstatetransitions.h"
+
 #include "../infrastructure/unitofwork.h"
 
 #include <QCryptographicHash>
@@ -747,6 +749,23 @@ TransferResult TransferService::transfer(
             QStringLiteral("The source account does not have enough transferable funds after holds and minimum balance"));
     }
 
+    // The successful path must pass through PROCESSING before any financial
+    // write. The guarded update fails closed when the transaction row is not
+    // in the expected INITIATED state, and it stays inside the same unit of
+    // work, so no intermediate state is ever committed.
+    {
+        QSqlQuery processing(db);
+        processing.prepare(TransferStateTransitions::kInitiatedToProcessing);
+
+        processing.bindValue(":id", transactionId);
+
+        if (!processing.exec() || processing.numRowsAffected() != 1)
+            return rollbackFailure(
+                QStringLiteral("TRANSACTION_PROCESSING_FAILED"),
+                QStringLiteral("Transaction could not enter PROCESSING"),
+                transactionId, transactionNumber);
+    }
+
     // Ensure ledger-balance rows exist, then lock them in ascending key order.
     {
         QSqlQuery ensure(db);
@@ -989,12 +1008,7 @@ TransferResult TransferService::transfer(
 
     {
         QSqlQuery finish(db);
-        finish.prepare(
-            "UPDATE transaction "
-            "SET status = 'COMPLETED', result_code = 'TRANSFER_COMPLETED', "
-            "    result_message = 'Transfer completed', completed_at = CURRENT_TIMESTAMP, "
-            "    updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = :id AND status = 'INITIATED'");
+        finish.prepare(TransferStateTransitions::kProcessingToCompleted);
 
         finish.bindValue(":id", transactionId);
 
