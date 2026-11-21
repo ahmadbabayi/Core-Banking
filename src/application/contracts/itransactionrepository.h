@@ -22,6 +22,19 @@ struct TransactionLookupResult
     OperationError error;
 };
 
+struct TransactionFeeLookupResult
+{
+    enum class Status
+    {
+        NoFees,
+        HasFees,
+        Failed
+    };
+
+    Status status = Status::Failed;
+    OperationError error;
+};
+
 class ITransactionRepository
 {
 public:
@@ -37,6 +50,18 @@ public:
     ) = 0;
 
     virtual TransactionLookupResult findById(qint64 transactionId) = 0;
+
+    virtual TransactionLookupResult findByIdForUpdate(
+        qint64 transactionId
+    ) = 0;
+
+    virtual TransactionLookupResult findSuccessfulReversalForTransaction(
+        qint64 originalTransactionId
+    ) = 0;
+
+    virtual TransactionFeeLookupResult findFeeForTransaction(
+        qint64 transactionId
+    ) = 0;
 
     virtual qint64 createInitiated(
         const Transaction& transaction,

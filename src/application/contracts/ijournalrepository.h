@@ -4,6 +4,7 @@
 #include "operationerror.h"
 
 #include <QString>
+#include <QVector>
 #include <QtGlobal>
 
 struct SettlementLedgerLookupResult
@@ -80,6 +81,36 @@ struct JournalPostResult
     OperationError error;
 };
 
+struct JournalEntryLine
+{
+    int sequenceNo = 0;
+    qint64 ledgerAccountId = 0;
+    qint64 accountId = 0;
+    qint64 currencyId = 0;
+    QString debitAmount;
+    QString creditAmount;
+    bool hasDebit = false;
+    QString description;
+};
+
+struct JournalLinesResult
+{
+    enum class Status
+    {
+        Found,
+        NotFound,
+        NotPosted,
+        Failed
+    };
+
+    Status status = Status::Failed;
+    QVector<JournalEntryLine> lines;
+    int entryCount = 0;
+    bool debitEqualsCredit = false;
+    bool totalsMatchAmount = false;
+    OperationError error;
+};
+
 class IJournalRepository
 {
 public:
@@ -131,6 +162,18 @@ public:
 
     virtual JournalBalanceReadResult readJournalBalance(
         qint64 journalId
+    ) = 0;
+
+    virtual JournalLinesResult readPostedJournalLinesForTransaction(
+        qint64 transactionId,
+        const QString& expectedAmount
+    ) = 0;
+
+    virtual bool createReversalEntries(
+        qint64 journalId,
+        const QVector<JournalEntryLine>& lines,
+        const QString& description,
+        OperationError* error
     ) = 0;
 
     virtual LedgerBalanceUpdateOutcome applyLedgerDeltas(

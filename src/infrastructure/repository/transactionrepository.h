@@ -21,6 +21,16 @@ public:
 
     TransactionLookupResult findById(qint64 transactionId) override;
 
+    TransactionLookupResult findByIdForUpdate(qint64 transactionId) override;
+
+    TransactionLookupResult findSuccessfulReversalForTransaction(
+        qint64 originalTransactionId
+    ) override;
+
+    TransactionFeeLookupResult findFeeForTransaction(
+        qint64 transactionId
+    ) override;
+
     qint64 createInitiated(
         const Transaction& transaction,
         OperationError* error

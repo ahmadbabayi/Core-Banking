@@ -47,6 +47,8 @@ add_executable(CoreBanking
     src/application/depositservice.cpp
     src/application/withdrawalservice.h
     src/application/withdrawalservice.cpp
+    src/application/reversalservice.h
+    src/application/reversalservice.cpp
     src/application/transactionservice.h
     src/application/transactionservice.cpp
     src/application/contracts/operationerror.h
@@ -194,6 +196,8 @@ add_executable(CoreBanking
     src/web/withdrawalcontroller.cpp
     src/web/holdcontroller.h
     src/web/holdcontroller.cpp
+    src/web/reversalcontroller.h
+    src/web/reversalcontroller.cpp
 )
 
 target_link_libraries(CoreBanking

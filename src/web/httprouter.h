@@ -17,6 +17,7 @@
 #include "depositcontroller.h"
 #include "withdrawalcontroller.h"
 #include "holdcontroller.h"
+#include "reversalcontroller.h"
 
 class HttpRouter
 {
@@ -39,6 +40,7 @@ public:
     void setDepositController(DepositController* controller);
     void setWithdrawalController(WithdrawalController* controller);
     void setHoldController(HoldController* controller);
+    void setReversalController(ReversalController* controller);
 
     HttpResponse route(
         const QByteArray& method,
@@ -64,6 +66,7 @@ private:
     DepositController* depositController = nullptr;
     WithdrawalController* withdrawalController = nullptr;
     HoldController* holdController = nullptr;
+    ReversalController* reversalController = nullptr;
 };
 
 #endif // HTTPROUTER_H

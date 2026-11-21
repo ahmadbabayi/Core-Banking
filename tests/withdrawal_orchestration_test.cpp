@@ -126,6 +126,28 @@ public:
         return result;
     }
 
+    TransactionLookupResult findByIdForUpdate(qint64) override
+    {
+        TransactionLookupResult result;
+        result.status = TransactionLookupResult::Status::NotFound;
+        return result;
+    }
+
+    TransactionLookupResult findSuccessfulReversalForTransaction(
+        qint64) override
+    {
+        TransactionLookupResult result;
+        result.status = TransactionLookupResult::Status::NotFound;
+        return result;
+    }
+
+    TransactionFeeLookupResult findFeeForTransaction(qint64) override
+    {
+        TransactionFeeLookupResult result;
+        result.status = TransactionFeeLookupResult::Status::NoFees;
+        return result;
+    }
+
     qint64 createInitiated(
         const Transaction&,
         OperationError*) override
@@ -368,6 +390,25 @@ public:
         result.entryCount = 2;
         result.debitEqualsCredit = true;
         return result;
+    }
+
+    JournalLinesResult readPostedJournalLinesForTransaction(
+        qint64,
+        const QString&) override
+    {
+        JournalLinesResult result;
+        result.status = JournalLinesResult::Status::NotFound;
+        return result;
+    }
+
+    bool createReversalEntries(
+        qint64,
+        const QVector<JournalEntryLine>&,
+        const QString&,
+        OperationError*) override
+    {
+        log.add(QStringLiteral("journals.createReversalEntries"));
+        return true;
     }
 
     LedgerBalanceUpdateOutcome applyLedgerDeltas(

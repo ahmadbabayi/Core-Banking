@@ -375,6 +375,72 @@ TransactionLookupResult TransactionRepository::findById(qint64 transactionId)
         transactionId);
 }
 
+TransactionLookupResult TransactionRepository::findByIdForUpdate(
+    qint64 transactionId)
+{
+    return findTransaction(
+        db,
+        QStringLiteral(
+            "SELECT id, transaction_number, transaction_type, status, channel, "
+            "       amount, currency_id, reverses_transaction_id, initiated_at, "
+            "       completed_at, description, reference_number, created_at, "
+            "       updated_at, idempotency_key, request_fingerprint, "
+            "       result_code, result_message "
+            "FROM transaction "
+            "WHERE id = :id "
+            "FOR UPDATE"),
+        QStringLiteral(":id"),
+        transactionId);
+}
+
+TransactionLookupResult TransactionRepository::findSuccessfulReversalForTransaction(
+    qint64 originalTransactionId)
+{
+    return findTransaction(
+        db,
+        QStringLiteral(
+            "SELECT id, transaction_number, transaction_type, status, channel, "
+            "       amount, currency_id, reverses_transaction_id, initiated_at, "
+            "       completed_at, description, reference_number, created_at, "
+            "       updated_at, idempotency_key, request_fingerprint, "
+            "       result_code, result_message "
+            "FROM transaction "
+            "WHERE transaction_type = 'REVERSAL' "
+            "  AND reverses_transaction_id = :id "
+            "  AND status = 'COMPLETED' "
+            "ORDER BY id "
+            "LIMIT 1"),
+        QStringLiteral(":id"),
+        originalTransactionId);
+}
+
+TransactionFeeLookupResult TransactionRepository::findFeeForTransaction(
+    qint64 transactionId)
+{
+    TransactionFeeLookupResult result;
+
+    QSqlQuery query(db);
+    query.prepare(
+        QStringLiteral(
+            "SELECT 1 FROM transaction_fee "
+            "WHERE transaction_id = :transaction_id "
+            "LIMIT 1"));
+    query.bindValue(QStringLiteral(":transaction_id"), transactionId);
+
+    if (!query.exec())
+    {
+        result.status = TransactionFeeLookupResult::Status::Failed;
+        result.error.code = classifySqlError(query.lastError());
+        result.error.message = QStringLiteral("Transaction fee lookup failed");
+        return result;
+    }
+
+    result.status = query.next()
+        ? TransactionFeeLookupResult::Status::HasFees
+        : TransactionFeeLookupResult::Status::NoFees;
+    return result;
+}
+
 qint64 TransactionRepository::createInitiated(
     const Transaction& transaction,
     OperationError* error)

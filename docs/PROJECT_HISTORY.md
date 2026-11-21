@@ -2627,6 +2627,78 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - هیچ Journal برداشت ایجاد نشد؛ آزمون Rule کف مانده همچنان مسدود است.
 - Ruleهای زمان‌مند، Overdraft و هم‌زمانی آزمون‌نشده‌اند.
 
+### 18.35 برگشت کامل واریز بدون کارمزد (Reversal) — 2026-11-21
+
+#### منبع شواهد
+
+`docs/opencode-reports/REVERSAL_DEPOSIT_RESULT.md`
+
+#### دامنه
+
+فقط برگشت کاملِ یک واریز (DEPOSIT) با وضعیت `COMPLETED` و بدون کارمزد، از مسیر جدید `POST /api/v1/transactions/{id}/reversals`. برگشت برداشت، برگشت انتقال، برگشت جزئی و برگشت واریز دارای کارمزد خارج از دامنه‌اند و هیچ تغییری در Transfer/Withdrawal انجام نشد.
+
+#### مبنا و فایل‌های تغییرکرده
+
+- SHA مبدا: `08b8e37a1aea10998b54e3de1a49096ea806dc93` (درخت قبل از شروع تمیز بود؛ HEAD تغییر نکرد).
+- فایل‌های جدید: `src/application/reversalservice.{h,cpp}`، `src/web/reversalcontroller.{h,cpp}`.
+- فایل‌های ویرایش‌شده: `src/application/contracts/itransactionrepository.h`، `src/application/contracts/ijournalrepository.h`، `src/infrastructure/repository/transactionrepository.{h,cpp}`، `src/infrastructure/repository/journalrepository.{h,cpp}`، `src/web/httprouter.{h,cpp}`، `src/main.cpp`، `CMakeLists.txt`.
+
+#### Build
+
+`cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` → موفق (`[100%] Built target CoreBanking`). هیچ reconfigure یا تغییر Kit/نوع Build انجام نشد.
+
+#### رفتار پیاده‌سازی‌شده
+
+- Idempotency: قفل Advisory روی کلید، سپس Lookup/Replay با fingerprint `sha256("REVERSAL\n" + originalId)`.
+- قفل `FOR UPDATE` روی سطر تراکنش اصلی پیش از اعتبارسنجی، تا دو کلید متفاوت نتوانند هم‌زمان دو برگشت بسازند.
+- شرط‌های برگشت‌پذیری: اصلی از نوع `DEPOSIT`، وضعیت `COMPLETED`، بدون کارمزد، و Journal اصلی `POSTED` با دو سطر متوازن و مجموع برابر مبلغ.
+- تراکنش جدید `REVERSAL` با `reverses_transaction_id`؛ گذار `INITIATED → PROCESSING → COMPLETED`؛ Journal معکوس (جابه‌جایی بدهکار/بستانکار سطرهای Journal اصلی)؛ وضعیت اصلی در پایان `COMPLETED → REVERSED`.
+- اثر مالی معکوس واریز: بده‌کار سمت بدهی مشتری (`applyWithdrawalDecrement`) و بستانکار سرفصل تسویه (`applyWithdrawalLedgerDeltas` با ledgerهای Journal اصلی)؛ بررسی موجودی `ledger_balance − active_holds − minimum ≥ amount` بدون Overdraft و بدون آزادسازی Hold.
+- ردهای کسب‌وکاری (موجودی ناکافی/نبود مانده) یک تراکنش `REVERSAL` با وضعیت `REJECTED` می‌سازند و تراکنش اصلی را `COMPLETED` نگه می‌دارند (هم‌خانواده Withdrawal). موارد ناموجود/غیرقابل‌برگشت/ناپیوسته بدون تراکنش برگشت و بدون اثر مالی رد می‌شوند.
+
+#### عملیات API انجام‌شده (روی حساب اختصاصی 5)
+
+| سناریو | نتیجه |
+|---|---|
+| برگشت موفق واریز 120 (تراکنش 8) | `201`، تراکنش 9 `REV-1795237616001-30B8A449` COMPLETED |
+| Replay همان کلید روی تراکنش 8 | `201` با همان نتیجهٔ ثبت‌شده (تراکنش 9) |
+| همان کلید روی تراکنش 1 | `422` `IDEMPOTENCY_KEY_REUSED` |
+| برگشت دوگانه با کلید متفاوت روی تراکنش 8 | `422` `TRANSACTION_ALREADY_REVERSED` |
+| هم‌زمانی دو کلید روی واریز 50 (تراکنش 10) | فقط یک درخواست موفق (تراکنش 12 `REV-1795238982157-720D3D3A` COMPLETED)؛ درخواست دیگر `422` |
+| موجودی ناکافی: واریز 80 + Hold مؤثر 1 (تراکنش 11) | `422` `INSUFFICIENT_AVAILABLE_FUNDS`؛ تراکنش 13 REJECTED |
+| تراکنش 999999 ناموجود | `422` `ORIGINAL_TRANSACTION_NOT_FOUND` |
+| تراکنش غیر واریز (تراکنش 3) | `422` `TRANSACTION_NOT_REVERSIBLE` |
+
+#### شناسه‌های تجاری ایجادشده
+
+- Customer: 4 (`3293306570`)؛ Account: 5 (`1000000000060`).
+- واریزهای fixture: تراکنش 8 (`DEP-1795237593744-3ADB5EE6`، 120)، تراکنش 10 (`DEP-1795237669582-3532A267`، 50)، تراکنش 11 (`DEP-1795237669600-BBD2726E`، 80).
+- برگشت‌ها: تراکنش 9 (`REV-1795237616001-30B8A449`، COMPLETED، معکوس 8)، تراکنش 12 (`REV-1795238982157-720D3D3A`، COMPLETED، معکوس 10)، تراکنش 13 (`REV-1795239016548-7AC13C8B`، REJECTED `INSUFFICIENT_AVAILABLE_FUNDS`، معکوس 11).
+- Hold: 1 (`rev-test`، مبلغ 1، ACTIVE).
+- Journalهای برگشت POSTED: 8 (تراکنش 9) و 11 (تراکنش 12)؛ Journal اصلی 7 دست‌نخورده.
+
+#### تأیید SELECT (فقط `corebanking_reader`)
+
+- تراکنش‌های 8/10 `REVERSED`؛ برگشت‌های 9/12 `COMPLETED`؛ تراکنش 11 `COMPLETED`؛ تراکنش 13 `REJECTED`.
+- دقیقاً یک برگشت `COMPLETED` به ازای هر تراکنش اصلی (`{8:1, 10:1, 11:0}`).
+- Journalهای برگشت معکوس و POSTED (خط 1 دارایی بستانکار، خط 2 بدهی/حساب بدهکار).
+- ماندهٔ نهایی حساب 5: `ledger_balance=80`، `available_balance=80` (Cache؛ Hold 1 جداگانه `currently_blocked_amount=1`).
+- `ledger_account_balance`: دارایی 1 `debit=1750 / credit=170 / balance=1580`؛ بدهی 2 `debit=185.12345678 / credit=1765.12345678 / balance=-1580` (توازن حفظ شد).
+
+#### اجرانشده‌ها
+
+- کفِ ماندهٔ فعال (Rule/Override) آزمون نشد؛ جدول‌های Rule خالی‌اند و API مجاز ساخت Rule وجود ندارد؛ بررسی موجودی با `minimum` واقعیِ صفر اجرا شد.
+- مسیرهای شکست زیرساختی (Fault Injection)، `CommitOutcomeUnknown`، Rollback ناموفق/میانی و بازیابی پس از Commit نامعلوم در runtime آزمون نشدند؛ فقط در کد پیاده‌سازی شده‌اند.
+- کامپایل fakeهای `tests/deposit_orchestration_test.cpp` و `tests/withdrawal_orchestration_test.cpp` پس از افزودن متدهای pure virtual جدید به interfaceها انجام شد: هر دو fake با stub برای متدهای `ITransactionRepository` (`findByIdForUpdate`، `findSuccessfulReversalForTransaction`، `findFeeForTransaction`) و `IJournalRepository` (`readPostedJournalLinesForTransaction`، `createReversalEntries`) تطبیق داده شدند و با پرچم‌های موجود Build تا مرحلهٔ object کامپایل شدند (خروجی `0`)، بدون reconfigure. **لینک و اجرای باینری تست انجام نشد**، چون این فایل‌ها بخشی از `CMakeLists.txt` نیستند و هدف تستی در CMake موجود وجود ندارد.
+
+#### محدودیت‌ها
+
+- دامنه فقط برگشت کامل واریز `COMPLETED` بدون کارمزد؛ واریز دارای کارمزد با `TRANSACTION_HAS_FEES` رد می‌شود (بدون سناریوی آزمون).
+- Overdraft فعال نیست و مسیر نیازمند تسویه با `OVERDRAFT_SETTLEMENT_NOT_CONFIGURED` رد می‌شود.
+- `available_balance` Cache کهنه‌شونده است و تصمیم مالی برگشت بر آن بنا نشده.
+- هم‌زمانی: فقط یک درخواست موفق شد؛ اما رقابت واقعیِ دو تراکنش مستقل PostgreSQL روی قفل ردیف آزمون نشد (سرور تک‌ریسمانی با Connection مشترک است و هم‌پوشانی تراکنشی واقعی را اثبات نمی‌کند).
+- DDL/Migration، SQL نوشتنی، Fault Injection و عملیات Git انجام نشد.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

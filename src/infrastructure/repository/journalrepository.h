@@ -58,6 +58,18 @@ public:
         qint64 journalId
     ) override;
 
+    JournalLinesResult readPostedJournalLinesForTransaction(
+        qint64 transactionId,
+        const QString& expectedAmount
+    ) override;
+
+    bool createReversalEntries(
+        qint64 journalId,
+        const QVector<JournalEntryLine>& lines,
+        const QString& description,
+        OperationError* error
+    ) override;
+
     LedgerBalanceUpdateOutcome applyLedgerDeltas(
         qint64 settlementLedgerAccountId,
         qint64 customerLedgerAccountId,

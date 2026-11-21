@@ -54,6 +54,11 @@ void HttpRouter::setHoldController(HoldController* controller)
     holdController = controller;
 }
 
+void HttpRouter::setReversalController(ReversalController* controller)
+{
+    reversalController = controller;
+}
+
 HttpResponse HttpRouter::route(
     const QByteArray& method,
     const QByteArray& path,
@@ -229,6 +234,39 @@ HttpResponse HttpRouter::route(
             }
 
             return holdController->getHoldById(id);
+        }
+    }
+
+    // Transaction reversals
+    const QByteArray reversalPrefix = "/api/v1/transactions/";
+
+    if (method == "POST" && path.startsWith(reversalPrefix)) {
+        const QByteArray suffix = path.mid(reversalPrefix.size());
+        const QByteArray reversalsSuffix = "/reversals";
+
+        if (suffix.endsWith(reversalsSuffix)) {
+            const QByteArray idText = suffix.left(
+                suffix.size() - reversalsSuffix.size());
+
+            qint64 id = 0;
+
+            if (idText.isEmpty() || idText.contains('/') ||
+                !parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "INVALID_TRANSACTION_ID",
+                    "Invalid transaction ID");
+            }
+
+            if (reversalController == nullptr) {
+                return {
+                    "503 Service Unavailable",
+                    ApiResponse::error(
+                        "REVERSAL_SERVICE_UNAVAILABLE",
+                        "Reversal service is not configured")
+                };
+            }
+
+            return reversalController->reverse(id, body);
         }
     }
 
