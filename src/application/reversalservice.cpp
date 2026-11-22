@@ -61,13 +61,62 @@ QString safeError(const OperationError& error, const QString& fallback)
     return error.message.isEmpty() ? fallback : error.message;
 }
 
-QString fingerprintFor(qint64 originalTransactionId)
+QString fingerprintFor(qint64 originalTransactionId, bool reversingWithdrawal)
 {
+    // The deposit entry keeps its historical fingerprint, so existing deposit
+    // reversal records still replay unchanged. The withdrawal entry uses a
+    // distinct prefix so the HTTP (deposit-only) entry can never replay a
+    // recorded withdrawal reversal: the same id + key resolves to a fingerprint
+    // mismatch and falls through to IDEMPOTENCY_KEY_REUSED instead.
     const QByteArray payload =
-        QStringLiteral("REVERSAL\n%1").arg(originalTransactionId).toUtf8();
+        (QString(reversingWithdrawal
+                     ? QStringLiteral("REVERSAL_WITHDRAWAL\n")
+                     : QStringLiteral("REVERSAL\n"))
+         + QString::number(originalTransactionId))
+            .toUtf8();
 
     return QString::fromLatin1(
         QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+}
+
+// Compares two non-negative decimal strings without converting to floating
+// point. Amounts are NUMERIC strings; PostgreSQL may render trailing zeros
+// differently from the normalized request value, so both sides are normalized.
+QString normalizeDecimal(const QString& value)
+{
+    const QString trimmed = value.trimmed();
+    const int dot = trimmed.indexOf('.');
+
+    QString integerPart;
+    QString fractionPart;
+    if (dot < 0)
+    {
+        integerPart = trimmed;
+        fractionPart = QString();
+    }
+    else
+    {
+        integerPart = trimmed.left(dot);
+        fractionPart = trimmed.mid(dot + 1);
+    }
+
+    int firstNonZero = 0;
+    while (firstNonZero < integerPart.size() - 1 &&
+           integerPart.at(firstNonZero) == QLatin1Char('0'))
+        ++firstNonZero;
+    integerPart = integerPart.mid(firstNonZero);
+
+    while (fractionPart.endsWith(QLatin1Char('0')))
+        fractionPart.chop(1);
+
+    if (fractionPart.isEmpty())
+        return integerPart;
+    return integerPart + QLatin1Char('.') + fractionPart;
+}
+
+bool decimalEquals(const QString& a, const QString& b)
+{
+    return normalizeDecimal(a) == normalizeDecimal(b);
 }
 
 } // namespace
@@ -81,6 +130,25 @@ ReversalService::ReversalService(
 ReversalResult ReversalService::reverse(
     qint64 originalTransactionId,
     const QString& idempotencyKeyInput)
+{
+    return reverseInternal(originalTransactionId, idempotencyKeyInput,
+                           false, WithdrawalReversalAuthorization{});
+}
+
+ReversalResult ReversalService::reverseWithdrawal(
+    qint64 originalTransactionId,
+    const QString& idempotencyKeyInput,
+    const WithdrawalReversalAuthorization& authorization)
+{
+    return reverseInternal(originalTransactionId, idempotencyKeyInput,
+                           true, authorization);
+}
+
+ReversalResult ReversalService::reverseInternal(
+    qint64 originalTransactionId,
+    const QString& idempotencyKeyInput,
+    bool reversingWithdrawal,
+    const WithdrawalReversalAuthorization& authorization)
 {
     if (!m_unitOfWorkFactory.isConnectionAvailable())
         return failed(QStringLiteral("DATABASE_UNAVAILABLE"),
@@ -96,7 +164,8 @@ ReversalResult ReversalService::reverse(
         return rejected(QStringLiteral("INVALID_IDEMPOTENCY_KEY"),
                         QStringLiteral("idempotencyKey must contain 1 to 100 characters"));
 
-    const QString fingerprint = fingerprintFor(originalTransactionId);
+    const QString fingerprint =
+        fingerprintFor(originalTransactionId, reversingWithdrawal);
 
     auto unitOfWork = m_unitOfWorkFactory.create();
 
@@ -207,6 +276,36 @@ ReversalResult ReversalService::reverse(
             existing.transactionId, existing.transactionNumber);
     }
 
+    // Explicit eligibility precondition for the internal withdrawal branch.
+    // Checked after idempotency replay but BEFORE any financial write and
+    // before the original row is even locked. The caller must have confirmed
+    // full-reversal eligibility for THIS withdrawal id; absence or a
+    // confirmation for another id is rejected here. The journal shape checked
+    // later is accounting validation only, not this confirmation.
+    if (reversingWithdrawal) {
+        if (!authorization.granted) {
+            if (!rollbackForError(QStringLiteral("REVERSAL_NOT_AUTHORIZED")))
+                return failed(
+                    QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                    QStringLiteral("Database transaction could not be safely rolled back"));
+
+            return rejected(
+                QStringLiteral("REVERSAL_NOT_AUTHORIZED"),
+                QStringLiteral("Withdrawal reversal requires an explicit eligibility confirmation for this withdrawal"));
+        }
+
+        if (authorization.withdrawalTransactionId != originalTransactionId) {
+            if (!rollbackForError(QStringLiteral("REVERSAL_AUTHORIZATION_MISMATCH")))
+                return failed(
+                    QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                    QStringLiteral("Database transaction could not be safely rolled back"));
+
+            return rejected(
+                QStringLiteral("REVERSAL_AUTHORIZATION_MISMATCH"),
+                QStringLiteral("Eligibility confirmation belongs to a different withdrawal"));
+        }
+    }
+
     // Lock the ORIGINAL transaction row. Two different keys on the same
     // original serialize here, so at most one reversal can proceed.
     const TransactionLookupResult originalLookup =
@@ -231,7 +330,11 @@ ReversalResult ReversalService::reverse(
 
     const Transaction& original = *originalLookup.transaction;
 
-    if (original.getType() != Transaction::Type::DEPOSIT) {
+    const Transaction::Type allowedOriginalType = reversingWithdrawal
+        ? Transaction::Type::WITHDRAWAL
+        : Transaction::Type::DEPOSIT;
+
+    if (original.getType() != allowedOriginalType) {
         if (!rollbackForError(QStringLiteral("TRANSACTION_NOT_REVERSIBLE")))
             return failed(
                 QStringLiteral("DATABASE_ROLLBACK_FAILED"),
@@ -239,7 +342,9 @@ ReversalResult ReversalService::reverse(
 
         return rejected(
             QStringLiteral("TRANSACTION_NOT_REVERSIBLE"),
-            QStringLiteral("Only a deposit can be reversed by this endpoint"));
+            reversingWithdrawal
+                ? QStringLiteral("Only a withdrawal can be reversed by this operation")
+                : QStringLiteral("Only a deposit can be reversed by this endpoint"));
     }
 
     const TransactionFeeLookupResult feeResult =
@@ -364,6 +469,10 @@ ReversalResult ReversalService::reverse(
     qint64 customerLedgerId = 0;
     qint64 accountId = 0;
     qint64 settlementLedgerId = 0;
+    bool customerLineIsDebit = false;
+    bool settlementLineIsDebit = false;
+    QString customerLineAmount;
+    QString settlementLineAmount;
 
     for (const JournalEntryLine& line : journalRead.lines) {
         if (line.currencyId != currencyId ||
@@ -392,6 +501,9 @@ ReversalResult ReversalService::reverse(
 
             customerLedgerId = line.ledgerAccountId;
             accountId = line.accountId;
+            customerLineIsDebit = line.hasDebit;
+            customerLineAmount =
+                line.hasDebit ? line.debitAmount : line.creditAmount;
         } else {
             if (settlementLedgerId != 0) {
                 if (!rollbackForError(QStringLiteral("ORIGINAL_JOURNAL_INVALID")))
@@ -405,6 +517,9 @@ ReversalResult ReversalService::reverse(
             }
 
             settlementLedgerId = line.ledgerAccountId;
+            settlementLineIsDebit = line.hasDebit;
+            settlementLineAmount =
+                line.hasDebit ? line.debitAmount : line.creditAmount;
         }
     }
 
@@ -417,6 +532,73 @@ ReversalResult ReversalService::reverse(
         return rejected(
             QStringLiteral("ORIGINAL_JOURNAL_INVALID"),
             QStringLiteral("Original journal does not contain both a customer and a settlement line"));
+    }
+
+    if (reversingWithdrawal) {
+        // The POSTED journal is validated below purely as the ACCOUNTING
+        // source (direction, per-line amounts, distinct ledgers). Its shape is
+        // NOT the eligibility precondition and is never treated as proof that
+        // the withdrawal did not draw on overdraft. Eligibility is the
+        // explicit caller confirmation checked before any financial write.
+        if (!customerLineIsDebit || settlementLineIsDebit) {
+            if (!rollbackForError(QStringLiteral("ORIGINAL_JOURNAL_INVALID")))
+                return failed(
+                    QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                    QStringLiteral("Database transaction could not be safely rolled back"));
+
+            return rejected(
+                QStringLiteral("ORIGINAL_JOURNAL_INVALID"),
+                QStringLiteral("Original withdrawal journal has the wrong direction"));
+        }
+
+        if (!decimalEquals(customerLineAmount, amount) ||
+            !decimalEquals(settlementLineAmount, amount)) {
+            if (!rollbackForError(QStringLiteral("ORIGINAL_JOURNAL_INVALID")))
+                return failed(
+                    QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                    QStringLiteral("Database transaction could not be safely rolled back"));
+
+            return rejected(
+                QStringLiteral("ORIGINAL_JOURNAL_INVALID"),
+                QStringLiteral("Original withdrawal journal amounts do not match the transaction"));
+        }
+
+        if (customerLedgerId == settlementLedgerId) {
+            if (!rollbackForError(QStringLiteral("ORIGINAL_JOURNAL_INVALID")))
+                return failed(
+                    QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                    QStringLiteral("Database transaction could not be safely rolled back"));
+
+            return rejected(
+                QStringLiteral("ORIGINAL_JOURNAL_INVALID"),
+                QStringLiteral("Original withdrawal journal ledgers are not distinct"));
+        }
+
+        const SettlementLedgerLookupResult historicalSettlement =
+            journalRepository.findSettlementLedgerById(
+                settlementLedgerId, currencyId);
+
+        if (historicalSettlement.status ==
+            SettlementLedgerLookupResult::Status::Failed) {
+            return rollbackFailure(
+                QStringLiteral("SETTLEMENT_LEDGER_LOOKUP_FAILED"),
+                safeError(
+                    historicalSettlement.error,
+                    QStringLiteral("Historical settlement ledger lookup failed")));
+        }
+
+        if (historicalSettlement.status ==
+            SettlementLedgerLookupResult::Status::NotFound) {
+            if (!rollbackForError(
+                    QStringLiteral("SETTLEMENT_LEDGER_NOT_POSTABLE")))
+                return failed(
+                    QStringLiteral("DATABASE_ROLLBACK_FAILED"),
+                    QStringLiteral("Database transaction could not be safely rolled back"));
+
+            return rejected(
+                QStringLiteral("SETTLEMENT_LEDGER_NOT_POSTABLE"),
+                QStringLiteral("The original settlement ledger is not active, postable, or in the transaction currency"));
+        }
     }
 
     const QString transactionNumber =
@@ -585,32 +767,36 @@ ReversalResult ReversalService::reverse(
             QStringLiteral("LEDGER_ASSIGNMENT_CHANGED"),
             QStringLiteral("The account's customer ledger no longer matches the original journal"));
 
-    // Reversal debits the customer's deposit: the same availability test as a
-    // withdrawal, with no new overdraft and no hold release.
-    const WithdrawalFundsResult funds =
-        balanceRepository.checkWithdrawalFunds(
-            amount,
-            account.ledgerBalance,
-            account.activeHolds,
-            account.minimumBalance,
-            account.effectiveOverdraftLimit);
+    if (!reversingWithdrawal) {
+        // Reversing a deposit debits the customer's deposit: the same
+        // availability test as a withdrawal, with no new overdraft and no hold
+        // release. Reversing a withdrawal is a pure credit-side increment and
+        // must not run any minimum-balance or withdrawal-funds check.
+        const WithdrawalFundsResult funds =
+            balanceRepository.checkWithdrawalFunds(
+                amount,
+                account.ledgerBalance,
+                account.activeHolds,
+                account.minimumBalance,
+                account.effectiveOverdraftLimit);
 
-    if (funds.status == WithdrawalFundsStatus::Failed)
-        return rollbackFailure(
-            QStringLiteral("AVAILABLE_FUNDS_CHECK_FAILED"),
-            safeError(funds.error,
-                      QStringLiteral("Reversal funds check failed")),
-            reversalTransactionId, transactionNumber);
+        if (funds.status == WithdrawalFundsStatus::Failed)
+            return rollbackFailure(
+                QStringLiteral("AVAILABLE_FUNDS_CHECK_FAILED"),
+                safeError(funds.error,
+                          QStringLiteral("Reversal funds check failed")),
+                reversalTransactionId, transactionNumber);
 
-    if (funds.status == WithdrawalFundsStatus::WithinOverdraftCapacity)
-        return rejectAndCommit(
-            QStringLiteral("OVERDRAFT_SETTLEMENT_NOT_CONFIGURED"),
-            QStringLiteral("The effective overdraft limit would cover this reversal, but an overdraft receivable posting is not configured"));
+        if (funds.status == WithdrawalFundsStatus::WithinOverdraftCapacity)
+            return rejectAndCommit(
+                QStringLiteral("OVERDRAFT_SETTLEMENT_NOT_CONFIGURED"),
+                QStringLiteral("The effective overdraft limit would cover this reversal, but an overdraft receivable posting is not configured"));
 
-    if (funds.status == WithdrawalFundsStatus::Insufficient)
-        return rejectAndCommit(
-            QStringLiteral("INSUFFICIENT_AVAILABLE_FUNDS"),
-            QStringLiteral("The account does not have enough available funds after holds and minimum balance"));
+        if (funds.status == WithdrawalFundsStatus::Insufficient)
+            return rejectAndCommit(
+                QStringLiteral("INSUFFICIENT_AVAILABLE_FUNDS"),
+                QStringLiteral("The account does not have enough available funds after holds and minimum balance"));
+    }
 
     {
         OperationError ledgerInitError;
@@ -647,14 +833,23 @@ ReversalResult ReversalService::reverse(
 
     {
         OperationError entryError;
+        const bool entryWritten = reversingWithdrawal
+            ? transactionRepository.appendDestinationEntry(
+                  reversalTransactionId,
+                  accountId,
+                  amount,
+                  account.currencyId,
+                  description,
+                  &entryError)
+            : transactionRepository.appendSourceEntry(
+                  reversalTransactionId,
+                  accountId,
+                  amount,
+                  account.currencyId,
+                  description,
+                  &entryError);
 
-        if (!transactionRepository.appendSourceEntry(
-                reversalTransactionId,
-                accountId,
-                amount,
-                account.currencyId,
-                description,
-                &entryError))
+        if (!entryWritten)
             return rollbackFailure(
                 QStringLiteral("TRANSACTION_ENTRY_CREATE_FAILED"),
                 safeError(entryError,
@@ -709,13 +904,21 @@ ReversalResult ReversalService::reverse(
 
     {
         OperationError balanceUpdateError;
+        const bool balanceUpdated = reversingWithdrawal
+            ? balanceRepository.applyDepositIncrement(
+                  accountId,
+                  amount,
+                  account.activeHolds,
+                  account.effectiveOverdraftLimit,
+                  &balanceUpdateError)
+            : balanceRepository.applyWithdrawalDecrement(
+                  accountId,
+                  amount,
+                  account.activeHolds,
+                  account.effectiveOverdraftLimit,
+                  &balanceUpdateError);
 
-        if (!balanceRepository.applyWithdrawalDecrement(
-                accountId,
-                amount,
-                account.activeHolds,
-                account.effectiveOverdraftLimit,
-                &balanceUpdateError))
+        if (!balanceUpdated)
             return rollbackFailure(
                 QStringLiteral("ACCOUNT_BALANCE_UPDATE_FAILED"),
                 safeError(balanceUpdateError,
@@ -725,9 +928,13 @@ ReversalResult ReversalService::reverse(
 
     {
         OperationError ledgerUpdateError;
-        const LedgerBalanceUpdateOutcome outcome =
-            journalRepository.applyWithdrawalLedgerDeltas(
-                settlementLedgerId, customerLedgerId, amount, &ledgerUpdateError);
+        const LedgerBalanceUpdateOutcome outcome = reversingWithdrawal
+            ? journalRepository.applyLedgerDeltas(
+                  settlementLedgerId, customerLedgerId, amount,
+                  &ledgerUpdateError)
+            : journalRepository.applyWithdrawalLedgerDeltas(
+                  settlementLedgerId, customerLedgerId, amount,
+                  &ledgerUpdateError);
 
         if (outcome == LedgerBalanceUpdateOutcome::PrepareFailed)
             return rollbackFailure(

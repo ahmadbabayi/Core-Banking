@@ -15,6 +15,11 @@ public:
         qint64 currencyId
     ) override;
 
+    SettlementLedgerLookupResult findSettlementLedgerById(
+        qint64 ledgerAccountId,
+        qint64 currencyId
+    ) override;
+
     bool ensureLedgerBalanceRows(
         qint64 customerLedgerAccountId,
         qint64 settlementLedgerAccountId,

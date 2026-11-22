@@ -63,6 +63,45 @@ SettlementLedgerLookupResult JournalRepository::findSettlementLedgerForShare(
     return result;
 }
 
+SettlementLedgerLookupResult JournalRepository::findSettlementLedgerById(
+    qint64 ledgerAccountId,
+    qint64 currencyId)
+{
+    SettlementLedgerLookupResult result;
+
+    QSqlQuery query(db);
+    query.prepare(
+        QStringLiteral(
+            "SELECT id FROM ledger_account "
+            "WHERE id = :ledger_account_id AND currency_id = :currency_id "
+            "  AND account_category = 'ASSET' "
+            "  AND status = 'ACTIVE' AND is_postable = TRUE "
+            "FOR SHARE"));
+
+    query.bindValue(
+        QStringLiteral(":ledger_account_id"), ledgerAccountId);
+    query.bindValue(QStringLiteral(":currency_id"), currencyId);
+
+    if (!query.exec())
+    {
+        result.status = SettlementLedgerLookupResult::Status::Failed;
+        result.error.code = PersistenceErrorCode::QueryFailed;
+        result.error.message =
+            QStringLiteral("Historical settlement ledger lookup failed");
+        return result;
+    }
+
+    if (!query.next())
+    {
+        result.status = SettlementLedgerLookupResult::Status::NotFound;
+        return result;
+    }
+
+    result.status = SettlementLedgerLookupResult::Status::Found;
+    result.ledgerAccountId = query.value(0).toLongLong();
+    return result;
+}
+
 bool JournalRepository::ensureLedgerBalanceRows(
     qint64 customerLedgerAccountId,
     qint64 settlementLedgerAccountId,

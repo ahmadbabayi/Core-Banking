@@ -2699,6 +2699,57 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - هم‌زمانی: فقط یک درخواست موفق شد؛ اما رقابت واقعیِ دو تراکنش مستقل PostgreSQL روی قفل ردیف آزمون نشد (سرور تک‌ریسمانی با Connection مشترک است و هم‌پوشانی تراکنشی واقعی را اثبات نمی‌کند).
 - DDL/Migration، SQL نوشتنی، Fault Injection و عملیات Git انجام نشد.
 
+### 18.36 هستهٔ داخلی برگشت کامل برداشت (بدون مسیر HTTP) — 2026-11-21
+
+#### منبع شواهد
+
+این گزارش مستقیم از اجرای همین مرحله است؛ گزارش جداگانه‌ای در `opencode-reports/` ساخته نشد.
+
+#### دامنه و مبنا
+
+- SHA مبدأ: `209329ac80d6c0f826c46219399367f6da9da096` (HEAD بدون تغییر؛ درخت قبل از شروع تمیز بود؛ تغییرات commit نشده‌اند).
+- فقط برگشت کامل `WITHDRAWAL` در وضعیت `COMPLETED`، بدون کارمزد و بدون مصرف اضافه‌برداشت. طراحی مرجع تأیید تسویه، API جدید، برگشت جزئی و Transfer خارج از دامنه‌اند.
+- مسیر HTTP `POST /api/v1/transactions/{id}/reversals` بدون تغییر و همچنان فقط برگشت واریز را می‌پذیرد؛ شاخهٔ داخلی از مسیر HTTP یا پرچم بدنه قابل‌فراخوانی نیست.
+
+#### فایل‌های تغییرکرده
+
+- `src/application/reversalservice.{h,cpp}`: افزودن `reverseWithdrawal(...)` (داخلی) و `reverseInternal(originalId, key, reversingWithdrawal, authorization)`؛ `reverse(...)` به‌عنوان ورودی HTTP فقط واریز باقی ماند. **پیش‌شرط صریح صلاحیت `WithdrawalReversalAuthorization` (شناسهٔ برداشت + granted) از فراخوانندهٔ داخلی دریافت و پیش از هر ثبت مالی بررسی می‌شود.** اعتبارسنجی جهت/مبلغ/توزیع برداشت فقط داخل شاخهٔ برداشت (gate شده با `reversingWithdrawal`) و افزودن helperهای `normalizeDecimal`/`decimalEquals` برای مقایسهٔ NUMERIC بدون floating point. **Fingerprint شاخهٔ برداشت با پیشوند متمایز `REVERSAL_WITHDRAWAL\n` ساخته می‌شود؛ برگشت واریز fingerprint تاریخی `SHA-256("REVERSAL\n" + originalId)` را حفظ می‌کند و نوع `REVERSAL` و دامنهٔ کلید idempotency تغییر نکرده است.**
+- `src/application/contracts/ijournalrepository.h`: متد pure virtual جدید `findSettlementLedgerById(ledgerAccountId, currencyId)` → `SettlementLedgerLookupResult`.
+- `src/infrastructure/repository/journalrepository.{h,cpp}`: پیاده‌سازی `findSettlementLedgerById` (ASSET + ACTIVE + is_postable + منطبق بر ارز، `FOR SHARE`).
+- `tests/reversal_withdrawal_orchestration_test.cpp`: تست سرویس جدید (۱۵ سناریو).
+- `tests/deposit_orchestration_test.cpp`، `tests/withdrawal_orchestration_test.cpp`: stub برای متد جدید interface.
+
+#### Build و تست
+
+- `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` → موفق (`[100%] Built target CoreBanking`). بدون reconfigure/تغییر Kit/نوع Build.
+- تست سرویس جدا از CMake با همان زیرساخت Qt5 لینک و اجرا شد:
+  `g++ -std=gnu++17 -g -fPIC $(pkg-config --cflags Qt5Core Qt5Sql Qt5Network) tests/reversal_withdrawal_orchestration_test.cpp src/application/reversalservice.cpp src/application/transactionservice.cpp src/domain/transaction.cpp $(pkg-config --libs Qt5Core Qt5Sql Qt5Network) -o /tmp/opencode/reversal_withdrawal_orchestration_test`
+  سپس اجرا: خروجی `All reversal withdrawal orchestration tests passed` و exit `0`.
+- object-compile fakeهای واریز/برداشت پس از تغییر interface: هر دو exit `0`.
+
+#### رفتار پیاده‌سازی‌شده (شاخهٔ برداشت)
+
+- **صلاحیت (پیش‌شرط صریح):** فراخوانندهٔ داخلی باید تأیید برگشت کامل را برای همان شناسهٔ برداشت بدهد؛ نبود تأیید با `REVERSAL_NOT_AUTHORIZED` و تأیید برای شناسهٔ دیگر با `REVERSAL_AUTHORIZATION_MISMATCH` پیش از هر ثبت مالی (و پیش از قفل سطر اصل) رد می‌شوند. صلاحیت از `COMPLETED`، مانده یا تنظیمات امروز استنتاج نمی‌شود.
+- **اعتبارسنجی حسابداری:** شکل Journal اصلی POSTED (دقیقاً دو قلم، جهت بدهکار بدهی مشتری + بستانکار دارایی تسویه، هر دو برابر مبلغ اصل در ارز تراکنش، حساب مشتری و سرفصل‌های متمایز) با NUMERIC نرمال‌شده بدون floating point بررسی می‌شود؛ اما این شکل **مدرک عدم مصرف اضافه‌برداشت نیست** و جای تأیید صلاحیت را نمی‌گیرد.
+- سرفصل تسویه از Journal تاریخی با `findSettlementLedgerById` تأیید می‌شود (نه تنظیمات امروز)؛ عدم تطابق با `SETTLEMENT_LEDGER_NOT_POSTABLE` رد و شکست lookup با `SETTLEMENT_LEDGER_LOOKUP_FAILED`.
+- اثر: Journal معکوس (درآوردن جابه‌جایی بدهکار/بستانکار)، قلم تراکنش `DESTINATION`، افزایش ماندهٔ دفتری با `applyDepositIncrement` و `applyLedgerDeltas` (بدهکار تسویه / بستانکار مشتری). Hold تغییر نمی‌کند و کنترل کف مانده/کفایت وجه روی این ثبت افزایشی اجرا نمی‌شود.
+- همان ترتیب قفل/ثبت در همان UnitOfWork: قفل کلید → replay → تأیید صلاحیت → قفل اصل → حساب/مانده → Holdها → ماندهٔ سرفصل‌ها به ترتیب شناسه. همان کلید+اصل نتیجهٔ قبلی را برمی‌گرداند حتی اگر اصل اکنون `REVERSED` باشد (بدون احراز دوبارهٔ صلاحیت)؛ همان کلید+اصل دیگر conflict؛ کلید تازه روی اصل `REVERSED` بدون ثبت دوم رد می‌شود. اصل پس از تکمیل REVERSAL و پیش از Commit به `REVERSED` می‌رود و مبلغ/Journal اصلی دست‌نخورده می‌ماند. رفتار برگشت واریز (شاخهٔ `reverse`) تغییر نکرده است.
+- **مرز HTTP در replay:** چون fingerprint برداشت از fingerprint واریز متمایز است، فراخوانی `reverse(...)` (ورودی HTTP فقط‌واریز) با همان شناسهٔ برداشت و همان کلیدی که یک برگشت برداشت با آن ثبت شده، دیگر نتیجهٔ برداشت را بازپخش نمی‌کند؛ مقایسهٔ fingerprint در `TransactionService` واقعی به `IDEMPOTENCY_KEY_REUSED` می‌رسد (بدون بازگشت نتیجهٔ برداشت، بدون ثبت مالی دوم و بدون Commit دوم). Replay داخلی `reverseWithdrawal` با همان کلید/برداشت بدون تأیید مجدد همچنان موفق است و برگشت واریزِ دارای fingerprint تاریخی `REVERSAL\n` همان‌طور بازپخش می‌شود.
+
+#### سناریوهای تست اجراشده (fake UoW، ۱۵ مورد، exit 0)
+
+- برگشت موفق برداشت 100: افزایش دقیق 100 (`applyDepositIncrement`)، جهت Journal معکوس (بدهکار دارایی/بستانکار بدهی)، DESTINATION (نه SOURCE)، `applyLedgerDeltas` (بدهکار تسویه=4/بستانکار مشتری=1)، عدم تغییر Hold، عدم اجرای `checkWithdrawalFunds`، وضعیت REVERSAL `INITIATED→PROCESSING→COMPLETED` و اصلی `REVERSED`، و Commit.
+- Replay همان کلید/اصل (اصل اکنون `REVERSED`) بدون تأیید صلاحیت نتیجهٔ ثبت‌شده را برمی‌گرداند؛ conflict کلید یکسان برای اصل دیگر؛ رد کلید دوم روی اصل `REVERSED`؛ برداشت کارمزددار (`TRANSACTION_HAS_FEES`)؛ Journal جهت اشتباه (`ORIGINAL_JOURNAL_INVALID`)؛ Journal چندگانه (`ORIGINAL_JOURNAL_INVALID`)؛ سرفصل تسویه غیرقابل ثبت (`SETTLEMENT_LEDGER_NOT_POSTABLE`)؛ ورودی برداشت روی اصل واریز (`TRANSACTION_NOT_REVERSIBLE`)؛ ورودی HTTP (`reverse`) روی اصل برداشت (`TRANSACTION_NOT_REVERSIBLE`)؛ حفظ برگشت واریز بدون رگرسیون (decrement/SOURCE فاند-check/`applyWithdrawalLedgerDeltas`).
+- **بدون تأیید** → رد `REVERSAL_NOT_AUTHORIZED` و **تأیید برای شناسهٔ دیگر** → رد `REVERSAL_AUTHORIZATION_MISMATCH`؛ در هر دو، هیچ ثبت مالی انجام نمی‌شود (بدون قفل سطر اصل، بدون تراکنش/Journal/تغییر مانده، اصل دست‌نخورده و rollback تمیز).
+- **مرز HTTP در replay:** ثبت داخلی برگشت برداشت با تأیید معتبر (تأیید stamp شدن fingerprint متمایز روی رکورد ساخته‌شده) و سپس `reverse(...)` با همان شناسه/کلید → `IDEMPOTENCY_KEY_REUSED` از مقایسهٔ fingerprint در `TransactionService` واقعی، بدون بازگشت نتیجهٔ برداشت و بدون ثبت مالی/Commit دوم. **Replay واریز با fingerprint تاریخی `REVERSAL\n`** → همچنان Completed بدون تراکنش/Journal جدید.
+
+#### اجرانشده‌ها و محدودیت‌ها
+
+- این تغییر فقط **پیش‌شرط صلاحیت قرارداد داخلی** را صریح می‌کند؛ شاهد تاریخی تازه‌ای برای «مصرف/عدم مصرف اضافه‌برداشت» ایجاد نمی‌کند و هیچ ذخیره‌سازی جدیدی ندارد. مرجع صدور تأیید در محیط تولید و فعال‌سازی HTTP خارج از دامنه‌اند.
+- هیچ درخواست HTTP مالی، SQL نوشتنی، DDL/Migration، تغییر دادهٔ موجود یا عملیات Git انجام نشد؛ دیتابیس دست‌نخورده است.
+- تست fake تأیید PostgreSQL، رقابت قفل‌ها یا آمادگی انتشار نیست؛ بازیابی Commit نامعلوم و Fault Injection اجرا نشد.
+- مسیر HTTP برگشت برداشت فعال نشده است؛ برگشت واریز دارای کارمزد، برگشت انتقال و برگشت جزئی باقی‌مانده‌اند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

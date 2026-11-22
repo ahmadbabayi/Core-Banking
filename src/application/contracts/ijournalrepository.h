@@ -121,6 +121,11 @@ public:
         qint64 currencyId
     ) = 0;
 
+    virtual SettlementLedgerLookupResult findSettlementLedgerById(
+        qint64 ledgerAccountId,
+        qint64 currencyId
+    ) = 0;
+
     virtual bool ensureLedgerBalanceRows(
         qint64 customerLedgerAccountId,
         qint64 settlementLedgerAccountId,

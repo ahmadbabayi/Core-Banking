@@ -319,6 +319,15 @@ public:
         return result;
     }
 
+    SettlementLedgerLookupResult findSettlementLedgerById(
+        qint64,
+        qint64) override
+    {
+        SettlementLedgerLookupResult result;
+        result.status = SettlementLedgerLookupResult::Status::NotFound;
+        return result;
+    }
+
     bool ensureLedgerBalanceRows(
         qint64,
         qint64,
