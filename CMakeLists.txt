@@ -51,6 +51,8 @@ add_executable(CoreBanking
     src/application/reversalservice.cpp
     src/application/transactionservice.h
     src/application/transactionservice.cpp
+    src/application/transactionqueryservice.h
+    src/application/transactionqueryservice.cpp
     src/application/contracts/operationerror.h
     src/application/contracts/iaccountstaterepository.h
     src/application/contracts/ibalancerepository.h

@@ -2750,6 +2750,55 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - تست fake تأیید PostgreSQL، رقابت قفل‌ها یا آمادگی انتشار نیست؛ بازیابی Commit نامعلوم و Fault Injection اجرا نشد.
 - مسیر HTTP برگشت برداشت فعال نشده است؛ برگشت واریز دارای کارمزد، برگشت انتقال و برگشت جزئی باقی‌مانده‌اند.
 
+### 18.37 استعلام خواندنی یک تراکنش (هستهٔ داخلی، بدون مسیر HTTP) — 2026-11-22
+
+#### دامنه و مبنا
+
+- SHA مبدأ: `a707abd85149fd53ff35a3cb55ccbc8a5b041e1f` (HEAD تمیز؛ تغییرات commit نشده‌اند).
+- فقط «استعلام خواندنی یک تراکنش با شناسه». صورتحساب، استعلام سند (Journal)، دفتر کل، تراز آزمایشی و هر تغییر در Reversal خارج از دامنه‌اند.
+- مسیر `POST /api/v1/transactions/{id}/reversals` دست‌نخورده ماند؛ هیچ route جدیدی ثبت نشد.
+
+#### مانع HTTP (کنترل دسترسی)
+
+- در پروژه هیچ لایهٔ احراز هویت/مجوز وجود ندارد (Router بدون middleware، همهٔ GETها بازند، `HttpServer` روی `Any` گوش می‌دهد)؛ مستند `HOLD_API_DESIGN.md` صراحتاً «لایه احراز هویت/مجوز در پروژه وجود ندارد» را ثبت کرده است. شناسهٔ تراکنش مجوز دسترسی نیست و هیچ سازوکار قابل اتکایی برای کنترل دسترسی در سطح تراکنش یا مالکیت حساب وجود ندارد.
+- بنابراین طبق rule مصوب، **GET ثبت نشد**؛ سیاست دسترسی جدید یا bypass آزمایشی ساخته نشد. فقط هستهٔ خواندنی داخلی پیاده و آزمون شد. فعال‌سازی `GET /api/v1/transactions/{id}` به طراحی/تأیید مستقل لایهٔ دسترسی موکول است.
+
+#### فایل‌های تغییرکرده
+
+- `src/application/transactionqueryservice.{h,cpp}` (جدید): `TransactionQueryService::queryById(id)` روی `ITransactionRepository&`؛ استفادهٔ مجدد از `findById` موجود (SELECT پارامتری بدون `FOR UPDATE` و بدون مسیر idempotency مالی). خروجی `TransactionQueryResult` فقط شامل فیلدهای مجاز است: `id`, `transactionNumber`, `type`, `status`, `amount`, `currencyId`, `reversesTransactionId` (فقط برای REVERSAL) و زمان‌های `initiatedAt`/`completedAt`/`createdAt`/`updatedAt`. `idempotency_key`، `request_fingerprint`، `result_code`/`result_message`، `description`، `reference_number`، `channel` و جزئیات حساب طرف مقابل افشا نمی‌شوند. وضعیت `REVERSED` اصل همان‌طور که ثبت شده برمی‌گردد و با رکورد مستقل `REVERSAL` یکی نمی‌شود.
+- `tests/transaction_query_service_test.cpp` (جدید): تست سرویس با fake `ITransactionRepository` (۶ سناریو).
+- `CMakeLists.txt` (تغییریافته): ثبت `src/application/transactionqueryservice.h` و `src/application/transactionqueryservice.cpp` در `add_executable(CoreBanking ...)` (بلافاصله پس از `src/application/transactionservice.cpp`). این تنها تغییر build است؛ سرویس همچنان از `main.cpp`/Router تزریق نمی‌شود (کد در باینری بدون استفاده، اما واقعاً کامپایل و لینک می‌شود).
+
+#### شاهد ۱ — Build برنامه (target اصلی، با کامپایل و لینک سرویس جدید)
+
+- `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` → `Configuring done`، `Generating done`، `Building CXX object .../src/application/transactionqueryservice.cpp.o`، `Linking CXX executable CoreBanking`، `[100%] Built target CoreBanking`. بازتولید خودکار CMake صرفاً به‌خاطر همین ثبت در `CMakeLists.txt` و طبق مجوز این مرحله انجام شد؛ `cmake -S` یا دایرکتوری جدید استفاده نشد.
+- **تأیید کامپایل و لینک فایل جدید:** object فایل `CMakeFiles/CoreBanking.dir/src/application/transactionqueryservice.cpp.o` ساخته شد (`-rw-r--r--`, 648496 بایت) و نماد `TransactionQueryService::queryById(long long)` با نوع `T` در باینری `CoreBanking` وجود دارد (`nm -C CoreBanking`).
+
+#### شاهد ۲ — تست مستقل سرویس با fake Repository (کامپایل و اجرای مستقل)
+
+- لینک مستقل (فقط Qt5Core؛ خارج از target اصلی):
+  `g++ -std=gnu++17 -g -fPIC $(pkg-config --cflags Qt5Core) tests/transaction_query_service_test.cpp src/application/transactionqueryservice.cpp src/domain/transaction.cpp $(pkg-config --libs Qt5Core) -o /tmp/opencode/transaction_query_service_test`
+- اجرا: خروجی `All transaction query service tests passed` و exit `0` (۶ سناریو).
+- سناریوها (fake `ITransactionRepository`، ۶ مورد):
+  - شناسهٔ نامعتبر (`0` و منفی) → `Invalid` با `INVALID_TRANSACTION_ID` و **بدون فراخوانی Repository**.
+  - رکورد ناموجود → `NotFound` با `TRANSACTION_NOT_FOUND`.
+  - خطای Repository → `Failed` با `TRANSACTION_LOOKUP_FAILED` و پیام خطا؛ بدون افشای فیلدهای تراکنش.
+  - نگاشت فیلدهای واریز کامل (id/شماره/نوع/وضعیت/مبلغ/ارز/زمان‌ها)، `reversesTransactionId==0`، و عدم سطح‌سازی `result_code`/`result_message`/fingerprint/idempotency.
+  - اصل `REVERSED` → وضعیت `REVERSED` همان‌طور ثبت‌شده برمی‌گردد (`type` خودش، بدون ادغام با REVERSAL).
+  - رکورد `REVERSAL` → `type==REVERSAL` و `reversesTransactionId` برابر شناسهٔ اصل، با شناسهٔ خودش.
+
+#### شاهد ۳ — SELECT مستقیم read-only (نقش `corebanking_reader`)
+
+- `SELECT` روی `public.transaction` (فیلدهای whitelist) برای سه نمونهٔ موجود: تراکنش عادی `id=1` (`DEPOSIT/COMPLETED`, مبلغ 1000, `reverses=NULL`)؛ اصل برگشت‌خورده `id=8` (`DEPOSIT/REVERSED`, مبلغ 120, `reverses=NULL`)؛ و رکورد مستقل `REVERSAL` `id=9` (`REVERSAL/COMPLETED`, مبلغ 120, `reverses=8`). این داده‌ها تأیید می‌کنند اصل `REVERSED` ردیف جداگانه‌ای است و `reverses_transaction_id` فقط روی ردیف `REVERSAL` است؛ منطبق با نگاشت سرویس.
+- هیچ fixture با درخواست مالی ساخته نشد؛ فقط دادهٔ موجود خوانده شد.
+
+#### اجرانشده‌ها و محدودیت‌ها
+
+- مسیر HTTP `GET /api/v1/transactions/{id}` پیاده/فعال نشده (به‌دلیل نبود لایهٔ کنترل دسترسی). هیچ GET مجاز/غیرمجاز روی localhost اجرا نشد.
+- صورتحساب، استعلام سند، دفتر کل و تراز آزمایشی همچنان وجود ندارند و شروع نشده‌اند.
+- هیچ SQL نوشتنی، DDL/Migration، تغییر داده، fault injection، درخواست HTTP مالی یا Git write انجام نشد.
+- تست fake تأیید PostgreSQL یا آمادگی انتشار نیست؛ رفتار سرویس واقعی روی QPSQL با دسترسی HTTP آزمون نشده است.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.
