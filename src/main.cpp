@@ -16,6 +16,8 @@
 #include "infrastructure/repository/productledgermappingrepository.h"
 #include "infrastructure/repository/ledgeraccountrepository.h"
 #include "infrastructure/repository/accountrepository.h"
+#include "infrastructure/repository/accountstaterepository.h"
+#include "infrastructure/repository/transactionrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
@@ -34,6 +36,7 @@
 #include "application/withdrawalservice.h"
 #include "application/holdservice.h"
 #include "application/reversalservice.h"
+#include "application/accountstatementservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
@@ -52,6 +55,7 @@
 #include "web/withdrawalcontroller.h"
 #include "web/holdcontroller.h"
 #include "web/reversalcontroller.h"
+#include "web/accountstatementcontroller.h"
 #include "web/httprouter.h"
 #include "web/httpserver.h"
 
@@ -153,6 +157,14 @@ int main(int argc, char *argv[])
     HoldService holdService(db);
     HoldController holdController(holdService);
 
+    // Account statement (read-only turnover)
+    AccountStateRepository accountStateRepository(db);
+    TransactionRepository transactionRepository(db);
+    AccountStatementService accountStatementService(
+        accountStateRepository, transactionRepository);
+    AccountStatementController accountStatementController(
+        accountStatementService);
+
     // HTTP router
     HttpRouter router(
         customerController,
@@ -172,6 +184,7 @@ int main(int argc, char *argv[])
     router.setWithdrawalController(&withdrawalController);
     router.setHoldController(&holdController);
     router.setReversalController(&reversalController);
+    router.setAccountStatementController(&accountStatementController);
 
     // HTTP server
     HttpServer server(router);
@@ -211,6 +224,8 @@ int main(int argc, char *argv[])
              << "http://localhost:8080/api/v1/holds";
     qDebug() << "Reversal endpoint:"
              << "POST http://localhost:8080/api/v1/transactions/{id}/reversals";
+    qDebug() << "Account statement endpoint:"
+             << "GET http://localhost:8080/api/v1/accounts/{accountId}/statement?from=...&to=...";
     qDebug() << "Country endpoints:"
              << "http://localhost:8080/api/v1/countries";
     qDebug() << "Province endpoints:"

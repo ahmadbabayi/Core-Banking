@@ -59,6 +59,12 @@ void HttpRouter::setReversalController(ReversalController* controller)
     reversalController = controller;
 }
 
+void HttpRouter::setAccountStatementController(
+    AccountStatementController* controller)
+{
+    accountStatementController = controller;
+}
+
 HttpResponse HttpRouter::route(
     const QByteArray& method,
     const QByteArray& path,
@@ -281,6 +287,32 @@ HttpResponse HttpRouter::route(
     if (path.startsWith(accountPrefix)) {
         const QByteArray suffix = path.mid(accountPrefix.size());
         const QByteArray statusSuffix = "/status";
+        const QByteArray statementSuffix = "/statement";
+
+        if (method == "GET" && suffix.endsWith(statementSuffix)) {
+            const QByteArray idText =
+                suffix.left(suffix.size() - statementSuffix.size());
+
+            qint64 id = 0;
+
+            if (idText.isEmpty() || idText.contains('/') ||
+                !parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "INVALID_ACCOUNT_ID",
+                    "Invalid account ID");
+            }
+
+            if (accountStatementController == nullptr) {
+                return {
+                    "503 Service Unavailable",
+                    ApiResponse::error(
+                        "STATEMENT_SERVICE_UNAVAILABLE",
+                        "Statement service is not configured")
+                };
+            }
+
+            return accountStatementController->getStatement(id, query);
+        }
 
         if (method == "PATCH" && suffix.endsWith(statusSuffix)) {
             const QByteArray idText = suffix.left(

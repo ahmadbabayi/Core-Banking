@@ -202,6 +202,8 @@ add_executable(CoreBanking
     src/web/holdcontroller.cpp
     src/web/reversalcontroller.h
     src/web/reversalcontroller.cpp
+    src/web/accountstatementcontroller.h
+    src/web/accountstatementcontroller.cpp
 )
 
 target_link_libraries(CoreBanking

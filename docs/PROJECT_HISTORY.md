@@ -2850,6 +2850,58 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - استعلام سند، دفتر کل و تراز آزمایشی همچنان وجود ندارند و شروع نشده‌اند.
 - هیچ SQL نوشتنی، تغییر داده، درخواست HTTP مالی یا Git write انجام نشد. تست fake تأیید PostgreSQL نیست؛ رفتار سرویس واقعی روی QPSQL با HTTP آزمون نشده است.
 
+### 18.39 صورتحساب خواندنی یک حساب — تکمیل مسیر HTTP برای کلاینت (2026-11-23)
+
+#### دامنه و مبنا
+
+- SHA مبدأ: `7e33b59231a48f010329a53840cc70842d5731a7` (HEAD و درخت کاری تمیز در آغاز؛ تغییرات commit نشده‌اند).
+- فقط فعال‌سازی HTTP صورتحساب خواندنی حساب بر پایهٔ هستهٔ موجود `AccountStatementService` (18.38). قواعد مالی هسته در HTTP تکرار یا تغییر داده نشدند؛ مسیر HTTP استعلام تراکنش و سایر سرویس‌ها دست‌نخورده باقی ماندند.
+- بدون احراز هویت/مجوز، بدون DDL/Migration، بدون SQL نوشتنی، بدون تغییر داده و بدون درخواست مالی؛ آزمون فقط روی سرور توسعهٔ محلی `http://localhost:8080` و با دادهٔ موجود، و بازرسی دیتابیس فقط با نقش read-only `corebanking_reader`.
+
+#### قرارداد HTTP تصویب‌شده (مستخرج از کد واقعی)
+
+- `GET /api/v1/accounts/{accountId}/statement?from=...&to=...`
+- `accountId`: عدد صحیح مثبت؛ در غیر این صورت `400` با `INVALID_ACCOUNT_ID`.
+- `from`/`to`: هرکدام دقیقاً یک‌بار و الزامی (شمارش دستی از روی `QUrlQuery::queryItems(QUrl::FullyDecoded)` به‌دلیل نبود `queryItems(key)` در Qt 5.15). فرمت `YYYY-MM-DDTHH:mm:ss` با بخش ثانیهٔ اختیاری تا ۳ رقم (میلی‌ثانیه)، بدون offset یا `Z` و بدون جداکنندهٔ فاصله — چون ستون `completed_at` از نوع `timestamp without time zone` است و زمان خروجی نباید به‌اشتباه UTC معرفی شود. بازهٔ نیمه‌باز `[from,to)` و `from < to` الزامی است؛ نبود/تکرار/فرمت نامعتبر/`from >= to` → `400` با `INVALID_PERIOD` (یا `MISSING_FROM`/`MISSING_TO`).
+- پاسخ‌ها با قالب `ApiResponse`: موفق `{"success":true,"data":{...}}`؛ خطا `{"success":false,"error":{"code":...,"message":...}}`.
+- `200` برای حساب موجود حتی با `rows` خالی (مجموع‌ها `"0"`)؛ `404` برای حساب ناموجود (`ACCOUNT_NOT_FOUND`)؛ `500` برای خطای Repository یا ناسازگاری داده با پیام عمومی `Internal server error` (کد پایدار مثل `STATEMENT_LOOKUP_FAILED`/`CURRENCY_MISMATCH`؛ متن SQL هرگز افشا نمی‌شود).
+- بدنهٔ موفق: `accountId`, `currencyId`, `from`, `to`, `totalCredits`, `totalDebits` (رشتهٔ اعشاری، نه JSON float), `rows`, و `openingBalance`/`closingBalance` برابر `null` با پرچم‌های `false` (`openingBalanceAvailable`/`closingBalanceAvailable`). هر ردیف فقط `transactionId`, `transactionNumber`, `transactionType`, `status`, `amount` (رشته), `currencyId`, `occurredAt` (زمان بدون timezone، خروجی `yyyy-MM-ddTHH:mm:ss` + `.SSS` فقط وقتی ms≠0) و `direction` (`"Credit"`/`"Debit"`). `balanceAfter` و فیلدهای داخلی/حساس منتشر نمی‌شوند.
+
+#### فایل‌های تغییرکرده
+
+- `src/web/accountstatementcontroller.{h,cpp}` (جدید): `AccountStatementController::getStatement(accountId, query)` با parsing strict زمان (regex)، شمارش پارامترها، نگاشت وضعیت سرویس به HTTP و نگاشت JSON (با `typeToString`/`statusToString` محلی، چون نمونه‌های Repository در فضای نام ناشناس فایل‌محور و غیرقابل استفادهٔ مجددند).
+- `src/web/httprouter.{h,cpp}` (تغییریافته): افزودن setter/عضو/شامل `AccountStatementController`؛ مسیر `GET .../statement` داخل بلوک پیشوند `/api/v1/accounts/` و **پیش از** PATCH-status و GET بامشخصهٔ حساب، تا مسیر عمومی آن را نگیرد؛ null-guard مسیر بدون سرویس با `503 STATEMENT_SERVICE_UNAVAILABLE`.
+- `src/main.cpp` (تغییریافته): سیم‌کشی `AccountStateRepository(db)` + `TransactionRepository(db)` → `AccountStatementService` → `AccountStatementController` و `router.setAccountStatementController(&...)`؛ لاگ endpoint نمونه.
+- `CMakeLists.txt` (تغییریافته): ثبت `src/web/accountstatementcontroller.{h,cpp}` در target.
+
+#### شاهد ۱ — Build برنامه (target اصلی)
+
+- `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` → بدون reconfigure دستی؛ کامپایل `accountstatementcontroller.cpp.o`، لینک `CoreBanking` و `[100%] Built target CoreBanking`. (دو خطای میانی `queryItems(QString)`/`items(...)` به `queryItems(QUrl::FullyDecoded)` تصحیح شد.)
+
+#### شاهد ۲ — تست مستقل هسته با fake (اجرای مجدد)
+
+- `g++ -std=c++17 -fPIC tests/account_statement_service_test.cpp src/application/accountstatementservice.cpp $(pkg-config --cflags --libs Qt5Core Qt5Sql) -o /tmp/opencode/account_statement_service_test` → خروجی `All account statement service tests passed` و exit `0` (۱۴ سناریو)؛ بدون رگرسیون روی هستهٔ 18.38.
+
+#### شاهد ۳ — آزمون واقعی HTTP با curl (سرور محلی 8080، دادهٔ موجود حساب 5)
+
+- اجرای سرور از target ساخته‌شده؛ برای هر درخواست HTTP، پاسخ واقعی با `curl` بررسی شد:
+  - **موفق:** `curl 'http://localhost:8080/api/v1/accounts/5/statement?from=2026-11-21T00:00:00&to=2026-11-22T00:00:00'` → `200` با `totalCredits="250"`, `totalDebits="170"` و ۵ ردیف؛ اصل `DEPOSIT/REVERSED` (tx8 Credit 120 در 08:36:33.742) و `REVERSAL/COMPLETED` (tx9 Debit 120 در 08:36:55.996) به‌صورت دو ردیف مستقل در زمان‌های خودشان؛ `openingBalance`/`closingBalance = null` با پرچم `false`؛ مبلغ‌ها/جمع‌ها رشته‌ای؛ بدون `balanceAfter`.
+  - **بازهٔ خالی:** `from=2026-11-20T00:00:00&to=2026-11-21T00:00:00` → `200` با `rows:[]`، `totalCredits="0"`، `totalDebits="0"`.
+  - **ناقص/تکراری:** بدون `from` → `400 MISSING_FROM`؛ بدون `to` → `400 MISSING_TO`؛ دوبار `from`/`to` → `400 INVALID_PERIOD`.
+  - **نامعتبر/نیمه‌باز:** `from` با `Z`، با جداکنندهٔ فاصله یا متنی → `400 INVALID_PERIOD`؛ `from > to` و `from == to` → `400 INVALID_PERIOD` («from must be strictly earlier than to»).
+  - **حساب ناموجود:** `accounts/999999/statement` → `404 ACCOUNT_NOT_FOUND`.
+  - **accountId نامعتبر:** `0`، `-5` و غیرعدد → `400 INVALID_ACCOUNT_ID`.
+  - **میلی‌ثانیه:** `from=...T00:00:00.000` پذیرفته شد و خروجی `from` بدون `.000` برگشت (ms=0).
+  - **فیلتر نیمه‌باز روی دادهٔ واقعی:** پنجره‌ی `[08:37:00, 08:59:00)` فقط tx10+tx11 را برگرداند (`totalCredits="130"`, `totalDebits="0"`)، بدون tx9/tx12.
+- بازرسی read-only (`corebanking_reader`) پیش/پس از آزمون: حساب 5 (`currency_id 1`) دارای ۵ entry در تاریخ مربوط است و `COUNT` تراکنش‌ها (۱۳) و entryها (۱۳) پس از آزمون بدون تغییر ماند؛ endpoint فقط SELECT انجام می‌دهد و هیچ نوشتن داده‌ای ایجاد نشد.
+
+#### اجرانشده‌ها و محدودیت‌ها
+
+- بدون احراز هویت/مجوز؛ endpoint صرفاً برای محیط توسعهٔ محلی/ایزوله قابل استفاده است و آمادهٔ انتشار عمومی نیست؛ تنظیم شبکهٔ سراسری برنامه تغییر نکرده است.
+- خطای واقعی Repository/ناسازگاری ارز (`500`) در HTTP با ابتکار تزریق خطا آزمون نشده و فقط نگاشت کد، در سرویس/controller و با fake در هسته پوشش داده شده است.
+- مسیر HTTP استعلام تراکنش و سایر گزارش‌ها (Journal/GL/Trial Balance) فعال نشده‌اند و ماندهٔ تاریخی همچنان `unavailable` است.
+- هیچ SQL نوشتنی، DDL/Migration، تغییر داده یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.
