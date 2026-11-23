@@ -441,6 +441,92 @@ TransactionFeeLookupResult TransactionRepository::findFeeForTransaction(
     return result;
 }
 
+AccountEntryListResult TransactionRepository::findAccountEntries(
+    qint64 accountId,
+    const QDateTime& from,
+    const QDateTime& to)
+{
+    AccountEntryListResult result;
+
+    QSqlQuery query(db);
+    query.prepare(
+        QStringLiteral(
+            "SELECT t.id, t.transaction_number, t.transaction_type, t.status, "
+            "       t.completed_at, te.entry_type, te.amount, te.currency_id "
+            "FROM transaction_entry te "
+            "JOIN transaction t ON t.id = te.transaction_id "
+            "WHERE te.account_id = :account_id "
+            "  AND t.completed_at >= :from "
+            "  AND t.completed_at < :to "
+            "ORDER BY t.completed_at, t.id, te.sequence_no"));
+    query.bindValue(QStringLiteral(":account_id"), accountId);
+    query.bindValue(QStringLiteral(":from"), from);
+    query.bindValue(QStringLiteral(":to"), to);
+
+    if (!query.exec())
+    {
+        result.status = AccountEntryListResult::Status::Failed;
+        result.error.code = classifySqlError(query.lastError());
+        result.error.message =
+            QStringLiteral("Account entries lookup failed");
+        return result;
+    }
+
+    while (query.next())
+    {
+        AccountEntryRow row;
+        row.transactionId = query.value(QStringLiteral("id")).toLongLong();
+        row.transactionNumber =
+            query.value(QStringLiteral("transaction_number")).toString();
+
+        Transaction::Type type;
+        if (!typeFromString(
+                query.value(QStringLiteral("transaction_type")).toString(),
+                &type))
+        {
+            result.status = AccountEntryListResult::Status::Failed;
+            result.error.code = PersistenceErrorCode::InvalidState;
+            result.error.message =
+                QStringLiteral("Transaction row has an unknown type");
+            result.rows.clear();
+            return result;
+        }
+        row.type = type;
+
+        Transaction::Status status;
+        if (!statusFromString(
+                query.value(QStringLiteral("status")).toString(),
+                &status))
+        {
+            result.status = AccountEntryListResult::Status::Failed;
+            result.error.code = PersistenceErrorCode::InvalidState;
+            result.error.message =
+                QStringLiteral("Transaction row has an unknown status");
+            result.rows.clear();
+            return result;
+        }
+        row.status = status;
+
+        const QString entryType =
+            query.value(QStringLiteral("entry_type")).toString();
+        row.entryType =
+            entryType == QStringLiteral("DESTINATION")
+                ? TransactionEntry::Type::DESTINATION
+                : TransactionEntry::Type::SOURCE;
+
+        row.amount = query.value(QStringLiteral("amount")).toString();
+        row.currencyId =
+            query.value(QStringLiteral("currency_id")).toLongLong();
+        row.occurredAt =
+            query.value(QStringLiteral("completed_at")).toDateTime();
+
+        result.rows.append(row);
+    }
+
+    result.status = AccountEntryListResult::Status::Found;
+    return result;
+}
+
 qint64 TransactionRepository::createInitiated(
     const Transaction& transaction,
     OperationError* error)

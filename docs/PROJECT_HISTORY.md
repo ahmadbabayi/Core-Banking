@@ -2799,6 +2799,57 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - هیچ SQL نوشتنی، DDL/Migration، تغییر داده، fault injection، درخواست HTTP مالی یا Git write انجام نشد.
 - تست fake تأیید PostgreSQL یا آمادگی انتشار نیست؛ رفتار سرویس واقعی روی QPSQL با دسترسی HTTP آزمون نشده است.
 
+### 18.38 صورتحساب خواندنی یک حساب (هستهٔ داخلی، بدون مسیر HTTP) — 2026-11-22
+
+#### دامنه و مبنا
+
+- SHA مبدأ: `b8c11b2caa1527144ac50f0a53f03bd362c0a760` (HEAD تمیز در آغاز؛ تغییرات commit نشده‌اند).
+- فقط «صورتحساب خواندنی یک حساب». استعلام سند (Journal)، دفتر کل، تراز آزمایشی، تغییر Reversal و فعال‌سازی HTTP خارج از دامنه‌اند.
+- قرارداد هستهٔ داخلی: `AccountStatementService::query(accountId, from, to)` با بازهٔ نیمه‌باز `[from,to)` روی `completed_at` و اعتبارسنجی `accountId` مثبت، تاریخ معتبر و `from < to`.
+- خروجی = **گردش خواندنی** (turnover)، نه بازسازی ماندهٔ تاریخی: `openingBalance`/`closingBalance` صریحاً `unavailable` و خالی‌اند (هرگز جعل نمی‌شوند) و `balanceAfter` هیچ‌گاه تولید نمی‌شود؛ `account_balance` فقط ماندهٔ جاری است و برای تاریخ قابل استفاده نیست. مجموع‌ها (`totalCredits`/`totalDebits`) روی ردیف‌های گنجانده‌شده جمع می‌شوند.
+
+#### تصمیمات قرارداد (استخراج‌شده از کد واقعی)
+
+- **معنای direction اثبات شد** (نه حدس SOURCE/DESTINATION): از منطق واقعی `depositservice` (`appendDestinationEntry` + `applyDepositIncrement`)، `withdrawalservice` (`appendSourceEntry` + `applyWithdrawalDecrement`)، `reversalservice` (برگشت برداشت → `DESTINATION`/increment؛ برگشت واریز → `SOURCE`/decrement) و `transferservice` (مبدأ `SOURCE`، مقصد `DESTINATION`). پس `DESTINATION` = ورود وجه (Credit) و `SOURCE` = خروج وجه (Debit).
+- **فیلتر وضعیت/نوع:** فقط وضعیت‌های دارای اثر مالی ثبت‌شده گنجانده می‌شوند: `COMPLETED` و اصل `REVERSED` (که پیش از برگشت `COMPLETED` بوده و اثر مالی خود را ثبت کرده است). `INITIATED`, `PROCESSING`, `FAILED`, `REJECTED`, `CANCELLED` (بدون اثر ثبت‌شده) و `FEE` صریحاً مستثنا هستند. `REVERSAL` و اصل `REVERSED` دو ردیف مستقل‌اند و هرکدام دقیقاً یک‌بار با زمان تکمیل خودشان شمرده می‌شوند؛ اصل حذف یا با برگشت ادغام/خالص نمی‌شود. وضعیت سطح خروجی، وضعیت جاری تراکنش است (`REVERSED` برای اصل) ولی مبلغ/جهت/زمان/ردیف تغییر نمی‌کنند.
+- **پیش‌شرط ثبت مالی اصل REVERSED (تأیید از مسیر Reversal بدون تغییر آن):** `reversalservice` فقط وقتی ادامه می‌دهد که اصل `COMPLETED` باشد (نگهبان `original.getStatus() != COMPLETED` → `TRANSACTION_NOT_COMPLETED`، «Only a COMPLETED deposit can be reversed») و در پایان گذار `COMPLETED → REVERSED` را با `expectedStatus == COMPLETED` انجام می‌دهد. `TransactionRepository::updateStatus` مقدار `setCompletedAt` را فقط برای `COMPLETED/REJECTED/FAILED/CANCELLED` فعال می‌کند و برای `REVERSED` `completed_at` را دست‌نخورده نگه می‌دارد؛ بنابراین `completed_at` اصل همان زمان تکمیل اصلی است و به‌عنوان زمان اثر مالی اصل معتبر است.
+- **عدم افشا:** ردیف فقط `transactionId`, `transactionNumber`, `transactionType`, `status`, `amount`, `currencyId`, `occurredAt`, `direction` را دارد. `idempotency_key`, `request_fingerprint`, `result_code`/`result_message`, `description`/`reference_number`/`channel` و جزئیات طرف مقابل ساختاراً در `AccountEntryRow`/`AccountStatementRow` نیستند.
+- **چندارز:** هر entry گنجانده‌شده با ارز متفاوت از حساب → `CURRENCY_MISMATCH` صریح (وضعیت `CurrencyMismatch`) بدون ردیف.
+- **مسیر فقط‌خواندنی:** SELECT پارامتری بدون `FOR UPDATE`؛ بدون مسیر idempotency، تغییر داده یا قفل. جمع‌بندی مبالغ با scale ثابت 1e8 درون‌سرویس انجام شد (بدون float/decimal و بدون تغییر Schema).
+
+#### فایل‌های تغییرکرده
+
+- `src/application/accountstatementservice.{h,cpp}` (جدید): `AccountStatementService::query` با وابستگی به `IAccountStateRepository` (وجود حساب + ارز از طریق `findCurrencyById`) و `ITransactionRepository`. منطق کسب‌وکار: اعتبارسنجی، بازهٔ نیمه‌باز (بازفیلتر در سرویس مستقل از pushdown)، فیلتر وضعیت/نوع، direction، جمع scale ثابت و رد چندارز.
+- `src/application/contracts/itransactionrepository.h` (تغییریافته): افزودن `AccountEntryRow`, `AccountEntryListResult` و متد pure-virtual `findAccountEntries(accountId, from, to)` (فقط whitelist؛ بدون فیلد حساس).
+- `src/infrastructure/repository/transactionrepository.{h,cpp}` (تغییریافته): پیاده‌سازی `findAccountEntries` با JOIN پارامتری `transaction_entry`→`transaction`، فیلتر `account_id` و `completed_at` در `[from,to)`، مرتب‌سازی `completed_at, id, sequence_no`، بدون `FOR UPDATE`.
+- `tests/deposit_orchestration_test.cpp`, `tests/withdrawal_orchestration_test.cpp`, `tests/reversal_withdrawal_orchestration_test.cpp`, `tests/transaction_query_service_test.cpp` (تغییریافته): افزودن override جدید `findAccountEntries` به چهار fake موجود `ITransactionRepository` (برای سازگاری با قرارداد افزوده‌شده).
+- `tests/account_statement_service_test.cpp` (جدید): تست سرویس با fake (۱۴ تابع آزمون).
+- `CMakeLists.txt` (تغییریافته): ثبت `src/application/accountstatementservice.h` و `src/application/accountstatementservice.cpp` در `add_executable(CoreBanking ...)` (بلافاصله پس از `src/application/transactionqueryservice.cpp`). تنها تغییر build است؛ سرویس از `main.cpp`/Router تزریق نمی‌شود (بدون مسیر HTTP).
+
+#### شاهد ۱ — Build برنامه (target اصلی، با کامپایل و لینک سرویس جدید)
+
+- `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` → `Configuring done`، `Generating done`، `Building CXX object .../src/application/accountstatementservice.cpp.o`، بازکامپایل `transactionrepository.cpp.o`، `Linking CXX executable CoreBanking`، `[100%] Built target CoreBanking`. بازتولید خودکار CMake صرفاً به‌خاطر ثبت در `CMakeLists.txt` انجام شد؛ `cmake -S` یا دایرکتوری build جدید استفاده نشد و خروجی پیکربندی به همان دایرکتوری موجود منتقل شد.
+
+#### شاهد ۲ — تست مستقل سرویس با fake Repository (کامپایل و اجرای مستقل)
+
+- لینک مستقل (فقط Qt5Core؛ خارج از target اصلی):
+  `g++ -std=gnu++17 -g -fPIC $(pkg-config --cflags Qt5Core) tests/account_statement_service_test.cpp src/application/accountstatementservice.cpp $(pkg-config --libs Qt5Core) -o /tmp/opencode/account_statement_service_test`
+- اجرا: خروجی `All account statement service tests passed` و exit `0` (۱۴ تابع آزمون).
+- سناریوها (fake `IAccountStateRepository` و `ITransactionRepository`):
+  ۱) `accountId` نامعتبر (`0`/منفی) → `InvalidInput` بدون رسیدن به Repository؛ ۲) بازهٔ نامعتبر/فارغ و `from >= to`/`from == to`؛ ۳) حساب ناموجود → `NotFound`ٔ `ACCOUNT_NOT_FOUND`؛ ۴) خطای lookup حساب → `ACCOUNT_LOOKUP_FAILED` و خطای Repository → `STATEMENT_LOOKUP_FAILED` با پیام خطا؛ ۵) بازهٔ خالی → `Ok` با صفر؛ ۶) مرتب‌سازی پایدار (time, id) و فیلتر بازهٔ نیمه‌باز؛ ۷) حذف `INITIATED/PROCESSING/FAILED/REJECTED/CANCELLED/FEE`؛ ۸) direction صحیح برای Deposit/Withdrawal/Transfer؛ ۹) اصل `REVERSED` + `REVERSAL` به‌صورت دو ردیف مستقل و هرکدام دقیقاً یک‌بار (credit ۱۲۰ + debit ۱۲۰، بدون حذف/خالص‌کردن)؛ ۱۰) **رگرسیون مرز دوره:** واریز ۱۲۰ در دورهٔ اول و برگشت دقیقاً روی مرز شروع دورهٔ دوم — قبل و بعد از برگشت، دورهٔ اول فقط بستانکار ۱۲۰، دورهٔ دوم فقط بدهکار ۱۲۰، و بازهٔ شامل هر دو دو ردیف مستقل با بستانکار ۱۲۰ و بدهکار ۱۲۰؛ ۱۱) چندارز/ناسازگاری ارز → `CURRENCY_MISMATCH`؛ ۱۲) whitelist بدون افشای فیلدهای حساس؛ ۱۳) ماندهٔ unavailable و جمع decimal مقیاس‌دار `120.50`/`5.12345678`.
+
+#### شاهد ۳ — SELECT مستقیم read-only (نقش `corebanking_reader`)
+
+- `SELECT` JOIN پارامتری‌شکل (بدون `FOR UPDATE`) روی `transaction_entry`→`transaction` با پنجرهٔ `2026-01-01` تا `2027-01-01` برای حساب `5` (`account_number 1000000000060`، `currency_id 1`): ۵ ردیف برگشت — `tx8` DEPOSIT/REVERSED/DESTINATION/120؛ `tx9` REVERSAL/COMPLETED/SOURCE/120 (`reverses=8`)؛ `tx10` DEPOSIT/REVERSED/DESTINATION/50؛ `tx11` DEPOSIT/COMPLETED/DESTINATION/80؛ `tx12` REVERSAL/COMPLETED/SOURCE/50 (`reverses=10`). اعمال قواعد سرویس → **۵ ردیف** (`tx8` Credit 120، `tx9` Debit 120، `tx10` Credit 50، `tx11` Credit 80، `tx12` Debit 50)، `totalCredits=250`، `totalDebits=170`. شاهد نگهداری زمان اصل: `completed_at` اصل‌های REVERSED (`tx8`=08:36:33، `tx10`=08:37:49) با زمان تکمیل خودشان است و با زمان REVERSAL (08:36:55 و 08:59:42) یکی نمی‌شود.
+- این `SELECT` فقط شاهد read-only دادهٔ موجود است، نه آزمون یکپارچهٔ سرویس روی PostgreSQL و نه شاهد آمادگی انتشار.
+
+#### اجرانشده‌ها و محدودیت‌ها
+
+- مسیر HTTP برای صورتحساب پیاده/فعال نشده (نبود لایهٔ کنترل دسترسی؛ مطابق تصمیم 18.37). Schema/Database تغییر نکرده و هیچ DML/DDL اجرا نشده است.
+- ماندهٔ تاریخی (`opening/closing/balanceAfter`) به‌صورت ساختاری بازسازی نمی‌شود و `unavailable` می‌ماند؛ این محدودیت در مستندات ثبت شد.
+- استعلام سند، دفتر کل و تراز آزمایشی همچنان وجود ندارند و شروع نشده‌اند.
+- هیچ SQL نوشتنی، تغییر داده، درخواست HTTP مالی یا Git write انجام نشد. تست fake تأیید PostgreSQL نیست؛ رفتار سرویس واقعی روی QPSQL با HTTP آزمون نشده است.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

@@ -53,6 +53,8 @@ add_executable(CoreBanking
     src/application/transactionservice.cpp
     src/application/transactionqueryservice.h
     src/application/transactionqueryservice.cpp
+    src/application/accountstatementservice.h
+    src/application/accountstatementservice.cpp
     src/application/contracts/operationerror.h
     src/application/contracts/iaccountstaterepository.h
     src/application/contracts/ibalancerepository.h

@@ -282,6 +282,16 @@ public:
         return result;
     }
 
+    AccountEntryListResult findAccountEntries(
+        qint64,
+        const QDateTime&,
+        const QDateTime&) override
+    {
+        AccountEntryListResult result;
+        result.status = AccountEntryListResult::Status::Found;
+        return result;
+    }
+
     qint64 createInitiated(const Transaction& transaction, OperationError*) override
     {
         log.add(QStringLiteral("transactions.createInitiated"));

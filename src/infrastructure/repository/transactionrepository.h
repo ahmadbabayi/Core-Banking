@@ -31,6 +31,12 @@ public:
         qint64 transactionId
     ) override;
 
+    AccountEntryListResult findAccountEntries(
+        qint64 accountId,
+        const QDateTime& from,
+        const QDateTime& to
+    ) override;
+
     qint64 createInitiated(
         const Transaction& transaction,
         OperationError* error
