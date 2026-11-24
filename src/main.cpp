@@ -18,6 +18,7 @@
 #include "infrastructure/repository/accountrepository.h"
 #include "infrastructure/repository/accountstaterepository.h"
 #include "infrastructure/repository/transactionrepository.h"
+#include "infrastructure/repository/journalqueryrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
@@ -37,6 +38,7 @@
 #include "application/holdservice.h"
 #include "application/reversalservice.h"
 #include "application/accountstatementservice.h"
+#include "application/journalqueryservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
@@ -56,6 +58,7 @@
 #include "web/holdcontroller.h"
 #include "web/reversalcontroller.h"
 #include "web/accountstatementcontroller.h"
+#include "web/journalquerycontroller.h"
 #include "web/httprouter.h"
 #include "web/httpserver.h"
 
@@ -165,6 +168,11 @@ int main(int argc, char *argv[])
     AccountStatementController accountStatementController(
         accountStatementService);
 
+    // Journal inquiry (read-only, single journal by id)
+    JournalQueryRepository journalQueryRepository(db);
+    JournalQueryService journalQueryService(journalQueryRepository);
+    JournalQueryController journalQueryController(journalQueryService);
+
     // HTTP router
     HttpRouter router(
         customerController,
@@ -185,6 +193,7 @@ int main(int argc, char *argv[])
     router.setHoldController(&holdController);
     router.setReversalController(&reversalController);
     router.setAccountStatementController(&accountStatementController);
+    router.setJournalQueryController(&journalQueryController);
 
     // HTTP server
     HttpServer server(router);
@@ -226,6 +235,8 @@ int main(int argc, char *argv[])
              << "POST http://localhost:8080/api/v1/transactions/{id}/reversals";
     qDebug() << "Account statement endpoint:"
              << "GET http://localhost:8080/api/v1/accounts/{accountId}/statement?from=...&to=...";
+    qDebug() << "Journal inquiry endpoint:"
+             << "GET http://localhost:8080/api/v1/journals/{journalId}";
     qDebug() << "Country endpoints:"
              << "http://localhost:8080/api/v1/countries";
     qDebug() << "Province endpoints:"

@@ -2948,6 +2948,47 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - مسیرهای HTTP Journal/GL/Trial Balance فعال نشده‌اند و ماندهٔ تاریخی همچنان `unavailable` است.
 - هیچ SQL نوشتنی، DDL/Migration، تغییر داده یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
 
+### 18.41 استعلام خواندنی یک سند حسابداری — فعال‌سازی مسیر HTTP (2026-11-24)
+
+#### دامنه و مبنا
+
+- SHA مبدأ: `a2626a7b4531777947559e1ca230b938f02cc426` (HEAD؛ درخت کاری دارای تغییرات همین مرحله — ادامهٔ هستهٔ 18.40 که در این SHA commit شده است).
+- فقط فعال‌سازی HTTP خواندنی `GET /api/v1/journals/{journalId}` بر پایهٔ هستهٔ موجود `JournalQueryService` (مسیر 18.40). SQL و قواعد هسته در Controller تکرار یا تغییر نشد. بدون احراز هویت/مجوز، بدون DDL/Migration، بدون SQL نوشتنی، بدون تغییر داده و بدون درخواست مالی؛ اتصال عادی برنامهٔ `corebanking` و تنظیمات شبکهٔ موجود (bind/پورت/کاربر/مجوزها) تغییر نکرد.
+
+#### قرارداد HTTP
+
+- `GET /api/v1/journals/{journalId}` با قالب `ApiResponse`: موفق `{"success":true,"data":{...}}`؛ خطا `{"success":false,"error":{"code":...,"message":...}}`.
+- شناسهٔ عدد صحیح مثبت در بازهٔ qint64 معتبر است؛ صفر/منفی/غیرعددی/سرریز → `400 INVALID_JOURNAL_ID` (با `parsePositiveId` روتر + گارد `id <= 0` سرویس). ناموجود → `404 JOURNAL_NOT_FOUND`. خطای خواندن → `500 JOURNAL_LOOKUP_FAILED` با پیام عمومی (`Internal server error`)؛ بدون متن خام SQL/درایور و بدون نتیجهٔ ناقص.
+- پاسخ ۲۰۰ فقط سربرگ `id`, `transactionId`, `status` (وضعیت ذخیره‌شدهٔ خود سند), `postingDate`, `valueDate` و `lines`؛ هر آرتیکل فقط `sequenceNo` (عدد), `ledgerAccountId`, `accountId`, `currencyId`, `debitAmount`, `creditAmount`. شناسه‌های qint64 و مبلغ‌ها رشته (بدون افت دقت)، `accountId` به‌صورت JSON `null` هنگام NULL، تاریخ‌ها `YYYY-MM-DD` و فهرست بدون آرتیکل `[]`.
+
+#### فایل‌های تغییرکرده
+
+- `src/web/journalquerycontroller.{h,cpp}` (جدید): نگاشت وضعیت سرویس→HTTP و JSON (رشته‌ای کردن شناسه‌های qint64 و مبلغ‌ها، JSON null برای `accountId` اختیاری، تاریخ `Qt::ISODate`).
+- `src/web/httprouter.{h,cpp}` (تغییریافته): setter/عضو/شامل `JournalQueryController`؛ مسیر `GET /api/v1/journals/{journalId}` داخل بلوک پیشوند `/api/v1/journals/`؛ null-guard مسیر بدون سرویس با `503 JOURNAL_QUERY_SERVICE_UNAVAILABLE`؛ اعتبارسنجی با `parsePositiveId` (صفر/منفی/غیرعددی/سرریز → `400 INVALID_JOURNAL_ID`).
+- `src/main.cpp` (تغییریافته): سیم‌کشی `JournalQueryRepository(db)` → `JournalQueryService` → `JournalQueryController` و `router.setJournalQueryController(&...)`؛ ثبت مسیر در لاگ شروع برنامه.
+- `CMakeLists.txt` (تغییریافته): ثبت `src/web/journalquerycontroller.{h,cpp}` در target.
+
+#### شاهد ۱ — Build برنامه (target اصلی)
+
+- `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` → بدون reconfigure دستی؛ کامپایل `main.cpp.o`، `httprouter.cpp.o` و `journalquerycontroller.cpp.o`، لینک `CoreBanking` و `[100%] Built target CoreBanking`.
+
+#### شاهد ۲ — آزمون واقعی API (سرور محلی 8080، باینری جدید)
+
+- پیش از اجرا، `ss -ltnp` هیچ شنونده‌ای روی پورت 8080 نشان نداد و هیچ فرایند قدیمی CoreBanking وجود نداشت؛ نسخهٔ جدید از target ساخته‌شده اجرا و پاسخ‌ها با `curl` از همین نسخه دریافت شد (log سرور پایان‌نقطهٔ `/api/v1/journals/{journalId}` را ثبت کرد).
+- `GET /api/v1/journals/4` → `200`؛ `id="4"`, `transactionId="4"`, `status="POSTED"`, `postingDate/valueDate="2026-11-18"`؛ دو آرتیکل به ترتیب `sequenceNo` 1/2 با `debitAmount="5.12345678"`/`creditAmount="5.12345678"` دقیق (رشته) و `accountId="1"/"2"`.
+- `GET /api/v1/journals/7` (اصل، tx 8) → `200`؛ آرتیکل ۱ `sequenceNo=1`, `ledgerAccountId="1"`, `accountId=null` (JSON null), `debitAmount="120"`, `creditAmount="0"`؛ آرتیکل ۲ `ledgerAccountId="2"`, `accountId="5"`, `debitAmount="0"`, `creditAmount="120"`.
+- `GET /api/v1/journals/8` (معکوس، tx 9) → `200`؛ جهت معکوس نسبت به سند ۷: آرتیکل ۱ `creditAmount="120"`, `debitAmount="0"` و آرتیکل ۲ `debitAmount="120"`, `creditAmount="0"` — اصل و معکوس جداگانه با جهت بدهکار/بستانکار معکوس هم برگشتند.
+- ترتیب آرتیکل‌ها مطابق `sequence_no` حفظ شد و هیچ فیلد اضافه‌ای (مانند `description`) در خروجی نبود.
+- `0`, `-5`, `abc`, `9223372036854775808` → `400 INVALID_JOURNAL_ID` («Invalid journal ID»).
+- `999999` → `404 JOURNAL_NOT_FOUND` («Journal was not found»).
+
+#### اجرانشده‌ها و محدودیت‌ها
+
+- `500` واقعی (خطای خواندن) و سندِ بدون آرتیکل از API واقعی آزمون نشدند، چون بدون دستکاری دیتابیس یا تزریق خرابی در اجرای عادی قابل آزمون نبودند؛ آن دو مسیر در هسته با fake آزمون شده‌اند (18.40).
+- آزمون از طریق API روی سرور محلی انجام شد. مسیر احراز هویت یا کنترل مجوز ندارد، روی listener موجود برنامه ثبت شده و آمادهٔ انتشار عمومی نیست. تنظیمات شبکهٔ برنامه تغییر نکرد.
+- مسیر HTTP استعلام تراکنش، GL Inquiry و Trial Balance فعال نشده‌اند.
+- هیچ SQL نوشتنی، DDL/Migration، تغییر داده یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

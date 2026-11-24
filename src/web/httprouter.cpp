@@ -65,6 +65,12 @@ void HttpRouter::setAccountStatementController(
     accountStatementController = controller;
 }
 
+void HttpRouter::setJournalQueryController(
+    JournalQueryController* controller)
+{
+    journalQueryController = controller;
+}
+
 HttpResponse HttpRouter::route(
     const QByteArray& method,
     const QByteArray& path,
@@ -273,6 +279,34 @@ HttpResponse HttpRouter::route(
             }
 
             return reversalController->reverse(id, body);
+        }
+    }
+
+    // Journal inquiry (read-only) — GET /api/v1/journals/{journalId}
+    const QByteArray journalPrefix = "/api/v1/journals/";
+
+    if (method == "GET" && path.startsWith(journalPrefix)) {
+        const QByteArray suffix = path.mid(journalPrefix.size());
+
+        if (!suffix.contains('/')) {
+            qint64 id = 0;
+
+            if (!parsePositiveId(suffix, &id)) {
+                return badRequest(
+                    "INVALID_JOURNAL_ID",
+                    "Invalid journal ID");
+            }
+
+            if (journalQueryController == nullptr) {
+                return {
+                    "503 Service Unavailable",
+                    ApiResponse::error(
+                        "JOURNAL_QUERY_SERVICE_UNAVAILABLE",
+                        "Journal query service is not configured")
+                };
+            }
+
+            return journalQueryController->getJournalById(id);
         }
     }
 
