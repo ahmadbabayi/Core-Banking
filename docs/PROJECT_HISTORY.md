@@ -2902,6 +2902,52 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - مسیر HTTP استعلام تراکنش و سایر گزارش‌ها (Journal/GL/Trial Balance) فعال نشده‌اند و ماندهٔ تاریخی همچنان `unavailable` است.
 - هیچ SQL نوشتنی، DDL/Migration، تغییر داده یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
 
+### 18.40 استعلام خواندنی یک سند حسابداری با شناسه — هستهٔ داخلی بدون HTTP (2026-11-24)
+
+#### دامنه و مبنا
+
+- SHA مبدأ: `63d475e79e76d60e55e07bb30eef68516497b700` (HEAD و درخت کاری تمیز در آغاز؛ تغییرات commit نشده‌اند و هیچ تعارضی با کارهای قبلی وجود نداشت چون آن‌ها در همین SHA گنجانده شده‌اند).
+- فقط هستهٔ داخلی «استعلام یک سند حسابداری با شناسه»: `JournalQueryService::queryById(journalId)`. بدون Controller/Router/endpoint، بدون لایهٔ احراز هویت/مجوز، بدون DDL/Migration، بدون SQL نوشتنی، بدون تغییر داده و بدون درخواست مالی؛ بازرسی دیتابیس فقط با نقش read-only `corebanking_reader`.
+- `IJournalRepository` مالی، مسیر Reversal و هر مسیر نوشتن دست‌نخورده باقی ماندند.
+
+#### قرارداد
+
+- `JournalQueryService::queryById(qint64)` روی قرارداد خواندنی مستقل `IJournalQueryRepository` (جدای از `IJournalRepository` مالی)؛ پیاده‌سازی QPSQL `JournalQueryRepository`.
+- `id <= 0` → `InvalidInput`/`INVALID_JOURNAL_ID` بدون فراخوانی Repository؛ شناسهٔ ناموجود → `NotFound`/`JOURNAL_NOT_FOUND`؛ خطای prepare/exec/خواندن → `Failed`/`JOURNAL_LOOKUP_FAILED` با پیام عمومی ثابت («Journal lookup failed») بدون متن SQL/درایور و بدون نتیجهٔ ناقص.
+- خروجی موفق فقط سربرگ `id`، `transactionId`، `status` (وضعیت ذخیره‌شدهٔ خود سند بدون فیلتر: DRAFT/POSTED/REVERSED؛ از وضعیت تراکنش استنتاج نمی‌شود)، `postingDate`، `valueDate` و فهرست `lines`؛ هر آرتیکل فقط `sequenceNo`، `ledgerAccountId`، `accountId` اختیاری (NULL حساب صفر نمی‌شود؛ با `hasAccountId==false` تمایز می‌یابد)، `currencyId`، `debitAmount` و `creditAmount` (NUMERIC با `CAST(... AS TEXT)`، بدون float/گردکردن).
+- `description` و فیلدهای داخلی تراکنش برنگردانده می‌شوند؛ نبود سربرگ (NotFound) از سند موجود با lines خالی تفکیک می‌شود و ردیف NULL حاصل از LEFT JOIN آرتیکل به‌حساب نمی‌آید. اصل و سند معکوس فقط با شناسهٔ خودشان مستقل خوانده می‌شوند؛ جمع‌زنی/مانده‌سازی/اعتبار توازن جزو سرویس نیست.
+- SQL: یک SELECT پارامتری با `LEFT JOIN journal j → journal_entry je ON je.journal_id = j.id`، فیلتر `WHERE j.id = :journal_id` و `ORDER BY je.sequence_no`؛ بدون قفل و بدون UoW مالی.
+
+#### فایل‌های تغییرکرده
+
+- `src/application/contracts/ijournalqueryrepository.h` (جدید): قرارداد خواندنی + ساختارهای `JournalQueryLine` و `JournalQueryLookupResult` (سه‌حالتی Found/NotFound/Failed).
+- `src/application/journalqueryservice.{h,cpp}` (جدید): `JournalQueryService::queryById` با نگاشت وضعیت‌ها/کدهای خطا و نگاشت فقط فیلدهای مجاز.
+- `src/infrastructure/repository/journalqueryrepository.{h,cpp}` (جدید): پیاده‌سازی QPSQL با یک SELECT پارامتری؛ تشخیص ردیف NULL، حفظ NULL حساب، تعداد مبلغ از text.
+- `tests/journal_query_service_test.cpp` (جدید): تست مستقل با fake Repository (بدون دیتابیس).
+- `CMakeLists.txt` (تغییریافته): ثبت سه فایل سرویس/قرارداد و دو فایل Repository در target اصلی؛ بدون Controller/Router/endpoint.
+
+#### شاهد ۱ — Build برنامه (target اصلی)
+
+- `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` → کامپایل `journalqueryservice.cpp.o` و `journalqueryrepository.cpp.o`، لینک `CoreBanking` و `[100%] Built target CoreBanking` (بدون reconfigure دستی).
+
+#### شاهد ۲ — تست مستقل هسته با fake
+
+- `g++ -std=c++17 -fPIC tests/journal_query_service_test.cpp src/application/journalqueryservice.cpp $(pkg-config --cflags --libs Qt5Core) -o /tmp/opencode/journal_query_service_test` → خروجی `All journal query service tests passed` و exit `0`؛ ۷ تابع: id=0/منفی InvalidInput بدون فراخوانی Repository؛ NotFound؛ Failed با پیام عمومی و بدون افشای متن خطا/بدون نتیجهٔ ناقص؛ سند با دو آرتیکل (حفظ NULL حساب و مبلغ اعشاری دقیق `120.50`)؛ سند با lines خالی (Ok و متمایز از NotFound)؛ حفظ وضعیت `REVERSED` ذخیره‌شده؛ خواندن مستقل اصل و سند معکوس با جهت بدهکار/بستانکار خودشان.
+
+#### شاهد ۳ — بازرسی read-only با `corebanking_reader` (SELECT فقط)
+
+- سند ۴ (tx 4): سربرگ POSTED با دو آرتیکل به ترتیب sequence 1/2؛ مبلغ `5.12345678` بدهکار/بستانکار دقیقاً نگه‌داری می‌شود (رشتهٔ decimal بدون گردکردن)؛ `account_id` 1 و 2 (non-NULL).
+- سندهای ۷/۸ (اصل و معکوس): سند ۷ (tx 8) آرتیکل‌ها `seq1` (ledger 1، account NULL، بدهکار 120) و `seq2` (ledger 2، account 5، بستانکار 120)؛ سند ۸ (tx 9) جهت معکوس `seq1` (بستانکار 120) و `seq2` (بدهکار 120) — نمونهٔ اصل و معکوس جهت بدهکار/بستانکار یکدیگر را معکوس نگه می‌دارد.
+- شناسهٔ ناموجود `999999` → صفر ردیف سربرگ (مسیر NotFound).
+- هیچ سندی با صفر آرتیکل در دیتابیس موجود نیست (پوشش سندِ بدون آرتیکل فقط با fake انجام شد)؛ توزیع وضعیت فقط `POSTED` (۱۱ ردیف) است، بنابراین DRAFT/REVERSED صرفاً با fake پوشش داده شد.
+
+#### اجرانشده‌ها و محدودیت‌ها
+
+- harness واقعی QPSQL روی اتصال برنامه اجرا نشد (نقش/اعتبار اتصال برنامه در اختیار نبود)؛ شکل SQL با همان SELECT به‌صورت read-only از طریق `corebanking_reader` بازتولید شد. این مرحله تأیید اتصال/Driver واقعی برنامه نیست و صرفاً هسته + شکل پرس‌وجو اعتبارسنجی شده است.
+- بدون احراز هویت/مجوز؛ خروجی سند برای مصرف داخلی/محلی است و آمادهٔ انتشار عمومی نیست.
+- مسیرهای HTTP Journal/GL/Trial Balance فعال نشده‌اند و ماندهٔ تاریخی همچنان `unavailable` است.
+- هیچ SQL نوشتنی، DDL/Migration، تغییر داده یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.
