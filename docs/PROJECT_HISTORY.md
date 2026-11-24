@@ -2989,6 +2989,53 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - مسیر HTTP استعلام تراکنش، GL Inquiry و Trial Balance فعال نشده‌اند.
 - هیچ SQL نوشتنی، DDL/Migration، تغییر داده یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
 
+### 18.42 استعلام خواندنی یک تراکنش — فعال‌سازی مسیر HTTP (2026-11-24)
+
+#### دامنه و مبنا
+
+- SHA مبدأ: `c01babd0a744677e517c0d75a717801479a779d6` (HEAD تمیز؛ همهٔ تغییرها فقط همین مرحله).
+- فعال‌سازی HTTP خواندنی `GET /api/v1/transactions/{transactionId}` بر پایهٔ هستهٔ موجود `TransactionQueryService::queryById` (مسیر 18.37). Controller فقط اعتبارسنجی ورودی، نگاشت نتیجه به HTTP و سریال‌سازی فیلدهای مجاز DTO را انجام می‌دهد؛ SQL یا قواعد هسته تکرار نشد. مسیر موجود `POST /api/v1/transactions/{id}/reversals` دست‌نخورده ماند (فقط بلوک GET مستقل اضافه شد). بدون DDL/Migration، بدون SQL نوشتنی، بدون تغییر داده و بدون درخواست مالی؛ اتصال عادی برنامهٔ `corebanking` و تنظیمات شبکهٔ موجود (bind/پورت/کاربر/مجوزها) تغییر نکرد.
+
+#### قرارداد HTTP
+
+- `GET /api/v1/transactions/{transactionId}` با قالب `ApiResponse`. شناسهٔ عدد صحیح مثبت در بازهٔ qint64 معتبر است؛ صفر/منفی/غیرعددی/سرریز → `400 INVALID_TRANSACTION_ID` (با `parsePositiveId` روتر + گارد `id <= 0` سرویس). تراکنش ناموجود → `404 TRANSACTION_NOT_FOUND`. خطای خواندن → `500 TRANSACTION_LOOKUP_FAILED` با پیام عمومی (`Internal server error`)؛ بدون متن خام SQL/درایور و بدون نتیجهٔ ناقص.
+- پاسخ ۲۰۰ فقط فیلدهای مجاز: `id`, `transactionNumber`, `type`, `status`, `amount`, `currencyId`, `reversesTransactionId` (فقط برای REVERSAL) و زمان‌های `initiatedAt`/`completedAt`/`createdAt`/`updatedAt`. شناسه‌های qint64 و مبلغ `amount` رشته‌اند (هرگز double)؛ زمان‌ها بدون منطقهٔ زمانی به شکل `yyyy-MM-ddTHH:mm:ss[.mmm]` (میلی‌ثانیهٔ اختیاری، بدون Z/offset) و `completedAt` نامعتبر JSON `null`. `idempotency_key`، `request_fingerprint`، `result_code`/`result_message`، `description`، `reference_number`، `channel` و جزئیات طرف مقابل افشا نمی‌شوند.
+
+#### فایل‌های تغییرکرده
+
+- `src/web/transactionquerycontroller.{h,cpp}` (جدید): `TransactionQueryController::getTransactionById(qint64)` با نگاشت وضعیت سرویس→HTTP و JSON (رشته‌ای کردن شناسه‌های qint64 و مبلغ، `reversesTransactionId` فقط برای `REVERSAL`، زمان بدون منطقهٔ زمانی، JSON null برای `completedAt` نامعتبر).
+- `src/web/httprouter.{h,cpp}` (تغییریافته): setter/عضو/شامل `TransactionQueryController`؛ بلوک `GET /api/v1/transactions/{transactionId}` پس از بلوک reversals و پیش از بلوک Journal؛ null-guard با `503 TRANSACTION_QUERY_SERVICE_UNAVAILABLE`؛ اعتبارسنجی با `parsePositiveId` (صفر/منفی/غیرعددی/سرریز → `400 INVALID_TRANSACTION_ID`). بلوک POST reversals بدون تغییر.
+- `src/main.cpp` (تغییریافته): سیم‌کشی `TransactionQueryService(transactionRepository)` → `TransactionQueryController` و `router.setTransactionQueryController(&...)`؛ ثبت مسیر در لاگ شروع برنامه.
+- `CMakeLists.txt` (تغییریافته): ثبت `src/web/transactionquerycontroller.{h,cpp}` در target (بلافاصله پس از JournalQueryController).
+
+#### شاهد ۱ — Build برنامه (target اصلی)
+
+- `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` → کامپایل `main.cpp.o`، `httprouter.cpp.o` و `transactionquerycontroller.cpp.o`، لینک `CoreBanking` و `[100%] Built target CoreBanking`. بازتولید خودکار CMake فقط به‌خاطر همین ثبت در `CMakeLists.txt`.
+
+#### شاهد ۲ — آزمون واقعی API (سرور محلی 8080، باینری جدید)
+
+- پیش از اجرا، هیچ شنونده‌ای روی 8080 و هیچ فرایند قدیمی CoreBanking نبود؛ باینری تازه از target اجرا شد و log شروع برنامه، endpoint `GET /api/v1/transactions/{transactionId}` را ثبت کرد.
+- `GET /api/v1/transactions/1` → `200`؛ `type="DEPOSIT"`, `status="COMPLETED"`, `amount="1000"` (رشته)، `currencyId="1"`، بدون `reversesTransactionId`، زمان‌ها `2026-11-18T11:48:07.184`.
+- `GET /api/v1/transactions/4` → `200`؛ `type="TRANSFER"`, `amount="5.12345678"` — دقت هشت‌اعشار NUMERIC بدون تبدیل به double حفظ شد.
+- `GET /api/v1/transactions/9` → `200`؛ `type="REVERSAL"`, `status="COMPLETED"`, `amount="120"`, `reversesTransactionId="8"` (فقط برای REVERSAL).
+- `GET /api/v1/transactions/8` → `200`؛ اصل برگشت‌خورده: `type="DEPOSIT"`, `status="REVERSED"` همان‌طور ثبت‌شده، بدون `reversesTransactionId` و بدون ادغام با رکورد REVERSAL.
+- هیچ فیلد اضافه‌ای (idempotencyKey/fingerprint/description/channel/resultCode و …) در خروجی نبود.
+- `0`, `-5`, `abc`, `9223372036854775808` → `400 INVALID_TRANSACTION_ID` («Invalid transaction ID»).
+- `999999` → `404 TRANSACTION_NOT_FOUND` («Transaction was not found»).
+- عدم تداخل با مسیر برگشت: `GET /api/v1/transactions/8/reversals` → `404 ROUTE_NOT_FOUND` (بلوک POST reversals دست‌نخورده)؛ `GET /api/v1/journals/4` همچنان `200` (بدون پسرفت).
+
+#### شاهد ۳ — SELECT مکمل read-only (نقش `corebanking_reader`)
+
+- `SELECT id, transaction_number, transaction_type, status, amount, currency_id, reverses_transaction_id, initiated_at::text, completed_at::text FROM public.transaction ORDER BY id` → منطبق با خروجی API: تراکنش ۱ (`DEPOSIT/COMPLETED/1000`, reverses NULL)، ۴ (`TRANSFER/COMPLETED/5.12345678`)، ۸ (`DEPOSIT/REVERSED/120`)، ۹ (`REVERSAL/COMPLETED/120`, reverses=8). این SELECT صرفاً مکمل است، نه جایگزین آزمون API.
+
+#### اجرانشده‌ها و محدودیت‌ها
+
+- `500` واقعی (خطای خواندن) از API واقعی آزمون نشد، چون بدون دستکاری دیتابیس/تنظیمات اتصال قابل آزمون نبود؛ نگاشت آن در controller ساده است و مسیر خطای هسته با fake در 18.37 پوشش دارد (پوشش fake فقط مربوط به هستهٔ 18.37 است).
+- مسیر `completedAt` = JSON `null` (تراکنش‌های INITIATED/PROCESSING با `completed_at` NULL) از API واقعی آزمون نشد؛ در دیتابیس فعلی هیچ ردیف با `completed_at` NULL وجود ندارد (هر ۱۳ تراکنش دارای زمان تکمیل هستند).
+- مسیر HTTP با `parsePositiveId` روتر و گارد سرویس، مسیر موجود POST reversals و تنظیمات اتصال/شبکه تغییر نکردند.
+- آزمون از طریق API روی سرور محلی انجام شد. مسیر احراز هویت یا کنترل مجوز ندارد، روی listener موجود برنامه ثبت شده و آمادهٔ انتشار عمومی نیست. تنظیمات شبکهٔ برنامه تغییر نکرد.
+- هیچ SQL نوشتنی، DDL/Migration، تغییر داده، درخواست مالی یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

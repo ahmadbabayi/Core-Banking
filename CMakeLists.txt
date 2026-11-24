@@ -211,6 +211,8 @@ add_executable(CoreBanking
     src/web/accountstatementcontroller.cpp
     src/web/journalquerycontroller.h
     src/web/journalquerycontroller.cpp
+    src/web/transactionquerycontroller.h
+    src/web/transactionquerycontroller.cpp
 )
 
 target_link_libraries(CoreBanking

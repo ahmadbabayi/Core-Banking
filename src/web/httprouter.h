@@ -20,6 +20,7 @@
 #include "reversalcontroller.h"
 #include "accountstatementcontroller.h"
 #include "journalquerycontroller.h"
+#include "transactionquerycontroller.h"
 
 class HttpRouter
 {
@@ -45,6 +46,7 @@ public:
     void setReversalController(ReversalController* controller);
     void setAccountStatementController(AccountStatementController* controller);
     void setJournalQueryController(JournalQueryController* controller);
+    void setTransactionQueryController(TransactionQueryController* controller);
 
     HttpResponse route(
         const QByteArray& method,
@@ -73,6 +75,7 @@ private:
     ReversalController* reversalController = nullptr;
     AccountStatementController* accountStatementController = nullptr;
     JournalQueryController* journalQueryController = nullptr;
+    TransactionQueryController* transactionQueryController = nullptr;
 };
 
 #endif // HTTPROUTER_H

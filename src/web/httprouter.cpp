@@ -71,6 +71,12 @@ void HttpRouter::setJournalQueryController(
     journalQueryController = controller;
 }
 
+void HttpRouter::setTransactionQueryController(
+    TransactionQueryController* controller)
+{
+    transactionQueryController = controller;
+}
+
 HttpResponse HttpRouter::route(
     const QByteArray& method,
     const QByteArray& path,
@@ -279,6 +285,34 @@ HttpResponse HttpRouter::route(
             }
 
             return reversalController->reverse(id, body);
+        }
+    }
+
+    // Transaction inquiry (read-only) — GET /api/v1/transactions/{transactionId}
+    const QByteArray transactionInquiryPrefix = "/api/v1/transactions/";
+
+    if (method == "GET" && path.startsWith(transactionInquiryPrefix)) {
+        const QByteArray suffix = path.mid(transactionInquiryPrefix.size());
+
+        if (!suffix.contains('/')) {
+            qint64 id = 0;
+
+            if (!parsePositiveId(suffix, &id)) {
+                return badRequest(
+                    "INVALID_TRANSACTION_ID",
+                    "Invalid transaction ID");
+            }
+
+            if (transactionQueryController == nullptr) {
+                return {
+                    "503 Service Unavailable",
+                    ApiResponse::error(
+                        "TRANSACTION_QUERY_SERVICE_UNAVAILABLE",
+                        "Transaction query service is not configured")
+                };
+            }
+
+            return transactionQueryController->getTransactionById(id);
         }
     }
 

@@ -39,6 +39,7 @@
 #include "application/reversalservice.h"
 #include "application/accountstatementservice.h"
 #include "application/journalqueryservice.h"
+#include "application/transactionqueryservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
@@ -59,6 +60,7 @@
 #include "web/reversalcontroller.h"
 #include "web/accountstatementcontroller.h"
 #include "web/journalquerycontroller.h"
+#include "web/transactionquerycontroller.h"
 #include "web/httprouter.h"
 #include "web/httpserver.h"
 
@@ -173,6 +175,11 @@ int main(int argc, char *argv[])
     JournalQueryService journalQueryService(journalQueryRepository);
     JournalQueryController journalQueryController(journalQueryService);
 
+    // Transaction inquiry (read-only, single transaction by id)
+    TransactionQueryService transactionQueryService(transactionRepository);
+    TransactionQueryController transactionQueryController(
+        transactionQueryService);
+
     // HTTP router
     HttpRouter router(
         customerController,
@@ -194,6 +201,7 @@ int main(int argc, char *argv[])
     router.setReversalController(&reversalController);
     router.setAccountStatementController(&accountStatementController);
     router.setJournalQueryController(&journalQueryController);
+    router.setTransactionQueryController(&transactionQueryController);
 
     // HTTP server
     HttpServer server(router);
@@ -237,6 +245,8 @@ int main(int argc, char *argv[])
              << "GET http://localhost:8080/api/v1/accounts/{accountId}/statement?from=...&to=...";
     qDebug() << "Journal inquiry endpoint:"
              << "GET http://localhost:8080/api/v1/journals/{journalId}";
+    qDebug() << "Transaction inquiry endpoint:"
+             << "GET http://localhost:8080/api/v1/transactions/{transactionId}";
     qDebug() << "Country endpoints:"
              << "http://localhost:8080/api/v1/countries";
     qDebug() << "Province endpoints:"
