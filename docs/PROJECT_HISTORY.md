@@ -3036,6 +3036,70 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - آزمون از طریق API روی سرور محلی انجام شد. مسیر احراز هویت یا کنترل مجوز ندارد، روی listener موجود برنامه ثبت شده و آمادهٔ انتشار عمومی نیست. تنظیمات شبکهٔ برنامه تغییر نکرد.
 - هیچ SQL نوشتنی، DDL/Migration، تغییر داده، درخواست مالی یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
 
+### 18.43 استعلام خواندنی دفتر کل (GL Inquiry) — هستهٔ داخلی + فعال‌سازی مسیر HTTP (2026-11-25)
+
+#### دامنه و مبنا
+
+- SHA مبدأ: `b9c94ed09ccec32e9f951184fcfac6d8ddbb4066` (HEAD تمیز؛ همهٔ تغییرها فقط همین مرحله).
+- پیاده‌سازی خواندنی و صفحه‌بندی‌شدهٔ آرتیکل‌های دفتر کل یک سرفصل (`ledger_account`) از هسته تا مسیر HTTP، طبق الگوی Journal Query (18.40/18.41) و Transaction Query (18.42): قرارداد خواندنی مستقل + سرویس + Repository QPSQL + Controller. بدون DDL/Migration، بدون SQL نوشتنی، بدون تغییر داده و بدون درخواست مالی؛ اتصال عادی برنامهٔ `corebanking` و تنظیمات شبکهٔ موجود (bind/پورت/کاربر/مجوزها) تغییر نکرد. مسیرهای موجود `GET /api/v1/ledger-accounts/{id}` و سایر routeها دست‌نخورده ماندند.
+
+#### قرارداد HTTP
+
+- `GET /api/v1/ledger-accounts/{ledgerAccountId}/entries?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=&afterPostingDate=&afterEntryId=` با قالب `ApiResponse`.
+- `ledgerAccountId` عدد صحیح مثبت (qint64)؛ صفر/منفی/غیرعددی/سرریز/قطعهٔ nested → `400 LEDGER_ACCOUNT_INVALID_ID`.
+- `from`/`to` هرکدام دقیقاً یک‌بار و الزامی؛ فرمت سخت‌گیرانهٔ `YYYY-MM-DD` (بدون زمان/منطقهٔ زمانی، regex)؛ `from < to`؛ بازهٔ حداکثر ۳۶۶ روز → وگرنه `400` با `MISSING_FROM`/`MISSING_TO`/`INVALID_PERIOD`.
+- `limit` اختیاری، پیش‌فرض ۵۰، بازهٔ ۱..۱۰۰ → وگرنه `400 INVALID_LIMIT`.
+- مکان‌نما `afterPostingDate`+`afterEntryId` هر دو یا هیچ‌کدام (یکی‌تنها → `400 INVALID_CURSOR`)؛ تاریخ داخل بازهٔ `[from,to)` و `afterEntryId` مثبت → وگرنه `400 INVALID_CURSOR`.
+- سرفصل ناموجود → `404 LEDGER_ACCOUNT_NOT_FOUND`؛ سرفصل موجود بدون آرتیکل منطبق یا مکان‌نمای پس از آخرین صفحه → `200` با `rows=[]`.
+- خطای prepare/exec/read یا ناسازگاری ارز هر ردیف خوانده‌شده (از جمله probe) با ارز سرفصل → `500 LEDGER_INQUIRY_FAILED` با پیام عمومی («Internal server error»)؛ بدون متن خام SQL/درایور و بدون نتیجهٔ ناقص.
+- `data` فقط `ledgerAccountId`, `currencyId`, `from`, `to`, `rows`, `nextCursor`. `nextCursor` یا `null` است یا `{afterPostingDate, afterEntryId}` که از آخرین ردیف بازگشتی ساخته می‌شود (نه از probe). هر ردیف فقط `entryId`, `journalId`, `transactionId`, `sequenceNo`, `postingDate`, `valueDate`, `currencyId`, `debitAmount`, `creditAmount`؛ شناسه‌های qint64 و مبلغ‌های NUMERIC رشته (بدون double/گردکردن)؛ `sequenceNo` عدد. `accountId`/description/جزئیات مشتری/فیلدهای داخلی افشا نمی‌شوند؛ اصل و معکوس مستقل با جهت خودشان خوانده می‌شوند (بدون ادغام/خالص‌سازی و بدون جمع/مانده/Trial Balance).
+
+#### فایل‌های تغییرکرده
+
+- `src/application/contracts/iledgerinquiryrepository.h` (جدید): `LedgerInquiryRow` (فیلدهای whitelist) و `ILedgerInquiryRepository::queryEntries(...)` و `LedgerInquiryLookupResult` با تمایز `Found`/`NotFound`/`Failed` و `hasMore`.
+- `src/application/ledgerinquiryservice.{h,cpp}` (جدید): اعتبارسنجی `id > 0`، بازهٔ معتبر/۳۶۶ روز، `limit` ۱..۱۰۰، اعتبار مکان‌نما (هر دو/هیچ‌کدام، تاریخ داخل بازه، entryId مثبت) پیش از Repository؛ نگاشت `NotFound`/`Failed` به کدهای قرارداد؛ بازتأیید دفاعی ناسازگاری ارز ردیف‌های بازگشتی → `Failed` بدون نتیجهٔ ناقص.
+- `src/infrastructure/repository/ledgerinquiryrepository.{h,cpp}` (جدید): SELECT پارامتری existence/currency سرفصل + SELECT پارامتری `journal_entry → journal` با فیلتر `ledger_account_id`، `journal.status = 'POSTED'` و `posting_date` در `[from,to)` با ترتیب `(posting_date, id)` و `LIMIT limit+1`؛ درج شرط مکان‌نما `(posting_date > :cursor_date OR (posting_date = :cursor_date AND id > :cursor_entry_id))`؛ بررسی ناسازگاری ارز روی همهٔ ردیف‌ها از جمله probe؛ بریدن probe و set کردن `hasMore`؛ بدون قفل و UoW مالی.
+- `src/web/ledgerinquirycontroller.{h,cpp}` (جدید): پارس/اعتبار HTTP (وجود/تکرار `from`/`to`، `parseStrictIsoDate`، `limit`، دوگانهٔ مکان‌نما)، نگاشت سرویس→HTTP و سریال‌سازی `data`/`rows`/`nextCursor`؛ بدون SQL و بدون تکرار قواعد هسته.
+- `src/web/httprouter.{h,cpp}` (تغییریافته): setter/عضو/شامل `LedgerInquiryController`؛ بلوک `GET /api/v1/ledger-accounts/{id}/entries` پس از `GET /api/v1/ledger-accounts/{id}` (ابتدا فقط یک قطعهٔ id، سپس پسوند `/entries`)؛ اعتبارسنجی id با `parsePositiveId` → `400 LEDGER_ACCOUNT_INVALID_ID`.
+- `src/main.cpp` (تغییریافته): سیم‌کشی `LedgerInquiryRepository(db)` → `LedgerInquiryService` → `LedgerInquiryController` و `router.setLedgerInquiryController(&...)`.
+- `CMakeLists.txt` (تغییریافته): ثبت `src/application/ledgerinquiryservice.{h,cpp}`، `src/application/contracts/iledgerinquiryrepository.h`، `src/infrastructure/repository/ledgerinquiryrepository.{h,cpp}` و `src/web/ledgerinquirycontroller.{h,cpp}` در target.
+- `tests/ledger_inquiry_service_test.cpp` (جدید): تست مستقل سرویس با fake Repository (۱۰ تابع آزمون).
+
+#### شاهد ۱ — Build برنامه (target اصلی)
+
+- `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` → کامپایل `main.cpp.o`، `httprouter.cpp.o`، `ledgerinquiryservice.cpp.o`، `ledgerinquiryrepository.cpp.o` و `ledgerinquirycontroller.cpp.o`، لینک `CoreBanking` و `[100%] Built target CoreBanking`. بازتولید CMake فقط به‌خاطر همین ثبت‌ها در `CMakeLists.txt`.
+
+#### شاهد ۲ — تست مستقل سرویس با fake Repository (فقط Qt5Core، خارج از target)
+
+- `g++ -std=c++17 -fPIC tests/ledger_inquiry_service_test.cpp src/application/ledgerinquiryservice.cpp $(pkg-config --cflags --libs Qt5Core) -o /tmp/opencode/ledger_inquiry_service_test` → خروجی `All ledger inquiry service tests passed` و exit `0`؛ ۱۰ تابع: id=0/منفی InvalidInput بدون فراخوانی Repository؛ از `from == to`/`from > to`/بازهٔ >۳۶۶ روز و پذیرش مرز دقیق ۳۶۶؛ limit خارج از بازه؛ مکان‌نمای ناقص/تاریخ خارج بازه/entryId غیرمثبت؛ NotFound؛ Failed با پیام عمومی و بدون افشای متن خطا/بدون نتیجهٔ ناقص؛ Ok با دقت دقیق مبلغ؛ رد ناسازگاری ارز ردیف بازگشتی؛ سرفصل موجود با صفحهٔ خالی؛ مکان‌نمای روی `from` پذیرفته و به Repository ارسال می‌شود.
+- **حد پوشش این تست:** فقط لایهٔ Service (اعتبارسنجی ورودی، نگاشت نتایج و بازتأیید ارز صنفیِ خدمت) را می‌پوشاند. پرس‌وجوی SQL واقعی Repository — از جمله فیلتر `journal.status = 'POSTED'`، ترتیب `(posting_date, id)`، `LIMIT limit+1` و probe، و بررسی ارز روی ردیف probe — در این fake اجرا/تأیید نمی‌شود؛ آن‌ها فقط با بازبینی کد (`ledgerinquiryrepository.cpp`) پوشش دارند و در HTTP با دادهٔ تک‌ارز و تماماً POSTED فعلی قابل تمایز نبوده‌اند.
+
+#### شاهد ۳ — آزمون واقعی API (سرور محلی 8080، باینری تازه)
+
+- پیش از اجرا هیچ شنونده‌ای روی 8080 و هیچ فرایند قدیمی CoreBanking نبود؛ ساخت مجدد target (بدون بازکامپایل، یعنی باینری هم‌تا با سورس نهایی شامل بررسی ارز در Service) و اجرای باینری تازه انجام شد. **هویت فرایند و نقش اتصال تأیید شد:** `pgrep -x CoreBanking` → PID در حال کار؛ `readlink -f /proc/<pid>/exe` → `/home/it4850/Projects/build-CoreBanking-Desktop-Debug/CoreBanking` (همان باینری آخرین Build با mtime پس از آخرین ویرایش سرویس)؛ log شروع برنامه `Database connected successfully!` — اتصال با نقش عادی `corebanking` (host `localhost`، db `corebanking`، username `corebanking` در `infrastructure/database.cpp`) و بدون هیچ تغییر bind/پورت/اعتبار؛ پاسخ‌های `curl` از همین فرایند واحد دریافت شد.
+- `GET .../ledger-accounts/2/entries?from=2026-11-01&to=2026-12-01&limit=100` → `200`؛ ۱۳ ردیف؛ `entryId=7` (`debitAmount="5.12345678"`) و `entryId=8` (`creditAmount="5.12345678"`) — دقت هشت‌اعشار NUMERIC به‌صورت رشته حفظ شد؛ ترتیب `(posting_date, id)` و `nextCursor=null`.
+- `GET .../ledger-accounts/1/entries?from=2026-11-01&to=2026-12-01&limit=100` → `200`؛ اصل/معکوس در سرفصل مشترک: `entryId=13` (journal 7/tx 8) `debit=120` و `entryId=15` (journal 8/tx 9) `credit=120` — جهت مخالف، بدون ادغام یا خالص‌سازی.
+- مرز half-open: `from=2026-11-18&to=2026-11-19` → فقط تاریخ 2026-11-18 (۸ ردیف)؛ `from=2026-11-21&to=2026-11-22` → فقط 2026-11-21 (۵ ردیف).
+- بازهٔ خالی برای سرفصل موجود (`2025-01-01..2025-02-01`) → `200` با `rows=[]` و `nextCursor=null` و `currencyId="1"`.
+- صفحه‌بندی `limit=1` روی تاریخ 2026-11-18 سرفصل ۲: هشت صفحهٔ متوالی بدون تکرار/پرش (entryId‌های `2,4,5,6,7,8,10,12`)؛ `nextCursor` هر صفحه از آخرین ردیف بازگشتی ساخته شد و صفحهٔ آخر `nextCursor=null`.
+- `400`: `MISSING_FROM` (فقط `to`)، `MISSING_TO` (فقط `from`)، `INVALID_PERIOD` (`from` تکراری، فرمت `2026/11/18`، `2026-11-18T00:00:00`، `from>=to`، بازهٔ >۳۶۶ روز)، `INVALID_LIMIT` (`0`/`101`/`abc`)، `INVALID_CURSOR` (فقط `afterPostingDate`، فقط `afterEntryId`، تاریخ خارج بازه، `afterEntryId=0`/`abc`).
+- `404`: `ledger-accounts/999999/entries` → `LEDGER_ACCOUNT_NOT_FOUND`؛ `0`/`-5`/`abc` → `400 LEDGER_ACCOUNT_INVALID_ID`؛ قطعهٔ اضافه `.../2/entries/extra` → `404 ROUTE_NOT_FOUND`.
+- **پسرفت‌ها (regression) با وضعیت HTTP صریح، روی همان فرایند تازه:** `GET /api/v1/ledger-accounts/1` → `200` (`id=1`, `code="10100101"`, `name="Test Cash Settlement IRR"`, `currencyId=1`, `status="ACTIVE"`)؛ `GET /api/v1/ledger-accounts/2` → `200` (`id=2`, `code="20100101"`, `name="Test Customer Deposit Liability IRR"`, `currencyId=1`, `status="ACTIVE"`)؛ `GET /api/v1/ledger-accounts` → `200` (فهرست ۲ سرفصل)؛ `GET /api/v1/journals/4` → `200` (`id="4"`, `transactionId="4"`, `status="POSTED"`, دو خط)؛ `GET /api/v1/journals/7` → `200` (دو خط: `seq=1 ledgerAccountId="1" accountId=null debit=120` و `seq=2 ledgerAccountId="2" accountId="5" credit=120`)؛ `GET /api/v1/transactions/4` → `200`؛ مسیر statement دست‌نخورده (اعتبارسنجی خودش را اجرا می‌کند، نه ROUTE_NOT_FOUND).
+
+#### شاهد ۴ — SELECT مکمل read-only (نقش `corebanking_reader`)
+
+- `SELECT id, code, name, currency_id, status FROM public.ledger_account ORDER BY id` → دو سرفصل ۱/۲ با `currency_id=1`.
+- `SELECT status, count(*) FROM public.journal GROUP BY status` → فقط `POSTED` (۱۱ سند)؛ بنابراین مسیر non-POSTED با دادهٔ واقعی قابل تمرین نیست.
+- `SELECT je.id, je.journal_id, j.transaction_id, je.debit_amount::text, je.credit_amount::text, j.posting_date FROM public.journal_entry je JOIN public.journal j ... WHERE je.ledger_account_id=1 AND je.journal_id IN (7,8) AND j.status='POSTED'` → آرتیکل ۱۳ (`journal 7`/tx 8، بدهکار 120) و آرتیکل ۱۵ (`journal 8`/tx 9، بستانکار 120) — مطابق خروجی API. این SELECT صرفاً مکمل است، نه جایگزین آزمون API.
+
+#### اجرانشده‌ها و محدودیت‌ها
+
+- مسیر `500` واقعی (خطای خواندن/ناسازگاری ارز) از API واقعی آزمون نشد، چون بدون دستکاری دیتابیس/اتصال قابل تمرین نیست. **تفکیک پوشش:** بازتأیید ناسازگاری ارز در لایهٔ Service با fake آزمون شد؛ بررسی ارز روی ردیف probe در Repository، و فیلتر `journal.status = 'POSTED'`، ترتیب و `LIMIT limit+1` **فقط با بازبینی کد** پوشش دارند و در HTTP قابل تمایز نبودند (دیتابیس فعلی تک‌ارز است و همهٔ سندها `POSTED`اند).
+- فیلتر `journal.status = 'POSTED'` فقط روی داده‌های POSTED مشاهده شد؛ رفتار با DRAFT/REVERSED با دادهٔ واقعی آزمون نشد (SQL صریحاً فقط POSTED را برمی‌گرداند).
+- آزمون از طریق API روی سرور محلی انجام شد. مسیر احراز هویت یا کنترل مجوز ندارد، روی listener موجود برنامه ثبت شده و آمادهٔ انتشار عمومی نیست؛ تنظیمات شبکه/اتصال برنامه تغییر نکرد.
+- مسیرهای HTTP استعلام تراکنش/سند/صورتحساب و Trial Balance دست‌نخورده؛ Trial Balance (مرحلهٔ بعدی) آغاز نشده است.
+- هیچ SQL نوشتنی، DDL/Migration، تغییر داده، درخواست مالی یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

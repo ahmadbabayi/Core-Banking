@@ -57,12 +57,15 @@ add_executable(CoreBanking
     src/application/accountstatementservice.cpp
     src/application/journalqueryservice.h
     src/application/journalqueryservice.cpp
+    src/application/ledgerinquiryservice.h
+    src/application/ledgerinquiryservice.cpp
     src/application/contracts/operationerror.h
     src/application/contracts/iaccountstaterepository.h
     src/application/contracts/ibalancerepository.h
     src/application/contracts/iholdrepository.h
     src/application/contracts/ijournalrepository.h
     src/application/contracts/ijournalqueryrepository.h
+    src/application/contracts/iledgerinquiryrepository.h
     src/application/contracts/itransactionrepository.h
     src/application/contracts/itransactionunitofwork.h
     src/application/holdservice.h
@@ -147,6 +150,8 @@ add_executable(CoreBanking
     src/infrastructure/repository/journalrepository.cpp
     src/infrastructure/repository/journalqueryrepository.h
     src/infrastructure/repository/journalqueryrepository.cpp
+    src/infrastructure/repository/ledgerinquiryrepository.h
+    src/infrastructure/repository/ledgerinquiryrepository.cpp
     src/infrastructure/repository/journalentryrepository.h
     src/infrastructure/repository/journalentryrepository.cpp
     src/infrastructure/repository/provincerepository.h
@@ -213,6 +218,8 @@ add_executable(CoreBanking
     src/web/journalquerycontroller.cpp
     src/web/transactionquerycontroller.h
     src/web/transactionquerycontroller.cpp
+    src/web/ledgerinquirycontroller.h
+    src/web/ledgerinquirycontroller.cpp
 )
 
 target_link_libraries(CoreBanking

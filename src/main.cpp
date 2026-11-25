@@ -19,6 +19,7 @@
 #include "infrastructure/repository/accountstaterepository.h"
 #include "infrastructure/repository/transactionrepository.h"
 #include "infrastructure/repository/journalqueryrepository.h"
+#include "infrastructure/repository/ledgerinquiryrepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
@@ -40,6 +41,7 @@
 #include "application/accountstatementservice.h"
 #include "application/journalqueryservice.h"
 #include "application/transactionqueryservice.h"
+#include "application/ledgerinquiryservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
@@ -61,6 +63,7 @@
 #include "web/accountstatementcontroller.h"
 #include "web/journalquerycontroller.h"
 #include "web/transactionquerycontroller.h"
+#include "web/ledgerinquirycontroller.h"
 #include "web/httprouter.h"
 #include "web/httpserver.h"
 
@@ -180,6 +183,11 @@ int main(int argc, char *argv[])
     TransactionQueryController transactionQueryController(
         transactionQueryService);
 
+    // Ledger inquiry (read-only, paged posted entries of one ledger account)
+    LedgerInquiryRepository ledgerInquiryRepository(db);
+    LedgerInquiryService ledgerInquiryService(ledgerInquiryRepository);
+    LedgerInquiryController ledgerInquiryController(ledgerInquiryService);
+
     // HTTP router
     HttpRouter router(
         customerController,
@@ -202,6 +210,7 @@ int main(int argc, char *argv[])
     router.setAccountStatementController(&accountStatementController);
     router.setJournalQueryController(&journalQueryController);
     router.setTransactionQueryController(&transactionQueryController);
+    router.setLedgerInquiryController(&ledgerInquiryController);
 
     // HTTP server
     HttpServer server(router);

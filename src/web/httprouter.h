@@ -21,6 +21,7 @@
 #include "accountstatementcontroller.h"
 #include "journalquerycontroller.h"
 #include "transactionquerycontroller.h"
+#include "ledgerinquirycontroller.h"
 
 class HttpRouter
 {
@@ -47,6 +48,7 @@ public:
     void setAccountStatementController(AccountStatementController* controller);
     void setJournalQueryController(JournalQueryController* controller);
     void setTransactionQueryController(TransactionQueryController* controller);
+    void setLedgerInquiryController(LedgerInquiryController* controller);
 
     HttpResponse route(
         const QByteArray& method,
@@ -76,6 +78,7 @@ private:
     AccountStatementController* accountStatementController = nullptr;
     JournalQueryController* journalQueryController = nullptr;
     TransactionQueryController* transactionQueryController = nullptr;
+    LedgerInquiryController* ledgerInquiryController = nullptr;
 };
 
 #endif // HTTPROUTER_H

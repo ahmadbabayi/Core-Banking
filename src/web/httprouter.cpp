@@ -77,6 +77,12 @@ void HttpRouter::setTransactionQueryController(
     transactionQueryController = controller;
 }
 
+void HttpRouter::setLedgerInquiryController(
+    LedgerInquiryController* controller)
+{
+    ledgerInquiryController = controller;
+}
+
 HttpResponse HttpRouter::route(
     const QByteArray& method,
     const QByteArray& path,
@@ -752,6 +758,26 @@ HttpResponse HttpRouter::route(
             }
 
             return ledgerAccountController.getLedgerAccountById(id);
+        }
+
+        const QByteArray entriesSuffix = "/entries";
+
+        if (method == "GET" && suffix.endsWith(entriesSuffix)) {
+            qint64 id = 0;
+
+            const QByteArray idText = suffix.left(
+                suffix.size() - entriesSuffix.size());
+
+            // The id segment must be exactly one non-empty path segment:
+            // reject nested paths such as "/123/entries/extra".
+            if (idText.isEmpty() || idText.contains('/') ||
+                !parsePositiveId(idText, &id)) {
+                return badRequest(
+                    "LEDGER_ACCOUNT_INVALID_ID",
+                    "Invalid ledger account ID");
+            }
+
+            return ledgerInquiryController->getEntries(id, query);
         }
     }
 
