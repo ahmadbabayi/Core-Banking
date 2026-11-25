@@ -20,6 +20,7 @@
 #include "infrastructure/repository/transactionrepository.h"
 #include "infrastructure/repository/journalqueryrepository.h"
 #include "infrastructure/repository/ledgerinquiryrepository.h"
+#include "infrastructure/repository/trialbalancerepository.h"
 
 #include "application/customerservice.h"
 #include "application/currencyservice.h"
@@ -42,6 +43,7 @@
 #include "application/journalqueryservice.h"
 #include "application/transactionqueryservice.h"
 #include "application/ledgerinquiryservice.h"
+#include "application/trialbalanceservice.h"
 
 #include "web/customercontroller.h"
 #include "web/currencycontroller.h"
@@ -64,6 +66,7 @@
 #include "web/journalquerycontroller.h"
 #include "web/transactionquerycontroller.h"
 #include "web/ledgerinquirycontroller.h"
+#include "web/trialbalancecontroller.h"
 #include "web/httprouter.h"
 #include "web/httpserver.h"
 
@@ -188,6 +191,11 @@ int main(int argc, char *argv[])
     LedgerInquiryService ledgerInquiryService(ledgerInquiryRepository);
     LedgerInquiryController ledgerInquiryController(ledgerInquiryService);
 
+    // Trial balance (read-only, per-currency report over POSTED journals)
+    TrialBalanceRepository trialBalanceRepository(db);
+    TrialBalanceService trialBalanceService(trialBalanceRepository);
+    TrialBalanceController trialBalanceController(trialBalanceService);
+
     // HTTP router
     HttpRouter router(
         customerController,
@@ -211,6 +219,7 @@ int main(int argc, char *argv[])
     router.setJournalQueryController(&journalQueryController);
     router.setTransactionQueryController(&transactionQueryController);
     router.setLedgerInquiryController(&ledgerInquiryController);
+    router.setTrialBalanceController(&trialBalanceController);
 
     // HTTP server
     HttpServer server(router);
@@ -256,6 +265,8 @@ int main(int argc, char *argv[])
              << "GET http://localhost:8080/api/v1/journals/{journalId}";
     qDebug() << "Transaction inquiry endpoint:"
              << "GET http://localhost:8080/api/v1/transactions/{transactionId}";
+    qDebug() << "Trial balance endpoint:"
+             << "GET http://localhost:8080/api/v1/trial-balance?currencyId=...&from=...&to=...";
     qDebug() << "Country endpoints:"
              << "http://localhost:8080/api/v1/countries";
     qDebug() << "Province endpoints:"

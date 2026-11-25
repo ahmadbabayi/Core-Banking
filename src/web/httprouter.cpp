@@ -83,6 +83,12 @@ void HttpRouter::setLedgerInquiryController(
     ledgerInquiryController = controller;
 }
 
+void HttpRouter::setTrialBalanceController(
+    TrialBalanceController* controller)
+{
+    trialBalanceController = controller;
+}
+
 HttpResponse HttpRouter::route(
     const QByteArray& method,
     const QByteArray& path,
@@ -779,6 +785,20 @@ HttpResponse HttpRouter::route(
 
             return ledgerInquiryController->getEntries(id, query);
         }
+    }
+
+    // Trial balance (read-only) — GET /api/v1/trial-balance
+    if (method == "GET" && path == "/api/v1/trial-balance") {
+        if (trialBalanceController == nullptr) {
+            return {
+                "503 Service Unavailable",
+                ApiResponse::error(
+                    "TRIAL_BALANCE_SERVICE_UNAVAILABLE",
+                    "Trial balance service is not configured")
+            };
+        }
+
+        return trialBalanceController->getTrialBalance(query);
     }
 
     // Countries

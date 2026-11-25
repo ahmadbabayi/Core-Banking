@@ -3100,6 +3100,55 @@ Currency 1 (IRR)، Branch 1 (`0000001`)، AccountType 1 (`10`)، Product 1 (`SAV
 - مسیرهای HTTP استعلام تراکنش/سند/صورتحساب و Trial Balance دست‌نخورده؛ Trial Balance (مرحلهٔ بعدی) آغاز نشده است.
 - هیچ SQL نوشتنی، DDL/Migration، تغییر داده، درخواست مالی یا Git write انجام نشد؛ تغییرات بدون stage/commit باقی مانده‌اند.
 
+### 18.44 تراز آزمایشی خواندنی (Trial Balance) — هستهٔ داخلی + مسیر HTTP (2026-11-25)
+
+#### دامنه و مبنا
+
+- SHA مبدأ: `830b578b181b4d02828d920d4b0b22ff54d8db36` (HEAD تمیز؛ همهٔ تغییرها فقط همین مرحله).
+- پیاده‌سازی read-only گزارش تراز آزمایشی تک‌ارزی از هسته تا مسیر HTTP، طبق الگوی مراحل 18.40–18.43 (قرارداد خواندنی مستقل + Service + Repository QPSQL + Controller). بدون DDL/Migration، بدون SQL نوشتنی، بدون تغییر داده و بدون درخواست مالی؛ فقط SELECT پارامتری خواندنی. اتصال عادی برنامهٔ `corebanking` و تنظیمات شبکهٔ موجود (bind/پورت/کاربر/مجوزها) تغییر نکرد؛ مسیرهای موجود دست‌نخورده ماندند.
+
+#### قرارداد HTTP
+
+- `GET /api/v1/trial-balance?currencyId=&from=&to=` با قالب `ApiResponse`؛ فقط GET و فقط این path دقیق.
+- `currencyId`/`from`/`to` هر سه الزامی و دقیقاً یک‌بار؛ `currencyId` عدد صحیح مثبت qint64 (صفر/منفی/غیرعددی/سرریز → `400 INVALID_CURRENCY_ID`)؛ تاریخ سخت‌گیرانهٔ `YYYY-MM-DD` (بدون زمان/منطقهٔ زمانی؛ regex)، `from < to`، بازهٔ حداکثر ۳۶۶ روز → وگرنه `400 INVALID_PERIOD`.
+- نبودِ هر پارامتر → `400` با `MISSING_CURRENCY_ID`/`MISSING_FROM`/`MISSING_TO`؛ پارامتر تکراری → `400 INVALID_CURRENCY_ID` (currencyId) یا `INVALID_PERIOD` (from/to).
+- ارز موجود (حتی بدون ردیف منطبق) → `200` با `rows=[]` و `totals` صفر و `isBalanced=true`؛ ارز ناموجود → `404 CURRENCY_NOT_FOUND`.
+- خطای prepare/exec/read یا دادهٔ نامعتبرِ درون‌دامنه → `500 TRIAL_BALANCE_FAILED` با پیام عمومی («Internal server error»)، بدون متن خام SQL/درایور و بدون نتیجهٔ ناقص؛ گزارش نامتوازن ولی قابل‌محاسبه خطای فنی نیست → `200` با `isBalanced=false`.
+- `data` فقط `currencyId` (رشته)، `from`، `to`، `rows`، `totals`، `isBalanced`. هر ردیف فقط `ledgerAccountId` (رشته)، `code`، `name` و شش مبلغ `openingDebit`/`openingCredit`/`periodDebit`/`periodCredit`/`closingDebit`/`closingCredit` (رشتهٔ NUMERIC، بدون float/گردکردن/محدودکردن scale)؛ `totals` همان شش ستونِ جمع‌شده. بدون صفحه‌بندی/LIMIT و بدون فیلد مشتری/حساب بانکی/تراکنش/شرح.
+
+#### معماری و حسابداری (یک snapshot + guard درون‌دامنه)
+
+- **یک SELECT پارامتری واحد**: CTE `flags` (وجود ارز + شمارش ناسازگاری ارزِ درون‌دامنه + شمارش مبلغ غیرمتناهیِ درون‌دامنه) و CTE گزارش در همان snapshot اجرا می‌شوند؛ `LEFT JOIN split ON TRUE` تضمین می‌کند همیشه حداقل یک ردیف برگردد، بنابراین «ارز ناموجود» از «ارز موجود با گزارش خالی» بدون query دوم تمیز داده می‌شود.
+- `openingNet = SUM(debit−credit)` روی `posting_date < from` از ابتدای تاریخچه (نامحدود؛ سقف ۳۶۶ روز فقط روی گردش دوره است)؛ گردش بدهکار/بستانکار جداگانه در بازهٔ نیمه‌باز `[from,to)` (یعنی `from` شامل و `to` خارج)؛ `closingNet = openingNet + periodDebit − periodCredit`؛ شکستن علامت هر مبلغ از علامت واقعی خالص با `GREATEST(\u00b1net, 0)` (نه از `account_category`). همه در NUMERIC PostgreSQL؛ CAST به TEXT فقط در خروجی.
+- کلید ارز از `je.currency_id` و `la.currency_id`؛ `journal.status = 'POSTED'`؛ بدون فیلتر وضعیت تراکنش، بدون roll-up والد/فرزند، بدون UoW/قفل مالی و بدون خواندن `ledger_account_balance`/`account_balance`. سرفصل فقط اگر opening یا گردش دوره غیرصفر باشد برمی‌گردد؛ گردش بدهکار و بستانکارِ برابر دلیل حذف ردیف نیست؛ اصل و معکوس هرکدام با جهت ثبت‌شدهٔ خود در تاریخ خود وارد می‌شوند (بدون خالص‌سازی).
+- `totals` جمع همان شش ستون پس از محاسبهٔ ستون‌ها در SQL (نه خالص‌کردن کل دفتر)؛ `isBalanced` با برابری NUMERIC در هر سه جفت ستون (اول دوره/گردش/پایان) محاسبه می‌شود و فقط توازن گزارش را نشان می‌دهد، نه صحت تک‌تک اسناد.
+- **guard ناسازگاری ارز فقط درون‌دامنه است**: آرتیکل POSTED با `je.currency_id = :currency_id` که سرفصل خودش واحد دیگری دارد (وگرنه بی‌صدا از گزارش حذف می‌شد) → شکست کل گزارش؛ ناسازگاری ارزِ خارج از این گزارش (سمت آرتیکل در واحد پول دیگری) این گزارش را از کار نمی‌اندازد. مبلغ NaN/±Infinity درون‌دامنه → شکست کل گزارش.
+
+#### فایل‌های تغییرکرده
+
+- `src/application/contracts/itrialbalancerepository.h` (جدید): `TrialBalanceRow` (هشت فیلد whitelist)، `TrialBalanceTotals` (شش مبلغ)، `TrialBalanceLookupResult` با تمایز `Found`/`NotFound`/`Failed` و `isBalanced`؛ قرارداد `ITrialBalanceRepository::queryTrialBalance(...)` جدا از Repositoryهای مالی و از `ledger_account_balance`/GL Inquiry.
+- `src/application/trialbalanceservice.{h,cpp}` (جدید): اعتبارسنجی `currencyId > 0`، بازهٔ معتبر و `from < to` و سقف ۳۶۶ روز پیش از Repository؛ نگاشت `NotFound`→`CURRENCY_NOT_FOUND`، `Failed`→`TRIAL_BALANCE_FAILED` با پیام عمومی ثابت؛ عبور بدون‌تغییر `rows`/`totals`/`isBalanced` (گزارش نامتوازن خطا نمی‌شود).
+- `src/infrastructure/repository/trialbalancerepository.{h,cpp}` (جدید): SELECT پارامتری واحد (یک snapshot) با CTEهای `entry_agg → eligible → computed → split` و CTE `flags`؛ `SUM() OVER ()` برای جمع ستون‌ها و `isBalanced`؛ تمایز ردیف فقط-flag (id NULL)؛ مقادیر NUMERIC فقط با CAST به TEXT به خروجی می‌رسند.
+- `src/web/trialbalancecontroller.{h,cpp}` (جدید): شمارش/تکرار/پارس پارامترها (`parseStrictIsoDate`، `parsePositiveId`)، نگاشت سرویس→HTTP و سریال‌سازی `data`/`rows`/`totals`/`isBalanced`؛ بدون SQL و بدون تکرار قواعد هسته.
+- `src/web/httprouter.{h,cpp}`، `src/main.cpp`، `CMakeLists.txt` (اصلاح): ثبت route `GET /api/v1/trial-balance`، setter نگه‌دارنده، سیم‌کشی و ثبت sourceها و لاگ endpoint.
+- `tests/trial_balance_service_test.cpp` (جدید): تست مستقل سرویس با fake Repository (۷ تابع).
+- `docs/PROJECT_CONTEXT.md` و `docs/PROJECT_HISTORY.md` (اصلاح): ثبت وضعیت و شواهد و محدودیت‌ها.
+
+#### شواهد (جدا از هم)
+
+- **Build:** `cmake --build /home/it4850/Projects/build-CoreBanking-Desktop-Debug -j2` موفق؛ target اصلی `CoreBanking` کامپایل/لینک شد (فایل‌های جدید در target ثبت‌شده‌اند).
+- **تست Service با fake:** `tests/trial_balance_service_test.cpp` با `g++ -std=c++17 -fPIC ... Qt5Core` کامپایل و اجرا شد؛ ۷ تابع (اعتبار currencyId/بازه/سقف، نگاشت NotFound، Failed بدون درز متن خطا و بدون نتیجهٔ ناقص، عبور Ok از جمله دقت `1935.12345678`، گزارش نامتوازن `isBalanced=false` بدون خطا، گزارش خالی با جمع صفر و متوازن)؛ خروجی ۰.
+- **SELECT خواندنی مستقل (`corebanking_reader`) از خود SQL گزارش** (متن کامل CTE با literals درج‌شده): (۱) بازهٔ کامل `[2026-11-01, 2026-12-01)` → دو ردیف مطابق محاسبهٔ مستقل: سرفصل ۱ (`od=0, oc=0, pd=1750, pc=170, cd=1580, cc=0`) و سرفصل ۲ (`od=0, oc=0, pd=185.12345678, pc=1765.12345678, cd=0, cc=1580.00000000`)؛ جمع‌ها `tot_od=0, tot_oc=0, tot_pd=1935.12345678, tot_pc=1935.12345678, tot_cd=1580, tot_cc=1580.00000000`؛ `is_balanced=t`؛ `currency_found=1`، `currency_mismatches=0`، `nonfinite_count=0`. (۲) مرز `[2026-11-21, 2026-11-22)` → opening منتقل‌شده 1500/1500 و گردش بدهکار/بستانکار دوره شامل جفت اصل/معکوس هم‌تاریخ (250/170 و 170/250) و بستن 1580/1580. (۳) بازهٔ قبل از اولین ثبت → فقط یک ردیف flag با `id=NULL, currency_found=1`. (۴) ارز 999999 → `currency_found=0, currency_mismatches=0, nonfinite_count=0`. (۵) تشخیص scoped در برابر global: با دادهٔ فعلی هر دو ۰ و ۲۲ آرتیکل POSTED درون‌دامنه وجود دارد؛ scoping ناسازگاری به `je.currency_id = :currency_id` با بازبینی کد تأیید می‌شود (نمی‌توان با دادهٔ واقعی تک‌ارز ناسازگاری غیرصفر ساخت، چون بدون write مجاز نیست).
+- **HTTP پایان‌به‌پایان با curl روی باینری نهایی (اجرای موقت تأییدشده، 2026-11-25):** باینری `.../build-CoreBanking-Desktop-Debug/CoreBanking` با اتصال عادی/نقش `corebanking` اجرا شد؛ فرایند پاسخ‌دهندهٔ `*:8080` با `pgrep -x CoreBanking` → pid 13158 و `readlink /proc/13158/exe` همان باینری مبدأ ثبت شد و پس از آزمون با SIGTERM متوقف شد (exit 143؛ شنوندهٔ 8080 حذف شد). نتایج: ۲۰۰ غیرخالی بازهٔ کامل (سرفصل ۱ `od=0,oc=0,pd=1750,pc=170,cd=1580,cc=0`؛ سرفصل ۲ `od=0,oc=0,pd=185.12345678,pc=1765.12345678,cd=0,cc=1580.00000000`؛ جمع‌ها `tot_od=0,tot_oc=0,tot_pd=1935.12345678,tot_pc=1935.12345678,tot_cd=1580,tot_cc=1580.00000000`؛ `isBalanced=true`)؛ مرز `from` شامل/`to` خارج (`[11-18,11-19)` و `[11-21,11-22)` با opening منتقل 1500/1500 و گردش 420/420)؛ ماندهٔ منتقل‌شده 1580/1580 با گردش صفر در `[2026-12-01,2026-12-02)`؛ بازهٔ قبل از اولین ثبت `rows=[]` با جمع صفر و `isBalanced=true`؛ ماتریس 400 (ناقص/تکراری/سرریز/بازهٔ نامعتبر) و 404 ارز 999999 (`CURRENCY_NOT_FOUND`)؛ عدم پسرفت `GET /api/v1/ledger-accounts/2/entries` (۸ ردیف، حاوی `5.12345678`) و `GET /api/v1/journals/4|7|8` (همه 200). تطبیق شش ستون و جمع‌ها با SELECT مستقل (فرمول FILTER) دقیق بود؛ سند ۴ (بدهکار/بستانکار `5.12345678` روی سرفصل ۲) در گردش بازهٔ 11-18 وارد شد و سندهای ۷ (120) و ۸ (120) هر دو وارد گردش همان روز 2026-11-21 شدند (نه جداسازی بین‌دوره‌ای).
+
+#### اجرانشده‌ها و محدودیت‌ها
+
+- **ایزولاسیون شبکه و صدور مجوز اجرا:** bind برنامه `QHostAddress::Any` (شنوندهٔ `*:8080`) و کارت `enp2s0` با IP `192.168.2.17/24` و default route (`via 192.168.2.1`) فعال است و فایروال میزبان بدون دسترسی root قابل بازرسی نیست؛ در گام نخست به همین دلیل سرور روشن نشد. سپس **اجرای موقت برای آزمون محلی روی همین کامپیوتر تأیید شد** و آزمون HTTP با curl روی `localhost:8080` روی همان فرایند (pid ثبت‌شده) انجام و فرایند پس از پایان خاموش شد. هیچ تغییری در bind/پورت/اتصال/نقش/فایروال/داده انجام نشد.
+- مسیر `500` واقعی، گزارش چندارزی، فیلتر non-POSTED و گزارش نامتوازن واقعی با دادهٔ فعلی (تک‌ارز و همهٔ سندها `POSTED`) قابل تمرین نبودند؛ رد ناسازگاری ارز/مبلغ غیرمتناهی و تمایز خالی/ناموجود با SELECT خواندنی و بازبینی کد پوشش داده شد.
+- مسیر HTTP بدون احراز هویت/مجوز است، روی listener موجود برنامه ثبت شده و آمادهٔ انتشار عمومی نیست؛ تنظیمات شبکه/اتصال برنامه تغییر نکرد.
+- گزارش در لحظهٔ خواندن از آرتیکل‌های `journal_entry` موجود (`status='POSTED'`) محاسبه می‌شود و «snapshot» در این مرحله فقط read snapshotِ واحد همان SELECT پارامتری است (تصویر نقطه‌ای از اسناد موجود)، نه snapshot تاریخیِ قفل‌شده/آرشیوشدهٔ مبالغ؛ هر تغییر بعدیِ اسناد در گزارش‌های بعدی منعکس می‌شود.
+- هیچ SQL نوشتنی، DDL/Migration، تغییر داده، درخواست مالی یا Git write انجام نشد؛ گزارش api موجود و جدول `currency` دست‌نخورده؛ همهٔ تغییرات بدون stage/commit باقی مانده‌اند.
+
 ## 19. قاعده پایانی تاریخچه
 
 History شاهد اتفاقات گذشته است. برای هر نتیجه، محیط و محدوده آزمون مشخص شود. اگر کاربر وضعیت جدیدی از تست تأیید کرد، وضعیت خلاصه باید به‌روز شود، ولی نباید جزئیات نامشخص مانند نام دیتابیس، پاسخ HTTP یا خروجی SQL حدس زده شود.

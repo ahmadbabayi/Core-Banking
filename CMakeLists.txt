@@ -59,6 +59,8 @@ add_executable(CoreBanking
     src/application/journalqueryservice.cpp
     src/application/ledgerinquiryservice.h
     src/application/ledgerinquiryservice.cpp
+    src/application/trialbalanceservice.h
+    src/application/trialbalanceservice.cpp
     src/application/contracts/operationerror.h
     src/application/contracts/iaccountstaterepository.h
     src/application/contracts/ibalancerepository.h
@@ -66,6 +68,7 @@ add_executable(CoreBanking
     src/application/contracts/ijournalrepository.h
     src/application/contracts/ijournalqueryrepository.h
     src/application/contracts/iledgerinquiryrepository.h
+    src/application/contracts/itrialbalancerepository.h
     src/application/contracts/itransactionrepository.h
     src/application/contracts/itransactionunitofwork.h
     src/application/holdservice.h
@@ -152,6 +155,8 @@ add_executable(CoreBanking
     src/infrastructure/repository/journalqueryrepository.cpp
     src/infrastructure/repository/ledgerinquiryrepository.h
     src/infrastructure/repository/ledgerinquiryrepository.cpp
+    src/infrastructure/repository/trialbalancerepository.h
+    src/infrastructure/repository/trialbalancerepository.cpp
     src/infrastructure/repository/journalentryrepository.h
     src/infrastructure/repository/journalentryrepository.cpp
     src/infrastructure/repository/provincerepository.h
@@ -220,6 +225,8 @@ add_executable(CoreBanking
     src/web/transactionquerycontroller.cpp
     src/web/ledgerinquirycontroller.h
     src/web/ledgerinquirycontroller.cpp
+    src/web/trialbalancecontroller.h
+    src/web/trialbalancecontroller.cpp
 )
 
 target_link_libraries(CoreBanking

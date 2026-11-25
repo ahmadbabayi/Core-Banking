@@ -22,6 +22,7 @@
 #include "journalquerycontroller.h"
 #include "transactionquerycontroller.h"
 #include "ledgerinquirycontroller.h"
+#include "trialbalancecontroller.h"
 
 class HttpRouter
 {
@@ -49,6 +50,7 @@ public:
     void setJournalQueryController(JournalQueryController* controller);
     void setTransactionQueryController(TransactionQueryController* controller);
     void setLedgerInquiryController(LedgerInquiryController* controller);
+    void setTrialBalanceController(TrialBalanceController* controller);
 
     HttpResponse route(
         const QByteArray& method,
@@ -79,6 +81,7 @@ private:
     JournalQueryController* journalQueryController = nullptr;
     TransactionQueryController* transactionQueryController = nullptr;
     LedgerInquiryController* ledgerInquiryController = nullptr;
+    TrialBalanceController* trialBalanceController = nullptr;
 };
 
 #endif // HTTPROUTER_H
