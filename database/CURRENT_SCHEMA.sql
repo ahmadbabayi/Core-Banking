@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict uyYZH5CXeUAWWwjioEQJmZounuw4cxSWagNdtfchibBFRaZ0baq2AfyLwuELeAy
+\restrict SaZUhmRHzCmMWJJdSpQjwVPQWF1rQ08G6JhQ4U5we4LsjoKliFgH9cGDpHnIOXT
 
--- Dumped from database version 15.19 (Debian 15.19-0+deb12u1)
--- Dumped by pg_dump version 15.19 (Debian 15.19-0+deb12u1)
+-- Dumped from database version 15.20 (Debian 15.20-0+deb12u1)
+-- Dumped by pg_dump version 15.20 (Debian 15.20-0+deb12u1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -544,7 +544,7 @@ CREATE TABLE public.account (
     product_ledger_mapping_id bigint NOT NULL,
     CONSTRAINT ck_account_closed_at CHECK (((closed_at IS NULL) OR (closed_at >= opened_at))),
     CONSTRAINT ck_account_number CHECK ((account_number ~ '^[0-9]{13}$'::text)),
-    CONSTRAINT ck_account_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'DORMANT'::character varying, 'BLOCKED'::character varying, 'CLOSED'::character varying])::text[])))
+    CONSTRAINT ck_account_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('DORMANT'::character varying)::text, ('BLOCKED'::character varying)::text, ('CLOSED'::character varying)::text])))
 );
 
 
@@ -563,8 +563,8 @@ CREATE TABLE public.account_authorization (
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_account_authorization_dates CHECK (((valid_to IS NULL) OR (valid_to >= valid_from))),
-    CONSTRAINT ck_account_authorization_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[]))),
-    CONSTRAINT ck_account_authorization_type CHECK (((authorization_type)::text = ANY ((ARRAY['POWER_OF_ATTORNEY'::character varying, 'LEGAL_GUARDIAN'::character varying, 'LEGAL_REPRESENTATIVE'::character varying, 'AUTHORIZED_SIGNATORY'::character varying])::text[])))
+    CONSTRAINT ck_account_authorization_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text]))),
+    CONSTRAINT ck_account_authorization_type CHECK (((authorization_type)::text = ANY (ARRAY[('POWER_OF_ATTORNEY'::character varying)::text, ('LEGAL_GUARDIAN'::character varying)::text, ('LEGAL_REPRESENTATIVE'::character varying)::text, ('AUTHORIZED_SIGNATORY'::character varying)::text])))
 );
 
 
@@ -590,8 +590,7 @@ CREATE TABLE public.account_balance (
     account_id bigint NOT NULL,
     ledger_balance numeric DEFAULT 0 NOT NULL,
     available_balance numeric DEFAULT 0 NOT NULL,
-    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    CONSTRAINT ck_account_balance_ledger CHECK ((ledger_balance >= (0)::numeric))
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 
@@ -685,7 +684,7 @@ CREATE TABLE public.account_hold_events (
     CONSTRAINT ck_account_hold_event_idempotency_key CHECK ((btrim((idempotency_key)::text) <> ''::text)),
     CONSTRAINT ck_account_hold_event_idempotency_metadata CHECK ((((request_fingerprint IS NULL) AND (fingerprint_version IS NULL) AND (effective_at_provided IS NULL)) OR ((request_fingerprint IS NOT NULL) AND (fingerprint_version IS NOT NULL) AND (effective_at_provided IS NOT NULL)))),
     CONSTRAINT ck_account_hold_event_reason CHECK ((btrim((reason_code)::text) <> ''::text)),
-    CONSTRAINT ck_account_hold_event_type CHECK (((event_type)::text = ANY ((ARRAY['PARTIAL_RELEASE'::character varying, 'FULL_RELEASE'::character varying, 'EXPIRY_RELEASE'::character varying, 'CANCELLATION_RELEASE'::character varying])::text[])))
+    CONSTRAINT ck_account_hold_event_type CHECK (((event_type)::text = ANY (ARRAY[('PARTIAL_RELEASE'::character varying)::text, ('FULL_RELEASE'::character varying)::text, ('EXPIRY_RELEASE'::character varying)::text, ('CANCELLATION_RELEASE'::character varying)::text])))
 );
 
 
@@ -808,7 +807,7 @@ CREATE TABLE public.account_mandate (
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_account_mandate_dates CHECK (((valid_to IS NULL) OR (valid_to >= valid_from))),
     CONSTRAINT ck_account_mandate_name CHECK (((name)::text <> ''::text)),
-    CONSTRAINT ck_account_mandate_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_account_mandate_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -842,7 +841,7 @@ CREATE TABLE public.account_mandate_party (
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_account_mandate_party_dates CHECK (((valid_to IS NULL) OR (valid_to >= valid_from))),
     CONSTRAINT ck_account_mandate_party_role CHECK (((role)::text = 'SIGNATORY'::text)),
-    CONSTRAINT ck_account_mandate_party_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_account_mandate_party_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -875,9 +874,9 @@ CREATE TABLE public.account_mandate_rule (
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_account_mandate_rule_dates CHECK (((valid_to IS NULL) OR (valid_to >= valid_from))),
-    CONSTRAINT ck_account_mandate_rule_operation CHECK (((operation_type)::text = ANY ((ARRAY['WITHDRAWAL'::character varying, 'TRANSFER'::character varying, 'PAYMENT'::character varying, 'CLOSE_ACCOUNT'::character varying])::text[]))),
+    CONSTRAINT ck_account_mandate_rule_operation CHECK (((operation_type)::text = ANY (ARRAY[('WITHDRAWAL'::character varying)::text, ('TRANSFER'::character varying)::text, ('PAYMENT'::character varying)::text, ('CLOSE_ACCOUNT'::character varying)::text]))),
     CONSTRAINT ck_account_mandate_rule_required_signatures CHECK ((required_signatures >= 1)),
-    CONSTRAINT ck_account_mandate_rule_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_account_mandate_rule_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -909,7 +908,7 @@ CREATE TABLE public.account_owner (
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_account_owner_dates CHECK (((valid_to IS NULL) OR (valid_to >= valid_from))),
-    CONSTRAINT ck_account_owner_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_account_owner_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -941,7 +940,7 @@ CREATE TABLE public.account_type (
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_account_type_code CHECK ((code ~ '^[0-9]{2}$'::text)),
     CONSTRAINT ck_account_type_name CHECK (((name)::text <> ''::text)),
-    CONSTRAINT ck_account_type_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_account_type_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -984,7 +983,7 @@ CREATE TABLE public.branch (
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_branch_code CHECK ((branch_code ~ '^[0-9]{7}$'::text)),
-    CONSTRAINT ck_branch_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying, 'CLOSED'::character varying])::text[])))
+    CONSTRAINT ck_branch_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text, ('CLOSED'::character varying)::text])))
 );
 
 
@@ -1070,7 +1069,7 @@ CREATE TABLE public.currency (
     CONSTRAINT ck_currency_code CHECK ((code ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT ck_currency_minor_unit CHECK (((minor_unit >= 0) AND (minor_unit <= 6))),
     CONSTRAINT ck_currency_numeric_code CHECK ((numeric_code ~ '^[0-9]{3}$'::text)),
-    CONSTRAINT ck_currency_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_currency_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -1102,8 +1101,8 @@ CREATE TABLE public.customer (
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_customer_nationality_code CHECK ((nationality_code ~ '^[0-9]{3}$'::text)),
     CONSTRAINT ck_customer_number CHECK ((customer_number ~ '^[0-9]{10}$'::text)),
-    CONSTRAINT ck_customer_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying, 'BLOCKED'::character varying, 'CLOSED'::character varying])::text[]))),
-    CONSTRAINT ck_customer_type CHECK (((customer_type)::text = ANY ((ARRAY['INDIVIDUAL'::character varying, 'LEGAL_ENTITY'::character varying])::text[])))
+    CONSTRAINT ck_customer_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text, ('BLOCKED'::character varying)::text, ('CLOSED'::character varying)::text]))),
+    CONSTRAINT ck_customer_type CHECK (((customer_type)::text = ANY (ARRAY[('INDIVIDUAL'::character varying)::text, ('LEGAL_ENTITY'::character varying)::text])))
 );
 
 
@@ -1161,7 +1160,7 @@ CREATE TABLE public.journal (
     description character varying(500),
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    CONSTRAINT ck_journal_status CHECK (((status)::text = ANY ((ARRAY['DRAFT'::character varying, 'POSTED'::character varying, 'REVERSED'::character varying])::text[])))
+    CONSTRAINT ck_journal_status CHECK (((status)::text = ANY (ARRAY[('DRAFT'::character varying)::text, ('POSTED'::character varying)::text, ('REVERSED'::character varying)::text])))
 );
 
 
@@ -1230,11 +1229,11 @@ CREATE TABLE public.ledger_account (
     status character varying(20) DEFAULT 'ACTIVE'::character varying NOT NULL,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    CONSTRAINT ck_ledger_account_category CHECK (((account_category)::text = ANY ((ARRAY['ASSET'::character varying, 'LIABILITY'::character varying, 'EQUITY'::character varying, 'REVENUE'::character varying, 'EXPENSE'::character varying])::text[]))),
+    CONSTRAINT ck_ledger_account_category CHECK (((account_category)::text = ANY (ARRAY[('ASSET'::character varying)::text, ('LIABILITY'::character varying)::text, ('EQUITY'::character varying)::text, ('REVENUE'::character varying)::text, ('EXPENSE'::character varying)::text]))),
     CONSTRAINT ck_ledger_account_code CHECK ((code ~ '^[0-9]{8}$'::text)),
     CONSTRAINT ck_ledger_account_name CHECK (((name)::text <> ''::text)),
     CONSTRAINT ck_ledger_account_not_self_parent CHECK (((parent_id IS NULL) OR (parent_id <> id))),
-    CONSTRAINT ck_ledger_account_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_ledger_account_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -1298,7 +1297,7 @@ CREATE TABLE public.legal_entity_board_member (
     CONSTRAINT ck_board_member_dates CHECK (((end_date IS NULL) OR (end_date >= start_date))),
     CONSTRAINT ck_board_member_not_same_customer CHECK ((legal_entity_customer_id <> customer_id)),
     CONSTRAINT ck_board_member_position CHECK ((("position")::text <> ''::text)),
-    CONSTRAINT ck_board_member_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_board_member_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -1335,7 +1334,7 @@ CREATE TABLE public.legal_entity_shareholder (
     CONSTRAINT ck_shareholder_not_same_customer CHECK ((legal_entity_customer_id <> shareholder_customer_id)),
     CONSTRAINT ck_shareholder_ownership_percentage CHECK (((ownership_percentage IS NULL) OR ((ownership_percentage > (0)::numeric) AND (ownership_percentage <= (100)::numeric)))),
     CONSTRAINT ck_shareholder_share_count CHECK (((share_count IS NULL) OR (share_count > (0)::numeric))),
-    CONSTRAINT ck_shareholder_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_shareholder_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -1371,7 +1370,7 @@ CREATE TABLE public.product (
     CONSTRAINT ck_product_code CHECK (((code)::text <> ''::text)),
     CONSTRAINT ck_product_effective_dates CHECK (((effective_to IS NULL) OR (effective_to >= effective_from))),
     CONSTRAINT ck_product_name CHECK (((name)::text <> ''::text)),
-    CONSTRAINT ck_product_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_product_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -1439,7 +1438,7 @@ CREATE TABLE public.product_ledger_mapping (
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_plm_effective_dates CHECK (((effective_to IS NULL) OR (effective_to > effective_from))),
-    CONSTRAINT ck_plm_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'INACTIVE'::character varying])::text[])))
+    CONSTRAINT ck_plm_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text])))
 );
 
 
@@ -1507,13 +1506,13 @@ CREATE TABLE public.transaction (
     result_code character varying(100),
     result_message text,
     CONSTRAINT ck_transaction_amount CHECK ((amount > (0)::numeric)),
-    CONSTRAINT ck_transaction_channel CHECK (((channel)::text = ANY ((ARRAY['BRANCH'::character varying, 'ATM'::character varying, 'MOBILE'::character varying, 'INTERNET'::character varying, 'API'::character varying, 'SYSTEM'::character varying])::text[]))),
+    CONSTRAINT ck_transaction_channel CHECK (((channel)::text = ANY (ARRAY[('BRANCH'::character varying)::text, ('ATM'::character varying)::text, ('MOBILE'::character varying)::text, ('INTERNET'::character varying)::text, ('API'::character varying)::text, ('SYSTEM'::character varying)::text]))),
     CONSTRAINT ck_transaction_completed_at CHECK (((completed_at IS NULL) OR (completed_at >= initiated_at))),
     CONSTRAINT ck_transaction_not_self_reversal CHECK (((reverses_transaction_id IS NULL) OR (reverses_transaction_id <> id))),
     CONSTRAINT ck_transaction_number CHECK (((transaction_number)::text <> ''::text)),
     CONSTRAINT ck_transaction_reversal_reference CHECK ((((transaction_type)::text <> 'REVERSAL'::text) OR (reverses_transaction_id IS NOT NULL))),
-    CONSTRAINT ck_transaction_status CHECK (((status)::text = ANY ((ARRAY['INITIATED'::character varying, 'PROCESSING'::character varying, 'COMPLETED'::character varying, 'REJECTED'::character varying, 'FAILED'::character varying, 'CANCELLED'::character varying, 'REVERSED'::character varying])::text[]))),
-    CONSTRAINT ck_transaction_type CHECK (((transaction_type)::text = ANY ((ARRAY['DEPOSIT'::character varying, 'WITHDRAWAL'::character varying, 'TRANSFER'::character varying, 'PAYMENT'::character varying, 'FEE'::character varying, 'REVERSAL'::character varying])::text[])))
+    CONSTRAINT ck_transaction_status CHECK (((status)::text = ANY (ARRAY[('INITIATED'::character varying)::text, ('PROCESSING'::character varying)::text, ('COMPLETED'::character varying)::text, ('REJECTED'::character varying)::text, ('FAILED'::character varying)::text, ('CANCELLED'::character varying)::text, ('REVERSED'::character varying)::text]))),
+    CONSTRAINT ck_transaction_type CHECK (((transaction_type)::text = ANY (ARRAY[('DEPOSIT'::character varying)::text, ('WITHDRAWAL'::character varying)::text, ('TRANSFER'::character varying)::text, ('PAYMENT'::character varying)::text, ('FEE'::character varying)::text, ('REVERSAL'::character varying)::text])))
 );
 
 
@@ -1533,7 +1532,7 @@ CREATE TABLE public.transaction_entry (
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_transaction_entry_amount CHECK ((amount > (0)::numeric)),
     CONSTRAINT ck_transaction_entry_sequence CHECK ((sequence_no > 0)),
-    CONSTRAINT ck_transaction_entry_type CHECK (((entry_type)::text = ANY ((ARRAY['SOURCE'::character varying, 'DESTINATION'::character varying])::text[])))
+    CONSTRAINT ck_transaction_entry_type CHECK (((entry_type)::text = ANY (ARRAY[('SOURCE'::character varying)::text, ('DESTINATION'::character varying)::text])))
 );
 
 
@@ -3049,5 +3048,5 @@ ALTER TABLE ONLY public.transaction
 -- PostgreSQL database dump complete
 --
 
-\unrestrict uyYZH5CXeUAWWwjioEQJmZounuw4cxSWagNdtfchibBFRaZ0baq2AfyLwuELeAy
+\unrestrict SaZUhmRHzCmMWJJdSpQjwVPQWF1rQ08G6JhQ4U5we4LsjoKliFgH9cGDpHnIOXT
 
